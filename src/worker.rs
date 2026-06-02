@@ -36,7 +36,7 @@ pub async fn pull_repo(
         state.status = RepoStatus::Skipped;
         state
             .log
-            .push(format!("⚠️  Skipping {name} (has uncommitted changes)"));
+            .push(format!("⊘ Skipping {name} (has uncommitted changes)"));
         return Ok(());
     }
 

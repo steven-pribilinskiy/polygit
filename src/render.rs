@@ -173,7 +173,7 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) {
     items.push(ListItem::new(Line::from(vec![
         result_glyph,
         Span::raw(" "),
-        Span::styled("📋 Result", result_style),
+        Span::styled("Result", result_style),
     ])));
 
     let mut list_state = ListState::default();
@@ -227,7 +227,7 @@ fn render_preview(frame: &mut Frame, app: &AppState, area: Rect, _tick: u64) {
         } else {
             // Result item
             let summary = build_result_summary(app);
-            (" 📋 Result ".to_string(), summary, 0, true)
+            (" Result ".to_string(), summary, 0, true)
         };
 
     let focused = app.preview_focused;
@@ -346,7 +346,7 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
 
     let total = updated_count + up_to_date_count + skipped_count + failed_count;
 
-    lines.push("🎉 Pull completed!".to_string());
+    lines.push("Pull completed!".to_string());
     lines.push(String::new());
 
     if total == 0 {
@@ -421,18 +421,18 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
         }
     };
 
-    print_section(&mut lines, "✨ Updated repositories:", &updated_repos);
-    print_section(&mut lines, "📦 Unchanged repositories:", &up_to_date_repos);
+    print_section(&mut lines, "+ Updated repositories:", &updated_repos);
+    print_section(&mut lines, "= Unchanged repositories:", &up_to_date_repos);
     print_section(
         &mut lines,
-        "⚠️  Skipped repositories (uncommitted changes):",
+        "! Skipped repositories (uncommitted changes):",
         &skipped_repos,
     );
-    print_section(&mut lines, "❌ Failed repositories:", &failed_repos);
+    print_section(&mut lines, "x Failed repositories:", &failed_repos);
 
     if !app.worktrees.is_empty() {
         lines.push(String::new());
-        lines.push("🌳 Active worktrees:".to_string());
+        lines.push("> Active worktrees:".to_string());
         for wt in &app.worktrees {
             lines.push(format!("   - {:<pad$}  {}", wt.repo, wt.branch));
         }
