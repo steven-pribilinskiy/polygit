@@ -80,8 +80,8 @@ async fn main() {
 }
 
 /// If invoked as `pull-all go|bun|cli [args]`, replace this process with the matching
-/// sibling implementation (resolved on `$PATH`) and forward the remaining args. Returns
-/// for every other invocation so the default Rust TUI runs.
+/// sibling implementation and forward the remaining args. Returns for every other
+/// invocation so the default Rust TUI runs.
 fn maybe_dispatch_sibling() {
     let mut args = std::env::args().skip(1);
     let Some(subcommand) = args.next() else {
@@ -93,10 +93,25 @@ fn maybe_dispatch_sibling() {
         "cli" => "pull-all-repos",
         _ => return,
     };
+    let program = sibling_program(target);
     let rest: Vec<String> = args.collect();
-    let error = Command::new(target).args(&rest).exec();
-    eprintln!("error: failed to launch `{target}`: {error}");
+    let error = Command::new(&program).args(&rest).exec();
+    eprintln!("error: failed to launch `{}`: {error}", program.to_string_lossy());
     std::process::exit(127);
+}
+
+/// Resolve a sibling backend: prefer `<dir-of-this-exe>/pull-all-siblings/<target>` (kept off
+/// `$PATH` so the backends aren't top-level commands), falling back to the bare name on `$PATH`.
+fn sibling_program(target: &str) -> std::ffi::OsString {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join("pull-all-siblings").join(target);
+            if candidate.exists() {
+                return candidate.into_os_string();
+            }
+        }
+    }
+    std::ffi::OsString::from(target)
 }
 
 /// Open a URL in the user's browser via the first available opener, detached.

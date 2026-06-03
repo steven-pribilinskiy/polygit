@@ -54,6 +54,8 @@ pull-all cli [args]   # bash streaming version (pull-all-repos)
 
 A directory literally named `go`/`bun`/`cli` is still reachable as `pull-all ./go`.
 
+The backends live in `pull-all-siblings/` next to the `pull-all` binary (e.g. `~/bin/pull-all-siblings/`), deliberately **off `$PATH`** so they aren't top-level commands — they're reachable only through `pull-all go|bun|cli`. The dispatcher resolves them relative to its own location and falls back to `$PATH` if that directory is absent.
+
 ## Keybindings
 
 | Key | Action |
