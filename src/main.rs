@@ -10,7 +10,7 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use clap::Parser;
@@ -25,10 +25,13 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use app::{AppState, RepoState, RepoStatus, RightView, SharedRepoState};
+use app::{
+    AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog, Leader, PageRowKind, RepoState,
+    RepoStatus, RightView, SharedRepoState,
+};
 use worker::{
-    run_all_pulls, run_remote_url_discovery, run_repo_details, run_repo_diff,
-    run_worktree_discovery,
+    run_all_details, run_all_pulls, run_checkout, run_delete, run_remote_url_discovery,
+    run_repo_details, run_repo_diff, run_repo_page, run_worktree_discovery,
 };
 
 /// Interactive multi-repo git pull dashboard.
@@ -189,6 +192,64 @@ fn launch_claude(
     execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
     terminal.clear()?;
     Ok(())
+}
+
+/// Apply a command triggered by key OR by clicking its status-bar hint. Returns
+/// `Some(exit_code)` when the command should quit the app.
+fn dispatch_command(command: Cmd, app: &mut AppState, retry_queue: &mut Vec<usize>) -> Option<i32> {
+    match command {
+        Cmd::Retry => {
+            if let Some(idx) = app.selected_repo_index() {
+                if app.repos[idx].lock().unwrap().status.is_retryable() {
+                    retry_queue.push(idx);
+                }
+            }
+        }
+        Cmd::RetryAll => retry_queue.extend(app.retryable_repos()),
+        Cmd::Refetch => {
+            if let Some(idx) = app.selected_repo_index() {
+                if app.repos[idx].lock().unwrap().status.is_terminal() {
+                    retry_queue.push(idx);
+                }
+            }
+        }
+        Cmd::RefetchAll => retry_queue.extend(app.refetchable_repos()),
+        Cmd::Info => {
+            app.right_view = if app.right_view == RightView::Info {
+                RightView::Log
+            } else {
+                RightView::Info
+            };
+        }
+        Cmd::Help => {
+            app.show_help = true;
+            app.help_scroll = 0;
+        }
+        Cmd::OpenPage => app.open_repo_page(),
+        Cmd::ToggleLeader => {
+            app.pending_leader = if app.pending_leader == Some(Leader::Toggle) {
+                None
+            } else {
+                Some(Leader::Toggle)
+            };
+        }
+        Cmd::ToggleColumn(column) => {
+            app.toggle_column(column);
+            app.pending_leader = None;
+        }
+        Cmd::Quit => {
+            return Some(if app.all_done {
+                let failed = app
+                    .repos
+                    .iter()
+                    .any(|repo| repo.lock().unwrap().status.is_failed());
+                i32::from(failed)
+            } else {
+                2
+            });
+        }
+    }
+    None
 }
 
 async fn run() -> Result<i32> {
@@ -375,7 +436,15 @@ async fn run_event_loop(
     // Set when `c` is pressed; the TUI is suspended to run claude code after event handling.
     let mut pending_claude: Option<std::path::PathBuf> = None;
 
+    // Last left-click (time, selection) for synthesizing double-click → open repo page.
+    let mut last_click: Option<(Instant, usize)> = None;
+
     loop {
+        // Suspend the TUI and run claude code when requested (set by a key/click last iteration).
+        if let Some(path) = pending_claude.take() {
+            launch_claude(terminal, &path)?;
+        }
+
         // Update "all done" state and auto-select Result when complete
         {
             let mut app = app_state.lock().unwrap();
@@ -447,6 +516,30 @@ async fn run_event_loop(
             Event::Mouse(mouse) => {
                 let mut app = app_state.lock().unwrap();
 
+                // Confirmation dialog is keyboard-only; ignore mouse while it's open.
+                if app.confirm.is_some() {
+                    continue;
+                }
+
+                // Repo page: the wheel scrolls, a click selects a branch/worktree row.
+                if app.repo_page.is_some() {
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            app.repo_page_scroll = app.repo_page_scroll.saturating_add(3);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.repo_page_scroll = app.repo_page_scroll.saturating_sub(3);
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(selection) = app.repo_page_row_at(mouse.row) {
+                                app.repo_page_selected = selection;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Help modal: a click opens the link under the cursor; the wheel scrolls.
                 if app.show_help {
                     match mouse.kind {
@@ -469,20 +562,52 @@ async fn run_event_loop(
 
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        let on_divider = (i32::from(mouse.column) - i32::from(app.divider_col))
+                        // A clickable status-bar command takes precedence over list/divider hits.
+                        let clicked = app
+                            .clickable
+                            .iter()
+                            .find(|region| {
+                                region.row == mouse.row
+                                    && mouse.column >= region.col_start
+                                    && mouse.column < region.col_end
+                            })
+                            .map(|region| region.command);
+                        if let Some(command) = clicked {
+                            if let Some(code) = dispatch_command(command, &mut app, &mut retry_queue)
+                            {
+                                drop(app);
+                                return Ok(code);
+                            }
+                        } else {
+                            let on_divider = (i32::from(mouse.column)
+                                - i32::from(app.divider_col))
                             .abs()
-                            <= 1
-                            && mouse.row >= app.main_area.y
-                            && mouse.row < app.main_area.y + app.main_area.height;
-                        if on_divider {
-                            dragging_divider = true;
-                        } else if let Some(selection) =
-                            app.list_selection_at(mouse.column, mouse.row)
-                        {
-                            app.selected = selection;
-                            app.user_navigated = true;
-                            app.result_overlay = false;
-                            app.right_view = RightView::Log;
+                                <= 1
+                                && mouse.row >= app.main_area.y
+                                && mouse.row < app.main_area.y + app.main_area.height;
+                            if on_divider {
+                                dragging_divider = true;
+                            } else if let Some(selection) =
+                                app.list_selection_at(mouse.column, mouse.row)
+                            {
+                                app.selected = selection;
+                                app.user_navigated = true;
+                                app.result_overlay = false;
+                                app.right_view = RightView::Log;
+                                // Synthesize double-click → open the repo page.
+                                let double = last_click
+                                    .map(|(when, previous)| {
+                                        previous == selection
+                                            && when.elapsed() < Duration::from_millis(400)
+                                    })
+                                    .unwrap_or(false);
+                                if double && app.selected_repo_index().is_some() {
+                                    app.open_repo_page();
+                                    last_click = None;
+                                } else {
+                                    last_click = Some((Instant::now(), selection));
+                                }
+                            }
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
@@ -547,6 +672,122 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Confirmation dialog: y/Enter confirm, n/Esc/q cancel.
+                if app.confirm.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Enter => {
+                            let action = app.confirm.take().map(|dialog| dialog.action);
+                            if let Some(ConfirmAction::DeleteBranch { repo_idx, branch }) = action {
+                                let app_state_clone = Arc::clone(&app_state);
+                                drop(app);
+                                tokio::spawn(run_delete(app_state_clone, repo_idx, branch));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('q') | KeyCode::Esc => {
+                            app.confirm = None;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // Dedicated repo page: navigate branches/worktrees and act on the selected row.
+                if app.repo_page.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    let len = app.repo_page_selectable_len();
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if app.repo_page_selected + 1 < len {
+                                app.repo_page_selected += 1;
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.repo_page_selected = app.repo_page_selected.saturating_sub(1);
+                        }
+                        KeyCode::Char('g') => app.repo_page_selected = 0,
+                        KeyCode::Char('G') => app.repo_page_selected = len.saturating_sub(1),
+                        KeyCode::PageDown => {
+                            app.repo_page_scroll = app.repo_page_scroll.saturating_add(10);
+                        }
+                        KeyCode::PageUp => {
+                            app.repo_page_scroll = app.repo_page_scroll.saturating_sub(10);
+                        }
+                        // Checkout the selected branch (clean-tree only, enforced in the worker).
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            if let (Some(idx), Some(row)) = (app.repo_page, app.repo_page_target()) {
+                                if row.kind == PageRowKind::Branch && !row.is_head {
+                                    let app_state_clone = Arc::clone(&app_state);
+                                    drop(app);
+                                    tokio::spawn(run_checkout(app_state_clone, idx, row.branch));
+                                    continue;
+                                }
+                            }
+                        }
+                        // Delete the selected branch (clean-only) after a confirmation dialog.
+                        KeyCode::Char('D') => {
+                            if let (Some(idx), Some(row)) = (app.repo_page, app.repo_page_target()) {
+                                if row.kind == PageRowKind::Branch {
+                                    if row.deletable {
+                                        app.confirm = Some(ConfirmDialog {
+                                            message: format!("Delete branch '{}'?", row.branch),
+                                            action: ConfirmAction::DeleteBranch {
+                                                repo_idx: idx,
+                                                branch: row.branch,
+                                            },
+                                        });
+                                    } else {
+                                        app.repo_page_message = Some(format!(
+                                            "'{}' not deletable (current branch or unpushed commits)",
+                                            row.branch
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        // Start claude code in the selected row's path.
+                        KeyCode::Char('c') => {
+                            if let Some(row) = app.repo_page_target() {
+                                pending_claude = Some(row.path);
+                            }
+                        }
+                        // Copy the selected row's path.
+                        KeyCode::Char('y') => {
+                            if let Some(row) = app.repo_page_target() {
+                                let path = row.path.display().to_string();
+                                drop(app);
+                                copy_to_clipboard(&path);
+                                continue;
+                            }
+                        }
+                        // Open the selected branch on the remote host.
+                        KeyCode::Char('o') => {
+                            if let (Some(idx), Some(row)) = (app.repo_page, app.repo_page_target()) {
+                                let url = app.repos[idx].lock().unwrap().remote_url.clone();
+                                if let Some(url) = url {
+                                    let branch_url = format!("{url}/tree/{}", row.branch);
+                                    drop(app);
+                                    open_url(&branch_url);
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Help modal: swallow keys while open (scroll or close).
                 if app.show_help {
                     if key.code == KeyCode::Char('c')
@@ -575,6 +816,19 @@ async fn run_event_loop(
                         KeyCode::Char('G') => app.help_scroll = usize::MAX,
                         _ => {}
                     }
+                    continue;
+                }
+
+                // `t` leader chord: the next key toggles a column (a/d/l/w), anything else cancels.
+                if app.pending_leader == Some(Leader::Toggle) {
+                    match key.code {
+                        KeyCode::Char('a') => app.toggle_column(Column::AheadBehind),
+                        KeyCode::Char('d') => app.toggle_column(Column::Dirty),
+                        KeyCode::Char('l') => app.toggle_column(Column::LastCommit),
+                        KeyCode::Char('w') => app.toggle_column(Column::Worktrees),
+                        _ => {}
+                    }
+                    app.pending_leader = None;
                     continue;
                 }
 
@@ -623,6 +877,11 @@ async fn run_event_loop(
                     (KeyCode::Char('?'), _) => {
                         app.show_help = true;
                         app.help_scroll = 0;
+                    }
+
+                    // `t` leader: arm the column-toggle chord (next key picks the column).
+                    (KeyCode::Char('t'), _) => {
+                        app.pending_leader = Some(Leader::Toggle);
                     }
 
                     // Resize the split: [ narrows the left pane, ] widens it.
@@ -737,8 +996,13 @@ async fn run_event_loop(
                         }
                     }
 
+                    // Enter / double-click: open the dedicated repo page for the selected repo.
+                    (KeyCode::Enter, _) => {
+                        app.open_repo_page();
+                    }
+
                     // Retry selected repo if it has an issue (failed or skipped).
-                    (KeyCode::Char('r'), _) | (KeyCode::Enter, _) => {
+                    (KeyCode::Char('r'), _) => {
                         if let Some(repo_idx) = app.selected_repo_index() {
                             let retryable = {
                                 let state = app.repos[repo_idx].lock().unwrap();
@@ -783,9 +1047,30 @@ async fn run_event_loop(
             }
         }
 
-        // Suspend the TUI and run claude code when requested (app lock already released).
-        if let Some(path) = pending_claude.take() {
-            launch_claude(terminal, &path)?;
+        // Lazily load the repo page (fetch + branches + worktrees) when it's open.
+        {
+            let app = app_state.lock().unwrap();
+            if let Some(idx) = app.repo_page {
+                let repo = Arc::clone(&app.repos[idx]);
+                let mut state = repo.lock().unwrap();
+                if state.page.is_none() && !state.page_loading {
+                    state.page_loading = true;
+                    drop(state);
+                    tokio::spawn(run_repo_page(repo));
+                }
+            }
+        }
+
+        // Once a git-backed column is enabled, fetch details for all repos in the background.
+        {
+            let mut app = app_state.lock().unwrap();
+            if app.columns.any_git() && !app.details_pass_spawned {
+                app.details_pass_spawned = true;
+                let repos = app.repos.clone();
+                let max_jobs = app.max_jobs;
+                drop(app);
+                tokio::spawn(run_all_details(repos, max_jobs));
+            }
         }
 
         // Lazily fetch details/diff for the selected repo when those views are open.

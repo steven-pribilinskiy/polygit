@@ -5,10 +5,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 
-use crate::app::{AppState, RepoStatus, SharedRepoState, WorktreeEntry};
+use crate::app::{AppState, RepoPageData, RepoStatus, SharedRepoState, WorktreeEntry};
 use crate::git::{
-    classify_pull_output, diff_stat, discover_worktrees, get_branch, get_diff, get_remote_url,
-    get_repo_details, is_dirty, PullOutcome,
+    checkout_branch, classify_pull_output, delete_branch, diff_stat, discover_worktrees,
+    fetch_remote, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
+    list_local_branches, list_worktrees, PullOutcome,
 };
 
 /// Pull a single repository, updating `repo_state` as progress arrives.
@@ -218,5 +219,79 @@ pub async fn run_repo_diff(repo: SharedRepoState) {
     let dirty = is_dirty(&path).await.unwrap_or(false);
     let diff = get_diff(&path, dirty).await;
     repo.lock().unwrap().diff = Some(diff);
+}
+
+/// Populate the dedicated repo page: show branches/worktrees immediately, then `git fetch`
+/// and refresh ahead/behind. Caller sets `page_loading`; this clears it.
+pub async fn run_repo_page(repo: SharedRepoState) {
+    let path = { repo.lock().unwrap().path.clone() };
+
+    let branches = list_local_branches(&path).await;
+    let worktrees = list_worktrees(&path).await;
+    {
+        let mut state = repo.lock().unwrap();
+        state.page = Some(RepoPageData {
+            branches,
+            worktrees: worktrees.clone(),
+            fetched: false,
+            fetch_error: None,
+        });
+    }
+
+    let fetch = fetch_remote(&path).await;
+    let branches = list_local_branches(&path).await;
+    let mut state = repo.lock().unwrap();
+    state.page = Some(RepoPageData {
+        branches,
+        worktrees,
+        fetched: true,
+        fetch_error: fetch.err(),
+    });
+    state.page_loading = false;
+}
+
+/// Check out a branch in a repo's main worktree, set a result banner, and reload its page.
+pub async fn run_checkout(app_state: Arc<Mutex<AppState>>, repo_idx: usize, branch: String) {
+    let path = { app_state.lock().unwrap().repos[repo_idx].lock().unwrap().path.clone() };
+    let result = checkout_branch(&path, &branch).await;
+    let mut app = app_state.lock().unwrap();
+    app.repo_page_message = Some(match result {
+        Ok(()) => format!("Checked out {branch}"),
+        Err(err) => format!("checkout failed: {err}"),
+    });
+    app.repos[repo_idx].lock().unwrap().page = None;
+}
+
+/// Delete a branch (safe `-d`), set a result banner, and reload the repo's page.
+pub async fn run_delete(app_state: Arc<Mutex<AppState>>, repo_idx: usize, branch: String) {
+    let path = { app_state.lock().unwrap().repos[repo_idx].lock().unwrap().path.clone() };
+    let result = delete_branch(&path, &branch).await;
+    let mut app = app_state.lock().unwrap();
+    app.repo_page_message = Some(match result {
+        Ok(()) => format!("Deleted {branch}"),
+        Err(err) => format!("delete failed: {err}"),
+    });
+    app.repos[repo_idx].lock().unwrap().page = None;
+}
+
+/// Fetch info-panel details for all repos that don't have them yet (background column fill).
+pub async fn run_all_details(repos: Vec<SharedRepoState>, max_jobs: usize) {
+    let semaphore = Arc::new(Semaphore::new(max_jobs.max(1)));
+    let mut handles = Vec::new();
+    for repo in repos {
+        let semaphore = Arc::clone(&semaphore);
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
+            if repo.lock().unwrap().details.is_some() {
+                return;
+            }
+            let path = { repo.lock().unwrap().path.clone() };
+            let details = get_repo_details(&path).await;
+            repo.lock().unwrap().details = Some(details);
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
 }
 

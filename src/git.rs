@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tokio::process::Command;
 
-use crate::app::RepoDetails;
+use crate::app::{BranchInfo, RepoDetails, WorktreeInfo};
 
 /// Result of parsing git pull output to determine status.
 #[derive(Debug, PartialEq, Eq)]
@@ -270,6 +270,187 @@ pub async fn get_diff(dir: &Path, dirty: bool) -> Vec<String> {
     }
 }
 
+/// Run `git fetch --all` to refresh remote-tracking refs. Best-effort.
+pub async fn fetch_remote(dir: &Path) -> Result<(), String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git")
+        .args(["-C", dir_str, "fetch", "--all", "--quiet"])
+        .output()
+        .await
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Parse a `%(upstream:track,nobracket)` value into (ahead, behind).
+/// No upstream or `gone` → (None, None); present-but-current → (Some(0), Some(0)).
+pub fn parse_track(upstream: &str, track: &str) -> (Option<u32>, Option<u32>) {
+    if upstream.trim().is_empty() {
+        return (None, None);
+    }
+    let track = track.trim();
+    if track == "gone" {
+        return (None, None);
+    }
+    if track.is_empty() {
+        return (Some(0), Some(0));
+    }
+    let tokens: Vec<&str> = track
+        .split(|ch: char| ch == ',' || ch == ' ')
+        .filter(|token| !token.is_empty())
+        .collect();
+    let mut ahead = 0u32;
+    let mut behind = 0u32;
+    let mut index = 0;
+    while index < tokens.len() {
+        match tokens[index] {
+            "ahead" => {
+                ahead = tokens.get(index + 1).and_then(|value| value.parse().ok()).unwrap_or(0);
+                index += 2;
+            }
+            "behind" => {
+                behind = tokens.get(index + 1).and_then(|value| value.parse().ok()).unwrap_or(0);
+                index += 2;
+            }
+            _ => index += 1,
+        }
+    }
+    (Some(ahead), Some(behind))
+}
+
+/// Parse one US (0x1f)-separated `for-each-ref` line into a BranchInfo.
+fn parse_branch_line(line: &str) -> Option<BranchInfo> {
+    let fields: Vec<&str> = line.split('\u{1f}').collect();
+    if fields.len() < 6 || fields[1].is_empty() {
+        return None;
+    }
+    let upstream = if fields[2].is_empty() {
+        None
+    } else {
+        Some(fields[2].to_string())
+    };
+    let (ahead, behind) = parse_track(fields[2], fields[3]);
+    Some(BranchInfo {
+        is_head: fields[0] == "*",
+        name: fields[1].to_string(),
+        upstream,
+        ahead,
+        behind,
+        last_commit_rel: fields[4].to_string(),
+        subject: fields[5].to_string(),
+    })
+}
+
+/// List local branches (most-recent first) with upstream, ahead/behind, last-commit date, subject.
+pub async fn list_local_branches(dir: &Path) -> Vec<BranchInfo> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let format = "%(HEAD)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(committerdate:relative)%1f%(contents:subject)";
+    let output = match Command::new("git")
+        .args([
+            "-C",
+            dir_str,
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format",
+            format,
+            "refs/heads",
+        ])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(parse_branch_line)
+        .collect()
+}
+
+/// Parse `git worktree list --porcelain` output into worktrees, skipping the main checkout
+/// (path == `main_dir`) and detached/bare entries (no branch).
+pub fn parse_worktree_porcelain(output: &str, main_dir: &Path) -> Vec<WorktreeInfo> {
+    fn flush(
+        path: &mut Option<PathBuf>,
+        branch: &mut Option<String>,
+        main_dir: &Path,
+        out: &mut Vec<WorktreeInfo>,
+    ) {
+        if let (Some(found_path), Some(found_branch)) = (path.take(), branch.take()) {
+            if found_path.as_path() != main_dir {
+                out.push(WorktreeInfo {
+                    branch: found_branch,
+                    path: found_path,
+                });
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    let mut path: Option<PathBuf> = None;
+    let mut branch: Option<String> = None;
+    for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            flush(&mut path, &mut branch, main_dir, &mut result);
+            path = Some(PathBuf::from(rest));
+        } else if let Some(rest) = line.strip_prefix("branch ") {
+            branch = Some(rest.strip_prefix("refs/heads/").unwrap_or(rest).to_string());
+        }
+    }
+    flush(&mut path, &mut branch, main_dir, &mut result);
+    result
+}
+
+/// List worktrees for a repo (excluding the main checkout).
+pub async fn list_worktrees(dir: &Path) -> Vec<WorktreeInfo> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "worktree", "list", "--porcelain"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    parse_worktree_porcelain(&String::from_utf8_lossy(&output.stdout), dir)
+}
+
+/// Check out `branch` in the main worktree. Refuses if the tree is dirty.
+pub async fn checkout_branch(dir: &Path, branch: &str) -> Result<(), String> {
+    if is_dirty(dir).await.unwrap_or(false) {
+        return Err("working tree has uncommitted changes".to_string());
+    }
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git")
+        .args(["-C", dir_str, "checkout", branch])
+        .output()
+        .await
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Safe-delete `branch` (`git branch -d`, refuses unmerged branches).
+pub async fn delete_branch(dir: &Path, branch: &str) -> Result<(), String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git")
+        .args(["-C", dir_str, "branch", "-d", branch])
+        .output()
+        .await
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +566,52 @@ mod tests {
         assert_eq!(parse_ahead_behind("3\t5\n"), (Some(3), Some(5)));
         assert_eq!(parse_ahead_behind("0\t0\n"), (Some(0), Some(0)));
         assert_eq!(parse_ahead_behind(""), (None, None));
+    }
+
+    #[test]
+    fn parse_track_covers_upstream_states() {
+        // No upstream → unknown.
+        assert_eq!(parse_track("", ""), (None, None));
+        // Upstream present, in sync.
+        assert_eq!(parse_track("origin/main", ""), (Some(0), Some(0)));
+        // Deleted upstream.
+        assert_eq!(parse_track("origin/gone", "gone"), (None, None));
+        // One-sided and two-sided.
+        assert_eq!(parse_track("origin/main", "ahead 2"), (Some(2), Some(0)));
+        assert_eq!(parse_track("origin/main", "behind 3"), (Some(0), Some(3)));
+        assert_eq!(parse_track("origin/main", "ahead 1, behind 4"), (Some(1), Some(4)));
+    }
+
+    #[test]
+    fn parse_branch_line_splits_six_us_fields() {
+        let line = "*\u{1f}main\u{1f}origin/main\u{1f}ahead 1\u{1f}3 days ago\u{1f}init repo";
+        let branch = parse_branch_line(line).expect("parses");
+        assert!(branch.is_head);
+        assert_eq!(branch.name, "main");
+        assert_eq!(branch.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((branch.ahead, branch.behind), (Some(1), Some(0)));
+        assert_eq!(branch.last_commit_rel, "3 days ago");
+        assert_eq!(branch.subject, "init repo");
+    }
+
+    #[test]
+    fn parse_worktree_porcelain_skips_main_and_detached() {
+        let output = "\
+worktree /repo
+HEAD aaaa
+branch refs/heads/main
+
+worktree /repo.worktrees/feature
+HEAD bbbb
+branch refs/heads/feature
+
+worktree /repo.worktrees/detached
+HEAD cccc
+detached
+";
+        let worktrees = parse_worktree_porcelain(output, std::path::Path::new("/repo"));
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].branch, "feature");
+        assert_eq!(worktrees[0].path, std::path::PathBuf::from("/repo.worktrees/feature"));
     }
 }

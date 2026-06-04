@@ -9,7 +9,7 @@ use ratatui::widgets::{
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{AppState, RepoStatus, RightView};
+use crate::app::{AppState, ClickRegion, Column, Command, Leader, PageRowKind, RepoStatus, RightView};
 
 const SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 
@@ -50,6 +50,15 @@ fn truncate_str(s: &str, max_width: usize) -> String {
 pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
     let area = frame.area();
 
+    // The dedicated repo page is full-screen and replaces the normal layout.
+    if app.repo_page.is_some() {
+        render_repo_page(frame, app, area);
+        if app.confirm.is_some() {
+            render_confirm(frame, app, area);
+        }
+        return;
+    }
+
     // Layout: main area + two-line status bar at bottom
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -89,6 +98,10 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // Help modal overlays everything else.
     if app.show_help {
         render_help(frame, app, area);
+    }
+    // Confirmation dialog overlays all.
+    if app.confirm.is_some() {
+        render_confirm(frame, app, area);
     }
 }
 
@@ -139,9 +152,16 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
     let icon_width = 2; // glyph + space
     let separator_width = 1; // space before branch
 
+    // Reserve space for any enabled optional columns (rendered after the branch).
+    let columns = app.columns;
+    let columns_width = usize::from(columns.ahead_behind) * 10
+        + usize::from(columns.dirty) * 4
+        + usize::from(columns.last_commit) * 12
+        + usize::from(columns.worktrees) * 5;
+
     let inner_width = inner.width as usize;
     let branch_col_width = inner_width
-        .saturating_sub(icon_width + name_col_width + separator_width + 2);
+        .saturating_sub(icon_width + name_col_width + separator_width + 2 + columns_width);
 
     let mut items: Vec<ListItem> = visible
         .iter()
@@ -165,14 +185,46 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
                 _ => Style::default(),
             };
 
-            let line = Line::from(vec![
+            let mut spans = vec![
                 glyph,
                 Span::raw(" "),
                 Span::styled(name_padded, name_style),
                 Span::raw(" "),
-                Span::styled(branch_truncated, Style::default().fg(Color::Cyan)),
-            ]);
-            ListItem::new(line)
+                Span::styled(format!("{branch_truncated:<branch_col_width$}"), Style::default().fg(Color::Cyan)),
+            ];
+
+            if columns.ahead_behind {
+                let text = match &state.details {
+                    Some(details) => match (details.ahead, details.behind) {
+                        (Some(ahead), Some(behind)) => format!("↑{ahead} ↓{behind}"),
+                        _ => "—".to_string(),
+                    },
+                    None => "…".to_string(),
+                };
+                spans.push(Span::styled(format!(" {text:<9}"), Style::default().fg(Color::Yellow)));
+            }
+            if columns.dirty {
+                let text = match &state.details {
+                    Some(details) if details.dirty_count > 0 => format!("•{}", details.dirty_count),
+                    Some(_) => String::new(),
+                    None => "…".to_string(),
+                };
+                spans.push(Span::styled(format!(" {text:<3}"), Style::default().fg(Color::Red)));
+            }
+            if columns.last_commit {
+                let text = match &state.details {
+                    Some(details) => truncate_str(&details.commit_rel_date, 11),
+                    None => "…".to_string(),
+                };
+                spans.push(Span::styled(format!(" {text:<11}"), Style::default().fg(Color::DarkGray)));
+            }
+            if columns.worktrees {
+                let count = app.worktrees.iter().filter(|entry| entry.repo == state.name).count();
+                let text = if count > 0 { format!("⑂{count}") } else { String::new() };
+                spans.push(Span::styled(format!(" {text:<4}"), Style::default().fg(Color::Cyan)));
+            }
+
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -610,27 +662,38 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
 }
 
 
-fn render_status_bar(frame: &mut Frame, app: &AppState, area: Rect) {
+/// Build one status-bar row from (text, style, optional command) segments, recording a
+/// `ClickRegion` for each actionable segment at its screen columns.
+fn build_status_row(
+    segments: Vec<(String, Style, Option<Command>)>,
+    start_col: u16,
+    row: u16,
+    clickable: &mut Vec<ClickRegion>,
+) -> Line<'static> {
+    let mut spans = Vec::with_capacity(segments.len());
+    let mut col = start_col;
+    for (text, style, command) in segments {
+        let width = UnicodeWidthStr::width(text.as_str()) as u16;
+        if let Some(command) = command {
+            clickable.push(ClickRegion {
+                row,
+                col_start: col,
+                col_end: col + width,
+                command,
+            });
+        }
+        col = col.saturating_add(width);
+        spans.push(Span::styled(text, style));
+    }
+    Line::from(spans)
+}
+
+fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let (_, running, _, _, _, _) = app.counts();
     let done = app.done_count();
     let total = app.repos.len();
     let elapsed = app.start.elapsed().as_secs_f64();
 
-    // Row 1 — move & view (or the live filter prompt when filtering).
-    let row1 = if app.filter_input_mode {
-        format!("Filter: {}", app.filter.as_deref().unwrap_or(""))
-    } else {
-        let filter_tag = match &app.filter {
-            Some(filter) if !filter.is_empty() => format!("[{filter}] "),
-            _ => String::new(),
-        };
-        format!(
-            "{filter_tag}j/k ↑/↓ move · g/G top/end · click select · space result · i info · ? help"
-        )
-    };
-
-    // Row 2 — act & layout, plus live run stats. Action letters dim when they're a no-op:
-    // r/R (retry) need a failed/skipped repo; f/F (refetch) need a repo that isn't in progress.
     let hint = Style::default().fg(Color::DarkGray);
     let active = Style::default().fg(Color::Gray);
     let dimmed = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
@@ -640,24 +703,85 @@ fn render_status_bar(frame: &mut Frame, app: &AppState, area: Rect) {
     let style_refetch_one = if app.selected_repo_refetchable() { active } else { dimmed };
     let style_refetch_all = if app.any_refetchable() { active } else { dimmed };
 
+    let filtering = app.filter_input_mode;
+    let filter_text = app.filter.clone().unwrap_or_default();
+    let leader = app.pending_leader;
+    let columns = app.columns;
     let stats = format!(
         "  ·  {} jobs · {done}/{total} done · {running} running · {elapsed:.1}s",
         app.max_jobs
     );
 
-    let row2 = Line::from(vec![
-        Span::styled("r", style_retry_one),
-        Span::styled("/", hint),
-        Span::styled("R", style_retry_all),
-        Span::styled(" retry · ", hint),
-        Span::styled("f", style_refetch_one),
-        Span::styled("/", hint),
-        Span::styled("F", style_refetch_all),
-        Span::styled(" refetch · / filter · [ ] / drag resize · tab focus · q quit", hint),
-        Span::styled(stats, hint),
-    ]);
+    let mut clickable: Vec<ClickRegion> = Vec::new();
+    let mark = |on: bool| if on { "[x]" } else { "[ ]" };
 
-    let text = Text::from(vec![Line::from(row1), row2]);
+    // Row 1: filter prompt, or the `t`-leader column menu, or the normal move/view hints.
+    let row1 = if filtering {
+        Line::from(format!("Filter: {filter_text}"))
+    } else if leader == Some(Leader::Toggle) {
+        build_status_row(
+            vec![
+                ("toggle: ".to_string(), hint, None),
+                (format!("{} a ahead/behind", mark(columns.ahead_behind)), active, Some(Command::ToggleColumn(Column::AheadBehind))),
+                (" · ".to_string(), hint, None),
+                (format!("{} d dirty", mark(columns.dirty)), active, Some(Command::ToggleColumn(Column::Dirty))),
+                (" · ".to_string(), hint, None),
+                (format!("{} l last-commit", mark(columns.last_commit)), active, Some(Command::ToggleColumn(Column::LastCommit))),
+                (" · ".to_string(), hint, None),
+                (format!("{} w worktrees", mark(columns.worktrees)), active, Some(Command::ToggleColumn(Column::Worktrees))),
+                (" · esc".to_string(), hint, None),
+            ],
+            area.x,
+            area.y,
+            &mut clickable,
+        )
+    } else {
+        let filter_tag = if filter_text.is_empty() {
+            String::new()
+        } else {
+            format!("[{filter_text}] ")
+        };
+        build_status_row(
+            vec![
+                (format!("{filter_tag}j/k ↑/↓ move · g/G top/end · space result · "), hint, None),
+                ("i".to_string(), active, Some(Command::Info)),
+                (" info · ".to_string(), hint, None),
+                ("t".to_string(), active, Some(Command::ToggleLeader)),
+                (" cols · ".to_string(), hint, None),
+                ("enter".to_string(), active, Some(Command::OpenPage)),
+                (" page · ".to_string(), hint, None),
+                ("?".to_string(), active, Some(Command::Help)),
+                (" help".to_string(), hint, None),
+            ],
+            area.x,
+            area.y,
+            &mut clickable,
+        )
+    };
+
+    // Row 2: actions + layout + live stats. r/R/f/F dim when they'd be a no-op.
+    let row2 = build_status_row(
+        vec![
+            ("r".to_string(), style_retry_one, Some(Command::Retry)),
+            ("/".to_string(), hint, None),
+            ("R".to_string(), style_retry_all, Some(Command::RetryAll)),
+            (" retry · ".to_string(), hint, None),
+            ("f".to_string(), style_refetch_one, Some(Command::Refetch)),
+            ("/".to_string(), hint, None),
+            ("F".to_string(), style_refetch_all, Some(Command::RefetchAll)),
+            (" refetch · / filter · [ ] / drag resize · tab focus · ".to_string(), hint, None),
+            ("q".to_string(), active, Some(Command::Quit)),
+            (" quit".to_string(), hint, None),
+            (stats, hint, None),
+        ],
+        area.x,
+        area.y + 1,
+        &mut clickable,
+    );
+
+    app.clickable = clickable;
+
+    let text = Text::from(vec![row1, row2]);
     let para = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(para, area);
 }
@@ -778,4 +902,197 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     frame.render_widget(block, modal_area);
     frame.render_widget(Paragraph::new(lines), inner);
     render_scrollbar(frame, modal_area, app.help_scroll, items.len(), inner_height);
+}
+
+/// A fixed-width ahead/behind span (`↑a ↓b`, or dim `(no upstream)`).
+fn ahead_behind_span(ahead: Option<u32>, behind: Option<u32>) -> Span<'static> {
+    match (ahead, behind) {
+        (Some(ahead), Some(behind)) => {
+            let style = if ahead > 0 || behind > 0 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            Span::styled(format!("{:<10}", format!("↑{ahead} ↓{behind}")), style)
+        }
+        _ => Span::styled(format!("{:<10}", "—"), Style::default().fg(Color::DarkGray)),
+    }
+}
+
+/// Render the full-screen dedicated repo page: branches + worktrees + fresh ahead/behind.
+fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let rows = app.repo_page_rows();
+    let Some(idx) = app.repo_page else {
+        return;
+    };
+    let selected = app.repo_page_selected.min(rows.len().saturating_sub(1));
+
+    let (name, path, loading, fetched, fetch_error) = {
+        let state = app.repos[idx].lock().unwrap();
+        let (fetched, fetch_error) = match &state.page {
+            Some(page) => (page.fetched, page.fetch_error.clone()),
+            None => (false, None),
+        };
+        (
+            state.name.clone(),
+            state.path.display().to_string(),
+            state.page_loading,
+            fetched,
+            fetch_error,
+        )
+    };
+    let head_branch = rows
+        .iter()
+        .find(|row| row.is_head)
+        .map(|row| row.branch.clone())
+        .unwrap_or_else(|| "—".to_string());
+
+    let mut title = format!(" {name} · {head_branch} · {path} ");
+    if loading || !fetched {
+        title.push_str("· (fetching…) ");
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(title)
+        .title_bottom(
+            Line::from(" ↑↓ move · enter checkout · c claude · o open · y copy · D delete · esc back ")
+                .right_aligned(),
+        );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let label = Style::default().fg(Color::DarkGray);
+    let head_style = Style::default().fg(Color::Green);
+    let value = Style::default().fg(Color::Gray);
+    let cyan = Style::default().fg(Color::Cyan);
+    let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+
+    let branch_count = rows.iter().filter(|row| row.kind == PageRowKind::Branch).count();
+    let worktree_count = rows.len() - branch_count;
+    let name_pad = rows
+        .iter()
+        .map(|row| row.branch.chars().count())
+        .max()
+        .unwrap_or(8)
+        .min(30);
+
+    // (Line, Option<selectable index>) — None for headers/blanks/banners.
+    let mut items: Vec<(Line<'static>, Option<usize>)> = Vec::new();
+
+    if let Some(message) = &app.repo_page_message {
+        items.push((
+            Line::from(Span::styled(format!(" {message}"), Style::default().fg(Color::Yellow))),
+            None,
+        ));
+    }
+    if let Some(error) = &fetch_error {
+        items.push((
+            Line::from(Span::styled(format!(" fetch: {error}"), Style::default().fg(Color::Red))),
+            None,
+        ));
+    }
+    if app.repo_page_message.is_some() || fetch_error.is_some() {
+        items.push((Line::from(String::new()), None));
+    }
+
+    items.push((Line::from(Span::styled(format!("BRANCHES ({branch_count})"), header_style)), None));
+    for (sel_index, row) in rows.iter().enumerate() {
+        if row.kind != PageRowKind::Branch {
+            continue;
+        }
+        let marker = if row.is_head {
+            Span::styled("* ", head_style)
+        } else {
+            Span::raw("  ")
+        };
+        let name_span = Span::styled(
+            format!("{:<name_pad$}", row.branch),
+            if row.is_head { head_style } else { value },
+        );
+        let upstream = Span::styled(format!("  {}", row.upstream.clone().unwrap_or_default()), label);
+        let date = Span::styled(format!("  {}", row.last_commit_rel), label);
+        let subject = Span::styled(format!("  {}", truncate_str(&row.subject, 50)), label);
+        items.push((
+            Line::from(vec![
+                marker,
+                name_span,
+                Span::raw("  "),
+                ahead_behind_span(row.ahead, row.behind),
+                upstream,
+                date,
+                subject,
+            ]),
+            Some(sel_index),
+        ));
+    }
+
+    items.push((Line::from(String::new()), None));
+    items.push((Line::from(Span::styled(format!("WORKTREES ({worktree_count})"), header_style)), None));
+    if worktree_count == 0 {
+        items.push((Line::from(Span::styled("  (none)", label)), None));
+    }
+    for (sel_index, row) in rows.iter().enumerate() {
+        if row.kind != PageRowKind::Worktree {
+            continue;
+        }
+        items.push((
+            Line::from(vec![
+                Span::styled(format!("  {:<name_pad$}", row.branch), cyan),
+                Span::raw("  "),
+                ahead_behind_span(row.ahead, row.behind),
+                Span::styled(format!("  {}", row.path.display()), label),
+            ]),
+            Some(sel_index),
+        ));
+    }
+
+    let inner_height = inner.height as usize;
+    let max_scroll = items.len().saturating_sub(inner_height);
+    if app.repo_page_scroll > max_scroll {
+        app.repo_page_scroll = max_scroll;
+    }
+    let start = app.repo_page_scroll;
+    let end = (start + inner_height).min(items.len());
+
+    app.repo_page_click.clear();
+    let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
+    for (offset, (line, sel)) in items[start..end].iter().enumerate() {
+        let mut line = line.clone();
+        if let Some(sel_index) = sel {
+            app.repo_page_click.push((inner.y + offset as u16, *sel_index));
+            if *sel_index == selected {
+                line.style = Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD);
+            }
+        }
+        lines.push(line);
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+    render_scrollbar(frame, area, app.repo_page_scroll, items.len(), inner_height);
+}
+
+/// Render the yes/no confirmation dialog (keyboard-driven: y / n / Esc).
+fn render_confirm(frame: &mut Frame, app: &AppState, area: Rect) {
+    let Some(confirm) = &app.confirm else {
+        return;
+    };
+    let width = (confirm.message.chars().count() as u16 + 8).clamp(30, area.width.saturating_sub(4).max(30));
+    let modal = centered_rect(width, 6, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .title(" Confirm ");
+    let inner = block.inner(modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    let lines = vec![
+        Line::from(String::new()),
+        Line::from(Span::styled(
+            format!("  {}", confirm.message),
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(String::new()),
+        Line::from(Span::styled("  [y] yes     [n] no", Style::default().fg(Color::DarkGray))),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }

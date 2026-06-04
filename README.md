@@ -69,12 +69,14 @@ The backends live in `pull-all-siblings/` next to the `pull-all` binary (e.g. `~
 | `Tab` | Toggle focus: list ↔ preview |
 | `PgUp` / `PgDn` | Scroll preview (when focused) |
 | `End` | Resume auto-scroll in preview |
-| `r` / `Enter` | Retry selected repo if it has an issue (failed or skipped) |
+| `Enter` / double-click | Open the dedicated repo page for the selected repo |
+| `r` | Retry selected repo if it has an issue (failed or skipped) |
 | `R` | Retry all repos with an issue (failed or skipped) |
 | `f` | Refetch selected repo (re-pull regardless of status, unless it's in progress) |
 | `F` | Refetch all repos that aren't currently in progress |
 | `i` | Toggle the per-repo info panel (status, branch, ahead/behind, remote, last commit, worktrees, changes, path) |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
+| `t` | Column-toggle leader: press `t` then `a`/`d`/`l`/`w` to show/hide a column |
 | `o` | Open the selected repo's remote in the browser |
 | `y` / `Y` | Copy the selected repo's path / remote URL to the clipboard |
 | `c` | Start claude code in the selected repo (suspends the TUI, returns on exit) |
@@ -87,7 +89,15 @@ The backends live in `pull-all-siblings/` next to the `pull-all` binary (e.g. `~
 
 **Retry vs refetch:** retry only re-runs repos that need it (failed/skipped); refetch re-runs any repo even if it was already up to date. In the status bar, `r`/`R` dim when no repo has an issue, and `f`/`F` dim when there's nothing eligible (the selected repo is still in progress).
 
-The repo list, the log/diff preview, and the help modal all show a scrollbar when their content overflows.
+The repo list, the log/diff preview, the help modal, and the repo page all show a scrollbar when their content overflows. **Clickable commands:** the action hints in the status bar (and the `t` column menu) are mouse-clickable — clicking one runs the same command as the key.
+
+### Repo page (`Enter` / double-click)
+
+Opens a full-screen page for the selected repo that runs `git fetch` and lists every local branch (with HEAD marker, fresh ahead/behind vs upstream, upstream name, last-commit date, subject) and every worktree (branch + path). Navigate rows with `j`/`k`/`g`/`G` (or the wheel / click); `Enter` checks out the selected branch (clean tree only); `D` deletes it (only when not current and nothing unpushed — `git branch -d`, with a confirmation dialog); `c` starts claude code in that branch/worktree's path; `o` opens the branch on the remote; `y` copies its path; `Esc`/`q` returns.
+
+### Columns (`t` leader)
+
+The list always shows the status glyph + name + branch. Press `t` then a column key to toggle extra columns: `a` ahead/behind, `d` dirty marker, `l` last-commit age, `w` worktree count. The git-derived columns (`a`/`d`/`l`) fetch per-repo details in the background the first time one is enabled (cells show `…` until ready); `w` is free from worktree discovery.
 
 ### Info panel (`i`)
 

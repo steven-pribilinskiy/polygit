@@ -62,6 +62,133 @@ pub struct RepoDetails {
     pub commit_rel_date: String,
 }
 
+/// One local branch on the repo page.
+#[derive(Debug, Clone)]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_head: bool,
+    pub upstream: Option<String>,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+    pub last_commit_rel: String,
+    pub subject: String,
+}
+
+impl BranchInfo {
+    /// Deletable from the UI: not the current branch, and no unpushed commits (ahead 0 or
+    /// no upstream). `git branch -d` (merged-only) is the final safety net.
+    pub fn deletable(&self) -> bool {
+        !self.is_head && self.ahead.map_or(true, |ahead| ahead == 0)
+    }
+}
+
+/// One worktree on the repo page.
+#[derive(Debug, Clone)]
+pub struct WorktreeInfo {
+    pub branch: String,
+    pub path: PathBuf,
+}
+
+/// Data backing the dedicated repo page (branches + worktrees + fetch state).
+#[derive(Debug, Clone, Default)]
+pub struct RepoPageData {
+    pub branches: Vec<BranchInfo>,
+    pub worktrees: Vec<WorktreeInfo>,
+    /// True once `git fetch` finished (false during the instant pre-fetch phase).
+    pub fetched: bool,
+    pub fetch_error: Option<String>,
+}
+
+/// A selectable row on the repo page (a branch or a worktree).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageRowKind {
+    Branch,
+    Worktree,
+}
+
+/// A flattened, selectable repo-page row carrying everything render + actions need.
+#[derive(Debug, Clone)]
+pub struct PageRow {
+    pub kind: PageRowKind,
+    pub branch: String,
+    pub path: PathBuf,
+    pub deletable: bool,
+    pub is_head: bool,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+    pub upstream: Option<String>,
+    pub last_commit_rel: String,
+    pub subject: String,
+}
+
+/// An optional list column the user can toggle on via the `t` leader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    AheadBehind,
+    Dirty,
+    LastCommit,
+    Worktrees,
+}
+
+/// Which optional list columns are enabled.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ColumnFlags {
+    pub ahead_behind: bool,
+    pub dirty: bool,
+    pub last_commit: bool,
+    pub worktrees: bool,
+}
+
+impl ColumnFlags {
+    /// Any column that needs a per-repo `git` call (drives the background details pass).
+    pub fn any_git(&self) -> bool {
+        self.ahead_behind || self.dirty || self.last_commit
+    }
+}
+
+/// A pending two-key chord. `t` then a column key toggles that column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Leader {
+    Toggle,
+}
+
+/// A mouse-clickable command region in the status bar (rebuilt each render).
+#[derive(Debug, Clone)]
+pub struct ClickRegion {
+    pub row: u16,
+    pub col_start: u16,
+    pub col_end: u16,
+    pub command: Command,
+}
+
+/// A command dispatchable by key OR by clicking its status-bar hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    Retry,
+    RetryAll,
+    Refetch,
+    RefetchAll,
+    Info,
+    Help,
+    OpenPage,
+    ToggleLeader,
+    ToggleColumn(Column),
+    Quit,
+}
+
+/// What a confirmation dialog will do when accepted.
+#[derive(Debug, Clone)]
+pub enum ConfirmAction {
+    DeleteBranch { repo_idx: usize, branch: String },
+}
+
+/// A yes/no confirmation modal.
+#[derive(Debug, Clone)]
+pub struct ConfirmDialog {
+    pub message: String,
+    pub action: ConfirmAction,
+}
+
 /// Ring buffer capped at `RING_BUFFER_CAPACITY` lines.
 #[derive(Debug, Default)]
 pub struct LogBuffer {
@@ -109,6 +236,10 @@ pub struct RepoState {
     pub details_loading: bool,
     /// Transient diff-view buffer (filled lazily when the Diff view is opened).
     pub diff: Option<Vec<String>>,
+    /// Dedicated repo-page data (branches + worktrees), filled lazily when the page opens.
+    pub page: Option<RepoPageData>,
+    /// Guard so the repo-page fetch is spawned at most once per open.
+    pub page_loading: bool,
 }
 
 impl RepoState {
@@ -127,6 +258,8 @@ impl RepoState {
             details: None,
             details_loading: false,
             diff: None,
+            page: None,
+            page_loading: false,
         }
     }
 }
@@ -186,6 +319,26 @@ pub struct AppState {
     pub help_scroll: usize,
     /// Clickable links in the help modal: (absolute screen row, url). Rebuilt each render.
     pub help_links: Vec<(u16, String)>,
+    /// When Some, the dedicated repo page is open for this absolute repo index.
+    pub repo_page: Option<usize>,
+    /// Selected row within the repo page (index into its selectable branch/worktree rows).
+    pub repo_page_selected: usize,
+    /// Scroll offset within the repo page.
+    pub repo_page_scroll: usize,
+    /// Transient banner on the repo page (action result or error).
+    pub repo_page_message: Option<String>,
+    /// Active confirmation dialog, if any.
+    pub confirm: Option<ConfirmDialog>,
+    /// Which optional list columns are enabled.
+    pub columns: ColumnFlags,
+    /// A pending leader chord (e.g. `t` awaiting a column key).
+    pub pending_leader: Option<Leader>,
+    /// Whether the background "fetch details for all repos" pass has been spawned.
+    pub details_pass_spawned: bool,
+    /// Clickable command regions in the status bar (rebuilt each render).
+    pub clickable: Vec<ClickRegion>,
+    /// Repo-page row hit map: (absolute screen row, selectable index). Rebuilt each render.
+    pub repo_page_click: Vec<(u16, usize)>,
 }
 
 impl AppState {
@@ -213,6 +366,16 @@ impl AppState {
             show_help: false,
             help_scroll: 0,
             help_links: Vec::new(),
+            repo_page: None,
+            repo_page_selected: 0,
+            repo_page_scroll: 0,
+            repo_page_message: None,
+            confirm: None,
+            columns: ColumnFlags::default(),
+            pending_leader: None,
+            details_pass_spawned: false,
+            clickable: Vec::new(),
+            repo_page_click: Vec::new(),
         }
     }
 
@@ -415,6 +578,93 @@ impl AppState {
             Some(visible[self.selected])
         } else {
             None
+        }
+    }
+
+    /// Open the dedicated repo page for the selected repo (forces a fresh fetch).
+    pub fn open_repo_page(&mut self) {
+        if let Some(idx) = self.selected_repo_index() {
+            self.repo_page = Some(idx);
+            self.repo_page_selected = 0;
+            self.repo_page_scroll = 0;
+            self.repo_page_message = None;
+            self.repos[idx].lock().unwrap().page = None;
+        }
+    }
+
+    pub fn close_repo_page(&mut self) {
+        self.repo_page = None;
+        self.repo_page_message = None;
+    }
+
+    /// The repo page's selectable rows (branches then worktrees), in display order.
+    pub fn repo_page_rows(&self) -> Vec<PageRow> {
+        let mut rows = Vec::new();
+        let Some(idx) = self.repo_page else {
+            return rows;
+        };
+        let state = self.repos[idx].lock().unwrap();
+        let Some(page) = &state.page else {
+            return rows;
+        };
+        let repo_path = state.path.clone();
+        for branch in &page.branches {
+            rows.push(PageRow {
+                kind: PageRowKind::Branch,
+                branch: branch.name.clone(),
+                path: repo_path.clone(),
+                deletable: branch.deletable(),
+                is_head: branch.is_head,
+                ahead: branch.ahead,
+                behind: branch.behind,
+                upstream: branch.upstream.clone(),
+                last_commit_rel: branch.last_commit_rel.clone(),
+                subject: branch.subject.clone(),
+            });
+        }
+        for worktree in &page.worktrees {
+            let branch_info = page.branches.iter().find(|info| info.name == worktree.branch);
+            rows.push(PageRow {
+                kind: PageRowKind::Worktree,
+                branch: worktree.branch.clone(),
+                path: worktree.path.clone(),
+                deletable: false,
+                is_head: false,
+                ahead: branch_info.and_then(|info| info.ahead),
+                behind: branch_info.and_then(|info| info.behind),
+                upstream: branch_info.and_then(|info| info.upstream.clone()),
+                last_commit_rel: branch_info
+                    .map(|info| info.last_commit_rel.clone())
+                    .unwrap_or_default(),
+                subject: String::new(),
+            });
+        }
+        rows
+    }
+
+    pub fn repo_page_selectable_len(&self) -> usize {
+        self.repo_page_rows().len()
+    }
+
+    /// The currently selected repo-page row, if any.
+    pub fn repo_page_target(&self) -> Option<PageRow> {
+        self.repo_page_rows().into_iter().nth(self.repo_page_selected)
+    }
+
+    /// The selectable repo-page row at a screen row, if any (mouse hit-test).
+    pub fn repo_page_row_at(&self, row: u16) -> Option<usize> {
+        self.repo_page_click
+            .iter()
+            .find(|(click_row, _)| *click_row == row)
+            .map(|(_, index)| *index)
+    }
+
+    pub fn toggle_column(&mut self, column: Column) {
+        match column {
+            Column::AheadBehind => self.columns.ahead_behind = !self.columns.ahead_behind,
+            Column::Dirty => self.columns.dirty = !self.columns.dirty,
+            Column::LastCommit => self.columns.last_commit = !self.columns.last_commit,
+            Column::Worktrees => self.columns.worktrees = !self.columns.worktrees,
         }
     }
 }
