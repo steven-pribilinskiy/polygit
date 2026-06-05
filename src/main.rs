@@ -32,8 +32,8 @@ use app::{
 };
 use worker::{
     run_all_details, run_all_pulls, run_checkout, run_delete, run_pull_all_branches,
-    run_pull_branch, run_remote_url_discovery, run_repo_details, run_repo_diff, run_repo_page,
-    run_worktree_discovery,
+    run_diff_modal, run_pull_branch, run_remote_url_discovery, run_repo_details, run_repo_diff,
+    run_repo_page, run_worktree_discovery,
 };
 
 /// Interactive multi-repo git pull dashboard.
@@ -537,7 +537,24 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Repo page: the wheel scrolls, a click selects a branch/worktree row.
+                // Diff modal: the wheel scrolls; clicks are ignored (esc/q closes it).
+                if app.diff_modal.is_some() {
+                    if let Some(modal) = app.diff_modal.as_mut() {
+                        match mouse.kind {
+                            MouseEventKind::ScrollDown => {
+                                modal.scroll = modal.scroll.saturating_add(3);
+                            }
+                            MouseEventKind::ScrollUp => {
+                                modal.scroll = modal.scroll.saturating_sub(3);
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+
+                // Repo page: the wheel scrolls; a click selects a row, a double-click opens a
+                // diff modal on a stash or a dirty branch/worktree.
                 if app.repo_page.is_some() {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
@@ -549,6 +566,24 @@ async fn run_event_loop(
                         MouseEventKind::Down(MouseButton::Left) => {
                             if let Some(selection) = app.repo_page_row_at(mouse.row) {
                                 app.repo_page_selected = selection;
+                                let double = last_click
+                                    .map(|(when, previous)| {
+                                        previous == selection
+                                            && when.elapsed() < Duration::from_millis(400)
+                                    })
+                                    .unwrap_or(false);
+                                if double {
+                                    last_click = None;
+                                    if let Some(source) = app.diff_source_for_selected() {
+                                        app.open_diff_modal(source);
+                                        let app_state_clone = Arc::clone(&app_state);
+                                        drop(app);
+                                        tokio::spawn(run_diff_modal(app_state_clone));
+                                        continue;
+                                    }
+                                } else {
+                                    last_click = Some((Instant::now(), selection));
+                                }
                             }
                         }
                         _ => {}
@@ -713,6 +748,53 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Diff modal: scroll, toggle the dirty-diff mode, or close.
+                if app.diff_modal.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    let page = app.diff_modal_viewport.max(1);
+                    let scroll_by = |app: &mut AppState, delta: isize| {
+                        if let Some(modal) = app.diff_modal.as_mut() {
+                            modal.scroll = if delta < 0 {
+                                modal.scroll.saturating_sub((-delta) as usize)
+                            } else {
+                                modal.scroll.saturating_add(delta as usize)
+                            };
+                        }
+                    };
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.diff_modal = None,
+                        KeyCode::Char('j') | KeyCode::Down => scroll_by(&mut app, 1),
+                        KeyCode::Char('k') | KeyCode::Up => scroll_by(&mut app, -1),
+                        KeyCode::PageDown => scroll_by(&mut app, isize::try_from(page).unwrap_or(isize::MAX)),
+                        KeyCode::PageUp => scroll_by(&mut app, -isize::try_from(page).unwrap_or(isize::MAX)),
+                        KeyCode::Char('g') | KeyCode::Home => {
+                            if let Some(modal) = app.diff_modal.as_mut() {
+                                modal.scroll = 0;
+                            }
+                        }
+                        KeyCode::Char('G') | KeyCode::End => {
+                            if let Some(modal) = app.diff_modal.as_mut() {
+                                modal.scroll = usize::MAX;
+                            }
+                        }
+                        KeyCode::Char('t') | KeyCode::Tab => {
+                            if app.diff_modal_toggle_mode() {
+                                let app_state_clone = Arc::clone(&app_state);
+                                drop(app);
+                                tokio::spawn(run_diff_modal(app_state_clone));
+                                continue;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Dedicated repo page: navigate branches/worktrees and act on the selected row.
                 if app.repo_page.is_some() {
                     if key.code == KeyCode::Char('c')
@@ -742,8 +824,16 @@ async fn run_event_loop(
                         KeyCode::PageUp => {
                             app.repo_page_scroll = app.repo_page_scroll.saturating_sub(10);
                         }
-                        // Checkout the selected branch (clean-tree only, enforced in the worker).
+                        // Enter on a stash or a dirty row opens its diff modal; on a clean
+                        // non-HEAD branch it checks the branch out.
                         KeyCode::Enter | KeyCode::Char(' ') => {
+                            if let Some(source) = app.diff_source_for_selected() {
+                                app.open_diff_modal(source);
+                                let app_state_clone = Arc::clone(&app_state);
+                                drop(app);
+                                tokio::spawn(run_diff_modal(app_state_clone));
+                                continue;
+                            }
                             if let (Some(idx), Some(row)) = (app.repo_page, app.repo_page_target()) {
                                 if row.kind == PageRowKind::Branch && !row.is_head {
                                     let app_state_clone = Arc::clone(&app_state);
@@ -854,8 +944,8 @@ async fn run_event_loop(
                         KeyCode::PageUp => {
                             app.help_scroll = app.help_scroll.saturating_sub(10);
                         }
-                        KeyCode::Char('g') => app.help_scroll = 0,
-                        KeyCode::Char('G') => app.help_scroll = usize::MAX,
+                        KeyCode::Char('g') | KeyCode::Home => app.help_scroll = 0,
+                        KeyCode::Char('G') | KeyCode::End => app.help_scroll = usize::MAX,
                         _ => {}
                     }
                     continue;
@@ -869,6 +959,7 @@ async fn run_event_loop(
                         KeyCode::Char('d') => app.toggle_column(Column::Dirty),
                         KeyCode::Char('l') => app.toggle_column(Column::LastCommit),
                         KeyCode::Char('w') => app.toggle_column(Column::Worktrees),
+                        KeyCode::Char('s') => app.toggle_column(Column::Stashes),
                         KeyCode::Char('t') | KeyCode::Esc => app.pending_leader = None,
                         _ => {}
                     }

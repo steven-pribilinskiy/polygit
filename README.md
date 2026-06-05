@@ -78,7 +78,7 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `F` | Refetch all repos that aren't currently in progress |
 | `i` | Toggle the per-repo info panel (status, branch, ahead/behind, remote, last commit, worktrees, changes, path) |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
-| `t` | Column-toggle leader: press `t` then `a`/`d`/`l`/`w` to show/hide a column |
+| `t` | Column-toggle leader: press `t` then `a`/`d`/`l`/`w`/`s` to show/hide a column (mode stays active until `Esc`) |
 | `o` | Open the selected repo's remote in the browser |
 | `y` / `Y` | Copy the selected repo's path / remote URL to the clipboard |
 | `c` | Start claude code in the selected repo (suspends the TUI, returns on exit) |
@@ -95,11 +95,13 @@ The repo list, the log/diff preview, the help modal, and the repo page all show 
 
 ### Repo page (`Enter` / double-click)
 
-Opens a full-screen page for the selected repo that runs `git fetch` and lists every local branch (with HEAD marker, fresh ahead/behind vs upstream, upstream name, last-commit date, subject) and every worktree (branch + path). Navigate rows with `j`/`k`/`g`/`G` (or the wheel / click); `Enter` checks out the selected branch (clean tree only); `D` deletes it (only when not current and nothing unpushed — `git branch -d`, with a confirmation dialog); `c` starts claude code in that branch/worktree's path; `o` opens the branch on the remote; `y` copies its path; `Esc`/`q` returns.
+Opens a full-screen page for the selected repo that runs `git fetch` and lists every local branch (with HEAD marker, fresh ahead/behind vs upstream, upstream name, last-commit date, subject), every worktree (branch + path), and every stash (`STASHES` section). A red `●` marks branches/worktrees with uncommitted changes. Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / click); `Enter` checks out the selected branch (clean tree only); `p` fast-forwards the selected branch, `P` all fast-forwardable branches; `D` deletes a branch (only when not current and nothing unpushed — `git branch -d`, with a confirmation dialog); `c` starts claude code in that branch/worktree's path; `o` opens the branch on the remote; `y` copies its path; `Esc`/`q` returns.
+
+`Enter` or a double-click on a **stash** or a **dirty** branch/worktree opens a 90%-of-screen **diff modal**: a stash shows `git stash show -p`; a dirty row shows its uncommitted changes, and `t` toggles between *uncommitted* (vs HEAD) and *vs base branch* (everything changed since forking from `origin/HEAD`). Scroll with `↑↓`/`PgUp`/`PgDn`/`Home`/`End` or the wheel; `Esc` closes.
 
 ### Columns (`t` leader)
 
-The list always shows the status glyph + name + branch. Press `t` then a column key to toggle extra columns: `a` ahead/behind, `d` dirty marker, `l` last-commit age, `w` worktree count. The git-derived columns (`a`/`d`/`l`) fetch per-repo details in the background the first time one is enabled (cells show `…` until ready); `w` is free from worktree discovery.
+The list always shows the status glyph + name + branch. Press `t` then a column key to toggle extra columns: `a` ahead/behind, `d` dirty marker, `l` last-commit age, `w` worktree count, `s` stash count (`≡N`). The git-derived columns (`a`/`d`/`l`/`s`) fetch per-repo details in the background the first time one is enabled (cells show `…` until ready); `w` is free from worktree discovery. Enabled columns persist across runs.
 
 ### Info panel (`i`)
 

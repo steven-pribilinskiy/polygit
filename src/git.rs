@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tokio::process::Command;
 
-use crate::app::{BranchInfo, RepoDetails, WorktreeInfo};
+use crate::app::{BranchInfo, RepoDetails, StashInfo, WorktreeInfo};
 
 /// Result of parsing git pull output to determine status.
 #[derive(Debug, PartialEq, Eq)]
@@ -268,6 +268,126 @@ pub async fn get_diff(dir: &Path, dirty: bool) -> Vec<String> {
     } else {
         lines
     }
+}
+
+/// Run a git command and return its stdout as diff lines, with friendly placeholders for
+/// empty output or failure.
+async fn run_diff(args: &[&str]) -> Vec<String> {
+    let output = match Command::new("git").args(args).output().await {
+        Ok(output) => output,
+        Err(_) => return vec!["(diff unavailable)".to_string()],
+    };
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return vec![if err.is_empty() {
+            "(diff unavailable)".to_string()
+        } else {
+            format!("(diff failed: {err})")
+        }];
+    }
+    let lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.to_string())
+        .collect();
+    if lines.is_empty() {
+        vec!["(no changes)".to_string()]
+    } else {
+        lines
+    }
+}
+
+/// List stash entries (`git stash list`), newest (`stash@{0}`) first.
+pub async fn list_stashes(dir: &Path) -> Vec<StashInfo> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "stash", "list", "--format=%gs"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+        .map(|(index, label)| StashInfo {
+            index,
+            label: label.to_string(),
+        })
+        .collect()
+}
+
+/// Colored diff of a stash entry (`git stash show -p stash@{index}`).
+pub async fn stash_diff(dir: &Path, index: usize) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let stash_ref = format!("stash@{{{index}}}");
+    run_diff(&["-C", dir_str, "stash", "show", "-p", "--color=always", &stash_ref]).await
+}
+
+/// Colored diff of uncommitted changes against the branch's own HEAD (`git diff HEAD`).
+pub async fn uncommitted_diff(dir: &Path) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    run_diff(&["-C", dir_str, "diff", "--color=always", "HEAD"]).await
+}
+
+/// Resolve the repo's base branch ref: the remote's default branch (`origin/HEAD`) if set,
+/// otherwise the first of origin/{main,master,dev} or local {main,master,dev} that exists.
+pub async fn default_base_branch(dir: &Path) -> Option<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    if let Ok(output) = Command::new("git")
+        .args(["-C", dir_str, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        .output()
+        .await
+    {
+        if output.status.success() {
+            let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !head.is_empty() {
+                return Some(head);
+            }
+        }
+    }
+    for candidate in [
+        "origin/main",
+        "origin/master",
+        "origin/dev",
+        "main",
+        "master",
+        "dev",
+    ] {
+        let ok = Command::new("git")
+            .args(["-C", dir_str, "rev-parse", "--verify", "--quiet", candidate])
+            .output()
+            .await
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+/// Colored diff of everything HEAD changed since it forked from its base branch, including
+/// uncommitted work (`git diff <merge-base(base, HEAD)>`).
+pub async fn base_branch_diff(dir: &Path) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let Some(base) = default_base_branch(dir).await else {
+        return vec!["(no base branch found — is there an origin remote?)".to_string()];
+    };
+    let merge_base = match Command::new("git")
+        .args(["-C", dir_str, "merge-base", &base, "HEAD"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => base.clone(),
+    };
+    let mut lines = run_diff(&["-C", dir_str, "diff", "--color=always", &merge_base]).await;
+    lines.insert(0, format!("(vs base branch: {base})"));
+    lines
 }
 
 /// Run `git fetch --all` to refresh remote-tracking refs. Best-effort.

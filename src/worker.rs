@@ -6,12 +6,14 @@ use tokio::process::Command;
 use tokio::sync::Semaphore;
 
 use crate::app::{
-    AppState, PageRow, PageRowKind, RepoPageData, RepoStatus, SharedRepoState, WorktreeEntry,
+    AppState, DiffMode, DiffSource, PageRow, PageRowKind, RepoPageData, RepoStatus,
+    SharedRepoState, WorktreeEntry,
 };
 use crate::git::{
-    checkout_branch, classify_pull_output, delete_branch, diff_stat, discover_worktrees,
-    fetch_ff_branch, fetch_remote, get_branch, get_diff, get_remote_url, get_repo_details,
-    is_dirty, list_local_branches, list_worktrees, pull_all_branches, pull_ff_only, PullOutcome,
+    base_branch_diff, checkout_branch, classify_pull_output, delete_branch, diff_stat,
+    discover_worktrees, fetch_ff_branch, fetch_remote, get_branch, get_diff, get_remote_url,
+    get_repo_details, is_dirty, list_local_branches, list_stashes, list_worktrees,
+    pull_all_branches, pull_ff_only, stash_diff, uncommitted_diff, PullOutcome,
 };
 
 /// Pull a single repository, updating `repo_state` as progress arrives.
@@ -227,11 +229,22 @@ pub async fn run_repo_page(repo: SharedRepoState) {
 
     let branches = list_local_branches(&path).await;
     let worktrees = list_worktrees(&path).await;
+    let stashes = list_stashes(&path).await;
+    let head_dirty = is_dirty(&path).await.unwrap_or(false);
+    let mut dirty_worktrees = Vec::new();
+    for worktree in &worktrees {
+        if is_dirty(&worktree.path).await.unwrap_or(false) {
+            dirty_worktrees.push(worktree.path.clone());
+        }
+    }
     {
         let mut state = repo.lock().unwrap();
         state.page = Some(RepoPageData {
             branches,
             worktrees: worktrees.clone(),
+            stashes: stashes.clone(),
+            head_dirty,
+            dirty_worktrees: dirty_worktrees.clone(),
             fetched: false,
             fetch_error: None,
         });
@@ -243,10 +256,48 @@ pub async fn run_repo_page(repo: SharedRepoState) {
     state.page = Some(RepoPageData {
         branches,
         worktrees,
+        stashes,
+        head_dirty,
+        dirty_worktrees,
         fetched: true,
         fetch_error: fetch.err(),
     });
     state.page_loading = false;
+}
+
+/// Compute the diff lines for the currently open diff modal (based on its source + mode)
+/// and write them back, if the modal is still open and unchanged.
+pub async fn run_diff_modal(app_state: Arc<Mutex<AppState>>) {
+    let Some((source, mode)) = ({
+        let app = app_state.lock().unwrap();
+        app.diff_modal.as_ref().map(|modal| (modal.source.clone(), modal.mode))
+    }) else {
+        return;
+    };
+
+    let lines = match &source {
+        DiffSource::Stash { path, index, .. } => stash_diff(path, *index).await,
+        DiffSource::Dirty { path, .. } => match mode {
+            DiffMode::Uncommitted => uncommitted_diff(path).await,
+            DiffMode::BaseBranch => base_branch_diff(path).await,
+        },
+    };
+
+    let mut app = app_state.lock().unwrap();
+    if let Some(modal) = app.diff_modal.as_mut() {
+        // Only apply if the modal still wants this exact view (source + mode unchanged).
+        let same_source = matches!(
+            (&modal.source, &source),
+            (DiffSource::Stash { index: a, .. }, DiffSource::Stash { index: b, .. }) if a == b
+        ) || matches!(
+            (&modal.source, &source),
+            (DiffSource::Dirty { path: a, .. }, DiffSource::Dirty { path: b, .. }) if a == b
+        );
+        if same_source && modal.mode == mode {
+            modal.lines = lines;
+            modal.loading = false;
+        }
+    }
 }
 
 /// Check out a branch in a repo's main worktree, set a result banner, and reload its page.
@@ -302,6 +353,7 @@ pub async fn run_pull_branch(app_state: Arc<Mutex<AppState>>, repo_idx: usize, r
     };
 
     let result = match row.kind {
+        PageRowKind::Stash => Err("cannot pull a stash".to_string()),
         PageRowKind::Worktree => pull_ff_only(&row.path).await,
         PageRowKind::Branch => {
             if row.is_head {

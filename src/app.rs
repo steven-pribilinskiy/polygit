@@ -90,21 +90,62 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
 }
 
+/// One entry from `git stash list`.
+#[derive(Debug, Clone)]
+pub struct StashInfo {
+    pub index: usize,
+    pub label: String,
+}
+
+/// Which diff a dirty row's modal shows. (Stash rows ignore this.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffMode {
+    /// Uncommitted work vs the branch's own HEAD (`git diff HEAD`).
+    Uncommitted,
+    /// Everything the branch changed since it forked from its base branch.
+    BaseBranch,
+}
+
+/// What a diff modal is showing.
+#[derive(Debug, Clone)]
+pub enum DiffSource {
+    /// A stash entry: `git stash show -p stash@{index}` at `path`.
+    Stash { path: PathBuf, index: usize, label: String },
+    /// A dirty branch/worktree at `path` (toggle between uncommitted and base-branch diff).
+    Dirty { path: PathBuf, name: String },
+}
+
+/// The full-screen-ish (90%) diff modal state.
+#[derive(Debug, Clone)]
+pub struct DiffModal {
+    pub source: DiffSource,
+    pub mode: DiffMode,
+    pub lines: Vec<String>,
+    pub scroll: usize,
+    pub loading: bool,
+}
+
 /// Data backing the dedicated repo page (branches + worktrees + fetch state).
 #[derive(Debug, Clone, Default)]
 pub struct RepoPageData {
     pub branches: Vec<BranchInfo>,
     pub worktrees: Vec<WorktreeInfo>,
+    pub stashes: Vec<StashInfo>,
+    /// Main worktree has uncommitted changes (marks the HEAD branch row as diff-able).
+    pub head_dirty: bool,
+    /// Worktree paths with uncommitted changes (mark those rows as diff-able).
+    pub dirty_worktrees: Vec<PathBuf>,
     /// True once `git fetch` finished (false during the instant pre-fetch phase).
     pub fetched: bool,
     pub fetch_error: Option<String>,
 }
 
-/// A selectable row on the repo page (a branch or a worktree).
+/// A selectable row on the repo page (a branch, a worktree, or a stash).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageRowKind {
     Branch,
     Worktree,
+    Stash,
 }
 
 /// A flattened, selectable repo-page row carrying everything render + actions need.
@@ -115,6 +156,10 @@ pub struct PageRow {
     pub path: PathBuf,
     pub deletable: bool,
     pub is_head: bool,
+    /// Has uncommitted changes (a diff modal can be opened on it).
+    pub dirty: bool,
+    /// Set for stash rows: the `stash@{index}` number.
+    pub stash_index: Option<usize>,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub upstream: Option<String>,
@@ -129,21 +174,25 @@ pub enum Column {
     Dirty,
     LastCommit,
     Worktrees,
+    Stashes,
 }
 
-/// Which optional list columns are enabled.
+/// Which optional list columns are enabled. `#[serde(default)]` keeps older state files
+/// (missing newer fields) loadable instead of resetting every column.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ColumnFlags {
     pub ahead_behind: bool,
     pub dirty: bool,
     pub last_commit: bool,
     pub worktrees: bool,
+    pub stashes: bool,
 }
 
 impl ColumnFlags {
     /// Any column that needs a per-repo `git` call (drives the background details pass).
     pub fn any_git(&self) -> bool {
-        self.ahead_behind || self.dirty || self.last_commit
+        self.ahead_behind || self.dirty || self.last_commit || self.stashes
     }
 }
 
@@ -345,6 +394,10 @@ pub struct AppState {
     pub clickable: Vec<ClickRegion>,
     /// Repo-page row hit map: (absolute screen row, selectable index). Rebuilt each render.
     pub repo_page_click: Vec<(u16, usize)>,
+    /// The 90% diff modal (stash diff or a dirty branch/worktree diff), if open.
+    pub diff_modal: Option<DiffModal>,
+    /// Visible line count of the diff modal, captured at render for PgUp/PgDn paging.
+    pub diff_modal_viewport: usize,
 }
 
 impl AppState {
@@ -397,6 +450,8 @@ impl AppState {
             details_pass_spawned: false,
             clickable: Vec::new(),
             repo_page_click: Vec::new(),
+            diff_modal: None,
+            diff_modal_viewport: 0,
         }
     }
 
@@ -658,6 +713,8 @@ impl AppState {
                 path: repo_path.clone(),
                 deletable: branch.deletable(),
                 is_head: branch.is_head,
+                dirty: branch.is_head && page.head_dirty,
+                stash_index: None,
                 ahead: branch.ahead,
                 behind: branch.behind,
                 upstream: branch.upstream.clone(),
@@ -673,6 +730,8 @@ impl AppState {
                 path: worktree.path.clone(),
                 deletable: false,
                 is_head: false,
+                dirty: page.dirty_worktrees.contains(&worktree.path),
+                stash_index: None,
                 ahead: branch_info.and_then(|info| info.ahead),
                 behind: branch_info.and_then(|info| info.behind),
                 upstream: branch_info.and_then(|info| info.upstream.clone()),
@@ -682,7 +741,71 @@ impl AppState {
                 subject: String::new(),
             });
         }
+        for stash in &page.stashes {
+            rows.push(PageRow {
+                kind: PageRowKind::Stash,
+                branch: stash.label.clone(),
+                path: repo_path.clone(),
+                deletable: false,
+                is_head: false,
+                dirty: false,
+                stash_index: Some(stash.index),
+                ahead: None,
+                behind: None,
+                upstream: None,
+                last_commit_rel: String::new(),
+                subject: String::new(),
+            });
+        }
         rows
+    }
+
+    /// Build a `DiffSource` for the selected repo-page row if it's diff-able
+    /// (a stash, or a dirty branch/worktree); otherwise None.
+    pub fn diff_source_for_selected(&self) -> Option<DiffSource> {
+        let row = self.repo_page_target()?;
+        match row.kind {
+            PageRowKind::Stash => Some(DiffSource::Stash {
+                path: row.path,
+                index: row.stash_index?,
+                label: row.branch,
+            }),
+            PageRowKind::Branch | PageRowKind::Worktree if row.dirty => Some(DiffSource::Dirty {
+                path: row.path,
+                name: row.branch,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Open the diff modal in a loading state for `source`.
+    pub fn open_diff_modal(&mut self, source: DiffSource) {
+        self.diff_modal = Some(DiffModal {
+            source,
+            mode: DiffMode::Uncommitted,
+            lines: vec!["(loading…)".to_string()],
+            scroll: 0,
+            loading: true,
+        });
+    }
+
+    /// Toggle a dirty-row diff between uncommitted and base-branch views, returning true if
+    /// a recompute is needed (i.e. the source supports toggling). Stash diffs don't toggle.
+    pub fn diff_modal_toggle_mode(&mut self) -> bool {
+        let Some(modal) = self.diff_modal.as_mut() else {
+            return false;
+        };
+        if !matches!(modal.source, DiffSource::Dirty { .. }) {
+            return false;
+        }
+        modal.mode = match modal.mode {
+            DiffMode::Uncommitted => DiffMode::BaseBranch,
+            DiffMode::BaseBranch => DiffMode::Uncommitted,
+        };
+        modal.lines = vec!["(loading…)".to_string()];
+        modal.scroll = 0;
+        modal.loading = true;
+        true
     }
 
     pub fn repo_page_selectable_len(&self) -> usize {
@@ -708,6 +831,7 @@ impl AppState {
             Column::Dirty => self.columns.dirty = !self.columns.dirty,
             Column::LastCommit => self.columns.last_commit = !self.columns.last_commit,
             Column::Worktrees => self.columns.worktrees = !self.columns.worktrees,
+            Column::Stashes => self.columns.stashes = !self.columns.stashes,
         }
     }
 }

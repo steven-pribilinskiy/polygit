@@ -9,7 +9,10 @@ use ratatui::widgets::{
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{AppState, ClickRegion, Column, Command, Leader, PageRowKind, RepoStatus, RightView};
+use crate::app::{
+    AppState, ClickRegion, Column, Command, DiffMode, DiffSource, Leader, PageRowKind, RepoStatus,
+    RightView,
+};
 
 const SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 
@@ -55,6 +58,9 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
         render_repo_page(frame, app, area);
         if app.confirm.is_some() {
             render_confirm(frame, app, area);
+        }
+        if app.diff_modal.is_some() {
+            render_diff_modal(frame, app, area);
         }
         return;
     }
@@ -201,7 +207,8 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
     let columns_width = usize::from(columns.ahead_behind) * 10
         + usize::from(columns.dirty) * 4
         + usize::from(columns.last_commit) * 12
-        + usize::from(columns.worktrees) * 5;
+        + usize::from(columns.worktrees) * 5
+        + usize::from(columns.stashes) * 5;
 
     let inner_width = inner.width as usize;
     let branch_col_width = inner_width
@@ -272,6 +279,14 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
                 let count = app.worktrees.iter().filter(|entry| entry.repo == state.name).count();
                 let text = if count > 0 { format!("⑂{count}") } else { String::new() };
                 spans.push(Span::styled(format!(" {text:<4}"), Style::default().fg(Color::Cyan)));
+            }
+            if columns.stashes {
+                let text = match &state.details {
+                    Some(details) if details.stash_count > 0 => format!("≡{}", details.stash_count),
+                    Some(_) => String::new(),
+                    None => "…".to_string(),
+                };
+                spans.push(Span::styled(format!(" {text:<4}"), Style::default().fg(Color::Magenta)));
             }
 
             ListItem::new(Line::from(spans))
@@ -806,6 +821,8 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (format!("{} l last-commit", mark(columns.last_commit)), active, Some(Command::ToggleColumn(Column::LastCommit))),
                 (" · ".to_string(), hint, None),
                 (format!("{} w worktrees", mark(columns.worktrees)), active, Some(Command::ToggleColumn(Column::Worktrees))),
+                (" · ".to_string(), hint, None),
+                (format!("{} s stashes", mark(columns.stashes)), active, Some(Command::ToggleColumn(Column::Stashes))),
                 (" · esc".to_string(), hint, None),
             ],
             area.x,
@@ -938,8 +955,10 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     items.push(plain("  Retry    r selected · R all          (repos that failed or were skipped)"));
     items.push(plain("  Refetch  f selected · F all          (re-pull anything; skips in-progress)"));
     items.push(plain("  Repo     i info · I pin info · d diff · o open in browser · y/Y copy path/url · c claude · x clear log"));
-    items.push(plain("  Cols     t toggle mode (stays on) · a/d/l/w columns · Esc done"));
+    items.push(plain("  Cols     t toggle mode (stays on) · a/d/l/w/s columns (ahead-behind/dirty/last-commit/worktrees/stashes) · Esc done"));
     items.push(plain("  Page     enter open repo · p pull branch · P pull all branches · o open in browser · D delete · Home/End jump · esc back"));
+    items.push(plain("  Stash    STASHES section lists stashes · ● marks dirty branches/worktrees"));
+    items.push(plain("  Diff     enter/double-click a stash or dirty row → 90% diff modal · t toggle uncommitted⇄base · ↑↓/PgUp/PgDn/Home/End scroll · esc close"));
     items.push(plain("  Layout   [ ] resize panes  ·  drag the divider to resize"));
     items.push(plain("  Filter   / filter by name  ·  Esc clear filter"));
     items.push(plain("  Other    ? this help  ·  q quit  ·  Ctrl-C exit"));
@@ -985,6 +1004,61 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     frame.render_widget(block, modal_area);
     frame.render_widget(Paragraph::new(lines), inner);
     render_scrollbar(frame, modal_area, app.help_scroll, items.len(), inner_height);
+}
+
+/// Render the 90%-of-screen diff modal (a stash diff, or a dirty branch/worktree diff).
+fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let modal_width = (area.width * 9 / 10).max(20);
+    let modal_height = (area.height * 9 / 10).max(6);
+    let modal_area = centered_rect(modal_width, modal_height, area);
+    let inner_height = (modal_height.saturating_sub(2)) as usize;
+
+    // Read what we need (owned) so the immutable borrow ends before we write scroll/viewport.
+    let (title, footer, total, scroll, view) = {
+        let Some(modal) = app.diff_modal.as_ref() else {
+            return;
+        };
+        let (title, footer) = match &modal.source {
+            DiffSource::Stash { index, label, .. } => (
+                format!(" stash@{{{index}}} · {} ", truncate_str(label, 60)),
+                " ↑↓ · PgUp/PgDn · Home/End · esc close ".to_string(),
+            ),
+            DiffSource::Dirty { name, .. } => {
+                let mode = match modal.mode {
+                    DiffMode::Uncommitted => "uncommitted",
+                    DiffMode::BaseBranch => "vs base branch",
+                };
+                (
+                    format!(" {name} · {mode} "),
+                    " ↑↓ · PgUp/PgDn · Home/End · t toggle uncommitted⇄base · esc close ".to_string(),
+                )
+            }
+        };
+        let total = modal.lines.len();
+        let scroll = modal.scroll.min(total.saturating_sub(inner_height));
+        let view: Vec<Line> = modal.lines[scroll..(scroll + inner_height).min(total)]
+            .iter()
+            .map(|line| ansi_line_to_ratatui(line))
+            .collect();
+        (title, footer, total, scroll, view)
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(title)
+        .title_bottom(Line::from(footer).right_aligned());
+    let inner = block.inner(modal_area);
+
+    frame.render_widget(Clear, modal_area);
+    frame.render_widget(block, modal_area);
+    frame.render_widget(Paragraph::new(view), inner);
+    render_scrollbar(frame, modal_area, scroll, total, inner_height);
+
+    if let Some(modal) = app.diff_modal.as_mut() {
+        modal.scroll = scroll;
+    }
+    app.diff_modal_viewport = inner_height;
 }
 
 /// Fixed-width ahead/behind spans (`↑a ↓b`), each arrow colored by its own count: a zero
@@ -1056,7 +1130,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
         .title_bottom(
-            Line::from(" ↑↓ move · Home/End · enter checkout · p pull · P pull all · c claude · o open in browser · y copy · D delete · esc back ")
+            Line::from(" ↑↓ move · Home/End · enter checkout · enter/dbl-click diff (stash/dirty) · p pull · P pull all · c claude · o open · y copy · D delete · esc back ")
                 .right_aligned(),
         );
     let inner = block.inner(area);
@@ -1069,7 +1143,15 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
 
     let branch_count = rows.iter().filter(|row| row.kind == PageRowKind::Branch).count();
-    let worktree_count = rows.len() - branch_count;
+    let worktree_count = rows.iter().filter(|row| row.kind == PageRowKind::Worktree).count();
+    let stash_count = rows.iter().filter(|row| row.kind == PageRowKind::Stash).count();
+    let dirty_marker = |dirty: bool| {
+        if dirty {
+            Span::styled(" ●", Style::default().fg(Color::Red))
+        } else {
+            Span::raw("  ")
+        }
+    };
     let name_pad = rows
         .iter()
         .map(|row| row.branch.chars().count())
@@ -1115,6 +1197,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect) {
         let subject = Span::styled(format!("  {}", truncate_str(&row.subject, 50)), label);
         let mut line_spans = vec![marker, name_span, Span::raw("  ")];
         line_spans.extend(ahead_behind_spans(row.ahead, row.behind, 10));
+        line_spans.push(dirty_marker(row.dirty));
         line_spans.push(upstream);
         line_spans.push(date);
         line_spans.push(subject);
@@ -1135,8 +1218,28 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect) {
             Span::raw("  "),
         ];
         line_spans.extend(ahead_behind_spans(row.ahead, row.behind, 10));
+        line_spans.push(dirty_marker(row.dirty));
         line_spans.push(Span::styled(format!("  {}", row.path.display()), label));
         items.push((Line::from(line_spans), Some(sel_index)));
+    }
+
+    items.push((Line::from(String::new()), None));
+    items.push((Line::from(Span::styled(format!("STASHES ({stash_count})"), header_style)), None));
+    if stash_count == 0 {
+        items.push((Line::from(Span::styled("  (none)", label)), None));
+    }
+    for (sel_index, row) in rows.iter().enumerate() {
+        if row.kind != PageRowKind::Stash {
+            continue;
+        }
+        let stash_ref = format!("stash@{{{}}}", row.stash_index.unwrap_or(0));
+        items.push((
+            Line::from(vec![
+                Span::styled(format!("  {stash_ref:<10}"), Style::default().fg(Color::Magenta)),
+                Span::styled(format!("  {}", truncate_str(&row.branch, 70)), value),
+            ]),
+            Some(sel_index),
+        ));
     }
 
     let inner_height = inner.height as usize;
