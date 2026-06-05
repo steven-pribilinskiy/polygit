@@ -253,12 +253,26 @@ pub async fn run_repo_page(repo: SharedRepoState) {
 pub async fn run_checkout(app_state: Arc<Mutex<AppState>>, repo_idx: usize, branch: String) {
     let path = { app_state.lock().unwrap().repos[repo_idx].lock().unwrap().path.clone() };
     let result = checkout_branch(&path, &branch).await;
+    // On success, refresh the cached branch + details so the main list reflects the new HEAD
+    // (not the branch we were on before). Fetched before taking the locks since it's async.
+    let new_details = if result.is_ok() {
+        Some(get_repo_details(&path).await)
+    } else {
+        None
+    };
     let mut app = app_state.lock().unwrap();
     app.repo_page_message = Some(match result {
         Ok(()) => format!("Checked out {branch}"),
         Err(err) => format!("checkout failed: {err}"),
     });
-    app.repos[repo_idx].lock().unwrap().page = None;
+    {
+        let mut state = app.repos[repo_idx].lock().unwrap();
+        if let Some(details) = new_details {
+            state.branch = Some(branch);
+            state.details = Some(details);
+        }
+        state.page = None;
+    }
 }
 
 /// Delete a branch (safe `-d`), set a result banner, and reload the repo's page.
