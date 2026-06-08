@@ -1078,6 +1078,11 @@ async fn run_event_loop(
                         }
                         KeyCode::Char('g') | KeyCode::Home => app.help_scroll = 0,
                         KeyCode::Char('G') | KeyCode::End => app.help_scroll = usize::MAX,
+                        KeyCode::Char('D') => {
+                            drop(app);
+                            open_url(render::DOCS_URL);
+                            continue;
+                        }
                         _ => {}
                     }
                     continue;
@@ -1258,6 +1263,11 @@ async fn run_event_loop(
                             drop(app);
                             open_url(&url);
                         }
+                    }
+                    // Open the documentation website in the browser.
+                    (KeyCode::Char('D'), _) => {
+                        drop(app);
+                        open_url(render::DOCS_URL);
                     }
                     // Copy the selected repo's local path to the clipboard.
                     (KeyCode::Char('y'), _) => {

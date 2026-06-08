@@ -88,7 +88,8 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `Y` | Copy the selected repo's **remote (origin) URL** to the clipboard |
 | `c` | Start claude code in the selected repo (suspends the TUI, returns on exit) |
 | `x` | Clear **this repo's log buffer** (empties the streamed pull output) |
-| `?` | Open the help modal (GitHub/notes links, all keys, flags & env) |
+| `D` | Open the [documentation website](https://steven-pribilinskiy.github.io/pull-all/) in the browser |
+| `?` | Open the help modal (docs/GitHub/notes links, all keys, flags & env) |
 | `/` | Filter repos by name |
 | `Esc` | Clear filter (or quit when no filter) |
 | `q` | Quit |

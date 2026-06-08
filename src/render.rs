@@ -16,6 +16,9 @@ use crate::app::{
 
 const SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 
+/// The published documentation site (opened by the `D` hotkey and linked in the help modal).
+pub const DOCS_URL: &str = "https://steven-pribilinskiy.github.io/pull-all/";
+
 /// The spinner frame for the current render tick (advances every 2 ticks). Shared by the
 /// list status glyph and the repo-page loading indicator so they animate identically.
 fn spinner_frame(tick: u64) -> &'static str {
@@ -599,11 +602,13 @@ fn ansi_line_to_ratatui(line: &str) -> Line<'static> {
     let mut current_style = Style::default();
     let mut current_text = String::new();
 
-    let bytes = line.as_bytes();
+    // Iterate by char, not byte: SGR sequences are all ASCII, while log/commit text can hold
+    // multi-byte UTF-8. Pushing raw bytes as chars corrupts those into mojibake + C1 controls.
+    let chars: Vec<char> = line.chars().collect();
     let mut pos = 0;
 
-    while pos < bytes.len() {
-        if bytes[pos] == b'\x1b' && pos + 1 < bytes.len() && bytes[pos + 1] == b'[' {
+    while pos < chars.len() {
+        if chars[pos] == '\x1b' && pos + 1 < chars.len() && chars[pos + 1] == '[' {
             // ESC [ ... m — SGR sequence
             if !current_text.is_empty() {
                 spans.push(Span::styled(current_text.clone(), current_style));
@@ -611,16 +616,16 @@ fn ansi_line_to_ratatui(line: &str) -> Line<'static> {
             }
             pos += 2;
             let start = pos;
-            while pos < bytes.len() && bytes[pos] != b'm' {
+            while pos < chars.len() && chars[pos] != 'm' {
                 pos += 1;
             }
-            if pos < bytes.len() {
-                let code_str = std::str::from_utf8(&bytes[start..pos]).unwrap_or("");
-                current_style = apply_sgr(current_style, code_str);
+            if pos < chars.len() {
+                let code_str: String = chars[start..pos].iter().collect();
+                current_style = apply_sgr(current_style, &code_str);
                 pos += 1; // skip 'm'
             }
         } else {
-            current_text.push(bytes[pos] as char);
+            current_text.push(chars[pos]);
             pos += 1;
         }
     }
@@ -971,6 +976,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         None,
     ));
     items.push(plain(""));
+    items.push(link("Docs", DOCS_URL));
     items.push(link("GitHub", GITHUB_URL));
     items.push(link("Notes", NOTES_BAKEOFF));
     items.push(link("", NOTES_FEATURES));
@@ -1004,7 +1010,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     items.push(subhead("  Columns"));
     items.push(plain("    t then a/d/l/w/b/s → ahead-behind / dirty / last-commit / worktrees / branches / stashes · Esc done"));
     items.push(subhead("  Other"));
-    items.push(plain("    c claude in repo dir · ? this help · q quit · Ctrl-C exit"));
+    items.push(plain("    c claude in repo dir · D open docs site · ? this help · q quit · Ctrl-C exit"));
     items.push(plain(""));
 
     items.push(header("HOTKEYS — repo page  (enter / double-click a repo)"));
