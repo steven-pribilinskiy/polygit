@@ -1,0 +1,30 @@
+---
+title: Keybindings
+description: Every pull-all keybinding across the repo list, the repo page, and the diff modal — searchable.
+---
+
+import KeymapExplorer from '../../../components/KeymapExplorer.astro';
+
+`pull-all` is keyboard-first. Type to filter the list below by key or action — search
+`checkout`, `shift`, `pull`, `discard`, or any glyph you're chasing.
+
+<KeymapExplorer />
+
+## Notes
+
+- **Retry vs refetch** — `r`/`R` only re-run repos that need it (failed or skipped);
+  `f`/`F` re-run any repo even if it was already up to date. In the status bar, `r`/`R`
+  dim when no repo has an issue, and `f`/`F` dim when nothing is eligible.
+- **Checkout moved to `Shift`+`Enter`** — on the repo page, plain `Enter` (and a
+  double-click) opens the diff for a stash or dirty row. `Shift`+`Enter` checks out the
+  selected clean, non-current branch, so the two actions no longer collide.
+
+  :::caution[Terminal support]
+  `Shift`+`Enter` relies on the Kitty keyboard protocol to be reported distinctly.
+  `pull-all` enables it when the terminal supports it (recent Windows Terminal, WezTerm,
+  kitty, foot). On terminals without support, `Shift`+`Enter` falls back to plain `Enter`.
+  :::
+- **Clickable commands** — the action hints in the status bar (and the `t` column menu)
+  are mouse-clickable; clicking runs the same command as the key.
+- **Scrollbars** — the repo list, the preview, the help modal, and the repo page all
+  show a scrollbar when their content overflows.

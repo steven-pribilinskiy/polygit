@@ -1,0 +1,38 @@
+---
+title: Columns & glyphs
+description: Decode pull-all's status glyphs and the optional, toggleable list columns.
+---
+
+import GlyphLegend from '../../../components/GlyphLegend.astro';
+
+The list always shows three things: a **status glyph**, the repo **name**, and its current
+**branch**. Everything else is an optional column you toggle on.
+
+<GlyphLegend />
+
+## Toggling columns
+
+Press `t` to enter the column-toggle leader, then a column key. The mode stays active
+(so you can flip several) until you press `Esc`.
+
+| Key | Column | Glyph |
+|-----|--------|-------|
+| `a` | Ahead / behind vs upstream | `↑N ↓N` |
+| `d` | Dirty (uncommitted file count) | `•N` |
+| `l` | Last-commit age | relative date |
+| `w` | Worktree count | `⑂N` (cyan) |
+| `b` | Feature-branch count (local branches excluding `main`/`dev`) | `⑂N` (green) |
+| `s` | Stash count | `≡N` |
+
+Enabled columns persist across runs.
+
+:::note[Worktrees and branches share a glyph]
+Both the worktree (`w`) and branch (`b`) columns render `⑂N`; they're distinguished only
+by color — cyan for worktrees, green for branches.
+:::
+
+## Lazy loading
+
+The git-derived columns (`a`/`d`/`l`/`b`/`s`) fetch per-repo details in the background the
+first time one is enabled — cells show `…` until the data is ready. The worktree column
+(`w`) is free, since worktrees are already discovered during the initial scan.

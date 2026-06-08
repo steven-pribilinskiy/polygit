@@ -1,0 +1,88 @@
+---
+import { keymap } from '../data/keymap';
+---
+
+<div class="keymap" data-keymap>
+  <div class="keymap__controls">
+    <input
+      type="search"
+      class="keymap__search"
+      placeholder="Filter by key or action…  (e.g. checkout, shift, pull)"
+      aria-label="Filter keybindings"
+      data-keymap-search
+    />
+    <span class="keymap__count" data-keymap-count></span>
+  </div>
+
+  {
+    keymap.map((section) => (
+      <section class="keymap__section" data-keymap-section={section.id}>
+        <header class="keymap__head">
+          <h3 id={`keymap-${section.id}`}>{section.title}</h3>
+          <p>{section.blurb}</p>
+        </header>
+        <ul class="keymap__list" role="list">
+          {section.bindings.map((binding) => (
+            <li
+              class="keymap__row"
+              data-keys={binding.keys.join(' ').toLowerCase()}
+              data-action={[binding.action, binding.note ?? '', ...(binding.keywords ?? [])]
+                .join(' ')
+                .toLowerCase()}
+            >
+              <span class="keymap__keys">
+                {binding.keys.map((key, index) => (
+                  <>
+                    {index > 0 && <span class="keymap__sep">/</span>}
+                    <kbd>{key}</kbd>
+                  </>
+                ))}
+              </span>
+              <span class="keymap__action">
+                {binding.action}
+                {binding.note && <em class="keymap__note">{binding.note}</em>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))
+  }
+
+  <p class="keymap__empty" data-keymap-empty hidden>No keys match that filter.</p>
+</div>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>('[data-keymap]')) {
+    const search = root.querySelector<HTMLInputElement>('[data-keymap-search]');
+    const count = root.querySelector<HTMLElement>('[data-keymap-count]');
+    const empty = root.querySelector<HTMLElement>('[data-keymap-empty]');
+    const rows = Array.from(root.querySelectorAll<HTMLElement>('.keymap__row'));
+    const sections = Array.from(root.querySelectorAll<HTMLElement>('.keymap__section'));
+    const total = rows.length;
+
+    const apply = (raw: string) => {
+      const query = raw.trim().toLowerCase();
+      let visible = 0;
+      for (const row of rows) {
+        const haystack = `${row.dataset.keys ?? ''} ${row.dataset.action ?? ''}`;
+        const match = query === '' || haystack.includes(query);
+        row.hidden = !match;
+        if (match) visible += 1;
+      }
+      // Hide a section whose rows are all filtered out.
+      for (const section of sections) {
+        const anyVisible = section.querySelector('.keymap__row:not([hidden])');
+        section.hidden = !anyVisible;
+      }
+      if (empty) empty.hidden = visible !== 0;
+      if (count) {
+        count.textContent =
+          query === '' ? `${total} keys` : `${visible} of ${total} keys`;
+      }
+    };
+
+    search?.addEventListener('input', () => apply(search.value));
+    apply('');
+  }
+</script>

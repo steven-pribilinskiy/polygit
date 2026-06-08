@@ -1,0 +1,66 @@
+---
+title: pull-all
+description: Interactive multi-repo git pull dashboard — a Rust/ratatui TUI that pulls every git repo in a directory in parallel.
+template: splash
+hero:
+  tagline: Pull every git repo in a directory at once. A fast, keyboard-driven terminal dashboard with live per-repo logs, branch/worktree/stash management, and inline diffs.
+  actions:
+    - text: Get started
+      link: start/installation/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/steven-pribilinskiy/pull-all
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## What it does
+
+`pull-all` walks a directory, finds every git repo, and fast-forwards them all in
+parallel — streaming each repo's output into a two-pane TUI while you watch. Drill
+into any repo to manage its branches, worktrees, and stashes, and read diffs inline
+without leaving the terminal.
+
+<CardGrid stagger>
+  <Card title="Parallel pulls" icon="rocket">
+    Every repo pulls at once, bounded by a concurrency limit (default: `nproc`).
+    Live, per-repo log streaming in a scrollable preview pane.
+  </Card>
+  <Card title="Branch & worktree management" icon="git-branch">
+    A full-screen repo page lists every local branch, worktree, and stash with
+    fresh ahead/behind. Check out, fast-forward, delete, or discard — with confirms.
+  </Card>
+  <Card title="Inline diffs" icon="document">
+    Open a 90%-of-screen diff modal on any stash or dirty tree. Toggle between
+    uncommitted changes and everything since you forked from the base branch.
+  </Card>
+  <Card title="Keyboard-first" icon="laptop">
+    Vim-style navigation, mouse support, clickable status-bar commands, a fuzzy
+    filter, and a built-in help modal. Works headless with `--no-tui`.
+  </Card>
+</CardGrid>
+
+## Quick start
+
+```bash
+# Build and install to ~/bin
+make install
+
+# Run in any directory of repos
+pull-all ~/projects
+```
+
+<CardGrid>
+  <LinkCard title="Installation" href="start/installation/" description="Build from source with cargo, or install the binary." />
+  <LinkCard title="Keybindings" href="guides/keybindings/" description="Every key, searchable — list, repo page, and diff modal." />
+  <LinkCard title="Columns & glyphs" href="guides/columns-and-glyphs/" description="Decode the status glyphs and optional columns." />
+  <LinkCard title="CLI flags & env" href="reference/cli/" description="Every flag, environment variable, and default." />
+</CardGrid>
+
+:::note[Canonical Rust build]
+This is the canonical Rust/ratatui implementation. It also fronts Go, Bun, and
+bash builds via `pull-all go|bun|cli` — see [Sibling builds](reference/siblings/).
+:::

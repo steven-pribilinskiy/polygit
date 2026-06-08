@@ -1,0 +1,220 @@
+/* pull-all docs theming — terminal-flavored accent, glyph legend, keymap explorer.
+   Light is the default; dark overrides follow Starlight's own data-theme switch. */
+
+:root {
+  /* Green accent echoing the TUI's "updated"/branches color. */
+  --sl-color-accent-low: #c7f0d8;
+  --sl-color-accent: #1f9d57;
+  --sl-color-accent-high: #0f5c33;
+
+  /* Glyph tones (light). */
+  --glyph-dim: #8a8f98;
+  --glyph-muted: #6b7280;
+  --glyph-warn: #b8860b;
+  --glyph-ok: #1f9d57;
+  --glyph-err: #d23b3b;
+  --glyph-cyan: #0a8fa6;
+  --glyph-magenta: #b5359c;
+}
+
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #0f3d23;
+  --sl-color-accent: #36c576;
+  --sl-color-accent-high: #b6f0cd;
+
+  --glyph-dim: #6e7681;
+  --glyph-muted: #9aa3af;
+  --glyph-warn: #e3b341;
+  --glyph-ok: #3fb950;
+  --glyph-err: #f85149;
+  --glyph-cyan: #39c5cf;
+  --glyph-magenta: #d2a8ff;
+}
+
+/* ---- Keymap explorer ---- */
+.keymap__controls {
+  position: sticky;
+  top: var(--sl-nav-height, 0);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  background: var(--sl-color-bg);
+}
+
+.keymap__search {
+  flex: 1;
+  padding: 0.55rem 0.8rem;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-white);
+  background: var(--sl-color-bg-sidebar);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+}
+
+.keymap__search:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 1px;
+}
+
+.keymap__count {
+  font-size: var(--sl-text-xs);
+  color: var(--sl-color-gray-3);
+  white-space: nowrap;
+}
+
+.keymap__section {
+  margin-top: 1.75rem;
+}
+
+.keymap__head h3 {
+  margin: 0;
+}
+
+.keymap__head p {
+  margin: 0.25rem 0 0.75rem;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+.keymap__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.keymap__row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 14rem) 1fr;
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.55rem 0.85rem;
+  border-top: 1px solid var(--sl-color-gray-6);
+}
+
+.keymap__row:first-child {
+  border-top: none;
+}
+
+/* `display: grid/flex` on the rows/sections beats the UA `[hidden]` rule, so the
+   JS filter's `hidden` attribute wouldn't hide anything without this. */
+.keymap__row[hidden],
+.keymap__section[hidden] {
+  display: none;
+}
+
+.keymap__row:hover {
+  background: var(--sl-color-gray-7, var(--sl-color-bg-sidebar));
+}
+
+.keymap__keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.keymap__sep {
+  color: var(--sl-color-gray-4);
+  font-size: var(--sl-text-xs);
+}
+
+.keymap kbd {
+  font-family: var(--__sl-font-mono, ui-monospace, monospace);
+  font-size: var(--sl-text-xs);
+  line-height: 1;
+  padding: 0.25rem 0.45rem;
+  color: var(--sl-color-white);
+  background: var(--sl-color-bg-sidebar);
+  border: 1px solid var(--sl-color-gray-5);
+  border-bottom-width: 2px;
+  border-radius: 0.4rem;
+  white-space: nowrap;
+}
+
+.keymap__action {
+  color: var(--sl-color-white);
+}
+
+.keymap__note {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: var(--sl-text-xs);
+  font-style: normal;
+  color: var(--sl-color-gray-3);
+}
+
+.keymap__empty {
+  margin-top: 1.5rem;
+  color: var(--sl-color-gray-3);
+}
+
+/* ---- Glyph legend ---- */
+.legend {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 50rem) {
+  .legend {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.legend__group h3 {
+  margin-top: 0;
+}
+
+.legend__group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.legend__group li {
+  display: grid;
+  grid-template-columns: 4rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  background: var(--sl-color-bg-sidebar);
+}
+
+.legend__glyph {
+  font-family: var(--__sl-font-mono, ui-monospace, monospace);
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.legend__glyph--dim { color: var(--glyph-dim); }
+.legend__glyph--muted { color: var(--glyph-muted); }
+.legend__glyph--warn { color: var(--glyph-warn); }
+.legend__glyph--ok { color: var(--glyph-ok); }
+.legend__glyph--err { color: var(--glyph-err); }
+.legend__glyph--cyan { color: var(--glyph-cyan); }
+.legend__glyph--magenta { color: var(--glyph-magenta); }
+.legend__glyph--mixed {
+  background: linear-gradient(90deg, var(--glyph-warn) 50%, var(--glyph-cyan) 50%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.legend__text strong {
+  display: block;
+}
+
+.legend__text em {
+  font-size: var(--sl-text-xs);
+  font-style: normal;
+  color: var(--sl-color-gray-3);
+}

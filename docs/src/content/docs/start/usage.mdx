@@ -1,0 +1,69 @@
+---
+title: Usage
+description: Run pull-all in TUI or plain mode, point it at a directory, and tune concurrency and timeouts.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Run it
+
+```bash
+# TUI mode (auto-detected when stderr is a TTY)
+pull-all [DIR]
+
+# Default DIR is the current directory
+pull-all
+```
+
+`pull-all` scans `DIR` for git repositories (one level of children, plus
+`.worktrees/*/.git` worktrees), then fast-forwards each in parallel.
+
+## Plain / headless mode
+
+When stdout isn't a TTY — or with `--no-tui` — `pull-all` streams plain output that's
+byte-compatible with the original bash reference, so it drops cleanly into scripts and CI.
+
+```bash
+pull-all --no-tui ~/projects
+```
+
+## Concurrency
+
+Pulls run in parallel up to a limit (default: number of CPUs).
+
+```bash
+pull-all -j 8 ~/projects        # flag
+PULL_JOBS=8 pull-all ~/projects # environment variable
+```
+
+## Timeout
+
+Each individual pull is capped (default: 30 seconds) so one hung remote can't stall the run.
+
+```bash
+pull-all --timeout 60 ~/projects
+PULL_TIMEOUT=60 pull-all ~/projects
+```
+
+## The two panes
+
+- **Left** — the repo list with a status glyph, name, and current branch. Optional
+  [columns](../../guides/columns-and-glyphs/) add ahead/behind, dirty, last-commit,
+  worktree, branch, and stash counts.
+- **Right** — a live log of the selected repo's pull output, or (with `i`) an info
+  panel, or (with `d`) the working-tree / last-pull diff.
+
+<Aside type="tip">
+Press `?` at any time for the in-app help modal: every key, flag, and environment
+variable, plus clickable links to the repo and design notes.
+</Aside>
+
+## Reading the result
+
+When the run finishes, a **Result** summary row reports how many repos were updated, were
+already up to date, were skipped, or failed. The process [exit code](../../reference/exit-codes/)
+reflects the outcome so scripts can branch on it.
+
+If any repo fails, a dynamic **Errors (N)** row appears right after Result; select it to see
+each failed repo with the tail of its error output. A failed pull is retried once automatically
+before it's marked failed, so transient network or lock hiccups usually clear themselves.

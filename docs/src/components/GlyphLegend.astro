@@ -1,0 +1,58 @@
+---
+type Glyph = { glyph: string; tone: string; label: string; note?: string };
+
+const status: Glyph[] = [
+  { glyph: '◯', tone: 'dim', label: 'Queued', note: 'waiting for a worker slot' },
+  { glyph: '⠋', tone: 'warn', label: 'Running', note: 'animated spinner while pulling' },
+  { glyph: '◌', tone: 'muted', label: 'Up to date', note: 'already at the remote tip' },
+  { glyph: '✓', tone: 'ok', label: 'Updated', note: 'fast-forwarded to new commits' },
+  { glyph: '⊘', tone: 'dim', label: 'Skipped', note: 'dirty tree / no upstream / not ff-able' },
+  { glyph: '✗', tone: 'err', label: 'Failed', note: 'the pull errored' },
+];
+
+const columns: Glyph[] = [
+  { glyph: '↑3 ↓1', tone: 'mixed', label: 'Ahead / behind', note: 'column key: a — yellow ahead, cyan behind' },
+  { glyph: '•2', tone: 'err', label: 'Dirty', note: 'column key: d — uncommitted file count' },
+  { glyph: '4d', tone: 'muted', label: 'Last commit', note: 'column key: l — relative age' },
+  { glyph: '⑂2', tone: 'cyan', label: 'Worktrees', note: 'column key: w — linked worktree count' },
+  { glyph: '⑂3', tone: 'ok', label: 'Branches', note: 'column key: b — local branches excluding main/dev' },
+  { glyph: '≡1', tone: 'magenta', label: 'Stashes', note: 'column key: s — stash entry count' },
+  { glyph: '●', tone: 'err', label: 'Dirty marker', note: 'repo page: branch/worktree has uncommitted changes' },
+];
+---
+
+<div class="legend">
+  <div class="legend__group">
+    <h3>Status glyphs</h3>
+    <ul role="list">
+      {
+        status.map((item) => (
+          <li>
+            <span class={`legend__glyph legend__glyph--${item.tone}`}>{item.glyph}</span>
+            <span class="legend__text">
+              <strong>{item.label}</strong>
+              {item.note && <em>{item.note}</em>}
+            </span>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+
+  <div class="legend__group">
+    <h3>Column glyphs</h3>
+    <ul role="list">
+      {
+        columns.map((item) => (
+          <li>
+            <span class={`legend__glyph legend__glyph--${item.tone}`}>{item.glyph}</span>
+            <span class="legend__text">
+              <strong>{item.label}</strong>
+              {item.note && <em>{item.note}</em>}
+            </span>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</div>
