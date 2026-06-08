@@ -269,6 +269,87 @@ impl StatusFilter {
     }
 }
 
+/// Which glyph set the UI draws for status / column / marker icons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IconStyle {
+    #[default]
+    Unicode,
+    Emoji,
+}
+
+impl IconStyle {
+    /// The glyph set for this style.
+    pub fn icons(self) -> &'static IconSet {
+        match self {
+            IconStyle::Unicode => &UNICODE_ICONS,
+            IconStyle::Emoji => &EMOJI_ICONS,
+        }
+    }
+}
+
+/// The semantic glyphs the UI renders, swappable between Unicode and emoji via `IconStyle`.
+/// Only the recognizable status/column/marker icons live here — git file-status letters,
+/// result-summary symbols, placeholders, and structural chars stay fixed.
+pub struct IconSet {
+    pub spinner: &'static [&'static str],
+    pub queued: &'static str,
+    pub up_to_date: &'static str,
+    pub updated: &'static str,
+    pub skipped: &'static str,
+    pub failed: &'static str,
+    pub dirty: &'static str,
+    pub branches: &'static str,
+    pub worktrees: &'static str,
+    pub stashes: &'static str,
+    pub ahead: &'static str,
+    pub behind: &'static str,
+    pub dirty_marker: &'static str,
+    pub warning: &'static str,
+    pub skip_log: &'static str,
+    pub retry_log: &'static str,
+}
+
+pub static UNICODE_ICONS: IconSet = IconSet {
+    spinner: &["◐", "◓", "◑", "◒"],
+    queued: "◯",
+    up_to_date: "◌",
+    updated: "✓",
+    skipped: "⊘",
+    failed: "✗",
+    dirty: "•",
+    branches: "⑂",
+    worktrees: "⑂",
+    stashes: "≡",
+    ahead: "↑",
+    behind: "↓",
+    dirty_marker: "●",
+    warning: "⚠",
+    skip_log: "⊘",
+    retry_log: "↻",
+};
+
+pub static EMOJI_ICONS: IconSet = IconSet {
+    spinner: &["🌑", "🌓", "🌕", "🌗"],
+    queued: "⏳",
+    up_to_date: "✅",
+    updated: "✨",
+    skipped: "⏭️",
+    failed: "❌",
+    dirty: "📝",
+    branches: "🌿",
+    worktrees: "🌳",
+    stashes: "📦",
+    // Keep the compact 1-cell arrows for the tight ahead/behind numeric column — emoji arrows
+    // are double-width and misalign it (and terminals disagree on their width).
+    ahead: "↑",
+    behind: "↓",
+    dirty_marker: "🔴",
+    warning: "⚠️",
+    skip_log: "⏭️",
+    retry_log: "🔄",
+};
+
 /// A mouse-clickable command region in the status bar (rebuilt each render).
 #[derive(Debug, Clone)]
 pub struct ClickRegion {
@@ -292,6 +373,7 @@ pub enum Command {
     ToggleColumn(Column),
     FilterLeader,
     SetFilter(StatusFilter),
+    Settings,
     Quit,
 }
 
@@ -498,6 +580,17 @@ pub struct AppState {
     pub diff_files_area: Rect,
     /// Inner rect of the diff modal's diff panel (wheel routing).
     pub diff_body_area: Rect,
+    /// The directory being scanned (for re-running worktree discovery on refetch).
+    pub root_dir: PathBuf,
+    // Settings (persisted):
+    /// Draw 1-cell inner padding inside every bordered panel/modal.
+    pub panel_padding: bool,
+    /// Which glyph set to render (Unicode vs emoji).
+    pub icon_style: IconStyle,
+    /// Whether the settings modal (`,`) is open.
+    pub show_settings: bool,
+    /// Selected row in the settings modal (0 = padding, 1 = icons).
+    pub settings_selected: usize,
 }
 
 impl AppState {
@@ -550,15 +643,27 @@ impl AppState {
             diff_modal_viewport: 0,
             diff_files_area: Rect::default(),
             diff_body_area: Rect::default(),
+            root_dir: PathBuf::new(),
+            panel_padding: persisted.panel_padding,
+            icon_style: persisted.icon_style,
+            show_settings: false,
+            settings_selected: 0,
         }
     }
 
-    /// Persist the current UI preferences (columns, info state, splitter) for the next run.
+    /// The active glyph set for the current icon-style setting.
+    pub fn icons(&self) -> &'static IconSet {
+        self.icon_style.icons()
+    }
+
+    /// Persist the current UI preferences (columns, info state, splitter, settings).
     pub fn save_state(&self) {
         crate::persist::save(&crate::persist::PersistedState {
             columns: self.columns,
             info_pinned: self.info_pinned,
             split_ratio: self.split_ratio,
+            panel_padding: self.panel_padding,
+            icon_style: self.icon_style,
         });
     }
 
@@ -638,6 +743,24 @@ impl AppState {
         self.status_filter = filter;
         self.selected = 0;
         self.result_overlay = false;
+    }
+
+    /// Number of rows in the settings modal.
+    pub const SETTINGS_ROWS: usize = 2;
+
+    /// Toggle the currently-selected settings row, persisting immediately.
+    pub fn toggle_selected_setting(&mut self) {
+        match self.settings_selected {
+            0 => self.panel_padding = !self.panel_padding,
+            1 => {
+                self.icon_style = match self.icon_style {
+                    IconStyle::Unicode => IconStyle::Emoji,
+                    IconStyle::Emoji => IconStyle::Unicode,
+                };
+            }
+            _ => {}
+        }
+        self.save_state();
     }
 
     /// Total items in the list (visible repos + Result item + optional Errors item).

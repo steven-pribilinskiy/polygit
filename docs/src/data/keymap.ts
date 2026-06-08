@@ -1,4 +1,4 @@
-// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.13.0).
+// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.14.0).
 // Keep this in sync with the event loop when bindings change.
 
 export type Binding = {
@@ -48,6 +48,7 @@ export const keymap: KeymapSection[] = [
       { keys: ['c'], action: 'Start claude code in the selected repo', note: 'suspends the TUI; PULL_CLAUDE_CMD overrides' },
       { keys: ['x'], action: "Clear this repo's log buffer", note: 'empties the streamed pull output' },
       { keys: ['D'], action: 'Open the documentation website in the browser', keywords: ['docs', 'help website'] },
+      { keys: [','], action: 'Open the settings modal', note: 'panel padding · icon style (Unicode/emoji)', keywords: ['settings', 'preferences', 'config', 'emoji', 'padding'] },
       { keys: ['?'], action: 'Open the help modal' },
       { keys: ['/'], action: 'Filter repos by name' },
       { keys: ['Esc'], action: 'Clear the filter, or quit when no filter' },

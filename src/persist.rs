@@ -2,16 +2,22 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::ColumnFlags;
+use crate::app::{ColumnFlags, IconStyle};
 
 /// UI preferences persisted between runs at `~/.config/pull-all/state.json`.
+/// `#[serde(default)]` keeps older state files (missing newer fields) loadable.
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PersistedState {
     pub columns: ColumnFlags,
     /// The info block (`i`) was shown on last exit.
     pub info_pinned: bool,
     /// Left/right splitter position.
     pub split_ratio: f64,
+    /// 1-cell padding inside every bordered panel/modal.
+    pub panel_padding: bool,
+    /// Glyph set (Unicode vs emoji).
+    pub icon_style: IconStyle,
 }
 
 fn state_path() -> Option<PathBuf> {

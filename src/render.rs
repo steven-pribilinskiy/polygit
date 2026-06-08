@@ -3,38 +3,56 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Wrap,
+    Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Wrap,
 };
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
-    AppState, ClickRegion, Column, Command, DiffMode, DiffSource, Leader, PageRowKind, RepoStatus,
-    RightView, StatusFilter,
+    AppState, ClickRegion, Column, Command, DiffMode, DiffSource, IconSet, Leader, PageRowKind,
+    RepoStatus, RightView, StatusFilter,
 };
-
-const SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
 pub const DOCS_URL: &str = "https://steven-pribilinskiy.github.io/pull-all/";
 
 /// The spinner frame for the current render tick (advances every 2 ticks). Shared by the
 /// list status glyph and the repo-page loading indicator so they animate identically.
-fn spinner_frame(tick: u64) -> &'static str {
-    SPINNER_FRAMES[(tick as usize / 2) % SPINNER_FRAMES.len()]
+fn spinner_frame(tick: u64, icons: &IconSet) -> &'static str {
+    icons.spinner[(tick as usize / 2) % icons.spinner.len()]
 }
 
-fn status_glyph_colored(status: &RepoStatus, tick: u64) -> Span<'static> {
+/// 1-cell inner padding for every bordered panel/modal when the setting is on; none otherwise.
+fn panel_pad(app: &AppState) -> Padding {
+    if app.panel_padding {
+        Padding::uniform(1)
+    } else {
+        Padding::ZERO
+    }
+}
+
+/// Pad `s` with trailing spaces until its display width reaches `width` (width-aware so
+/// double-width emoji glyphs don't shift the columns that follow).
+fn pad_display(s: &str, width: usize) -> String {
+    let current = UnicodeWidthStr::width(s);
+    if current >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - current))
+    }
+}
+
+fn status_glyph_colored(status: &RepoStatus, tick: u64, icons: &IconSet) -> Span<'static> {
     match status {
-        RepoStatus::Queued => Span::styled("◯", Style::default().fg(Color::DarkGray)),
+        RepoStatus::Queued => Span::styled(icons.queued, Style::default().fg(Color::DarkGray)),
         RepoStatus::Running { .. } => {
-            Span::styled(spinner_frame(tick).to_string(), Style::default().fg(Color::Yellow))
+            Span::styled(spinner_frame(tick, icons).to_string(), Style::default().fg(Color::Yellow))
         }
-        RepoStatus::UpToDate => Span::styled("◌", Style::default().fg(Color::Gray)),
-        RepoStatus::Updated => Span::styled("✓", Style::default().fg(Color::Green)),
-        RepoStatus::Skipped => Span::styled("⊘", Style::default().fg(Color::DarkGray)),
-        RepoStatus::Failed => Span::styled("✗", Style::default().fg(Color::Red)),
+        RepoStatus::UpToDate => Span::styled(icons.up_to_date, Style::default().fg(Color::Gray)),
+        RepoStatus::Updated => Span::styled(icons.updated, Style::default().fg(Color::Green)),
+        RepoStatus::Skipped => Span::styled(icons.skipped, Style::default().fg(Color::DarkGray)),
+        RepoStatus::Failed => Span::styled(icons.failed, Style::default().fg(Color::Red)),
     }
 }
 
@@ -69,6 +87,9 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
         }
         if app.diff_modal.is_some() {
             render_diff_modal(frame, app, area);
+        }
+        if app.show_settings {
+            render_settings(frame, app, area);
         }
         return;
     }
@@ -116,6 +137,10 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // Confirmation dialog overlays all.
     if app.confirm.is_some() {
         render_confirm(frame, app, area);
+    }
+    // Settings modal overlays everything.
+    if app.show_settings {
+        render_settings(frame, app, area);
     }
 }
 
@@ -190,6 +215,7 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::DarkGray));
 
     let inner = block.inner(area);
@@ -207,17 +233,23 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
     // icon + space + name + space + branch
     // Name column: max_name_len
     let name_col_width = max_name_len;
-    let icon_width = 2; // glyph + space
+    // Emoji glyphs render 2 cells wide vs 1 for the Unicode set; reserve accordingly.
+    let icon_width = if app.icon_style == crate::app::IconStyle::Emoji { 3 } else { 2 };
     let separator_width = 1; // space before branch
 
-    // Reserve space for any enabled optional columns (rendered after the branch).
+    // Reserve space for any enabled optional columns (rendered after the branch). Emoji glyphs
+    // render 1 cell wider than the Unicode set, so the count columns get +1 each.
     let columns = app.columns;
+    let emoji = app.icon_style == crate::app::IconStyle::Emoji;
+    let col_extra = usize::from(emoji);
+    let dirty_w = 3 + col_extra; // glyph + up to 2 digits
+    let count_w = 4 + col_extra; // glyph + count (worktrees / branches / stashes)
     let columns_width = usize::from(columns.ahead_behind) * 10
-        + usize::from(columns.dirty) * 4
+        + usize::from(columns.dirty) * (dirty_w + 1)
         + usize::from(columns.last_commit) * 12
-        + usize::from(columns.worktrees) * 5
-        + usize::from(columns.branches) * 5
-        + usize::from(columns.stashes) * 5;
+        + usize::from(columns.worktrees) * (count_w + 1)
+        + usize::from(columns.branches) * (count_w + 1)
+        + usize::from(columns.stashes) * (count_w + 1);
 
     let inner_width = inner.width as usize;
     let branch_col_width = inner_width
@@ -227,7 +259,11 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
         .iter()
         .map(|&repo_idx| {
             let state = app.repos[repo_idx].lock().unwrap();
-            let glyph = status_glyph_colored(&state.status, tick);
+            let icons = app.icons();
+            let glyph = status_glyph_colored(&state.status, tick, icons);
+            // Pad the glyph to `icon_width` display cells so the name column lines up
+            // regardless of whether the glyph is a 1-cell Unicode char or a 2-cell emoji.
+            let glyph_pad = icon_width.saturating_sub(glyph.width()).max(1);
 
             let branch_str = state
                 .branch
@@ -244,7 +280,7 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
                 _ => Style::default(),
             };
 
-            let mut spans = vec![glyph, Span::raw(" ")];
+            let mut spans = vec![glyph, Span::raw(" ".repeat(glyph_pad))];
             spans.extend(highlight_name(
                 &state.name,
                 app.filter.as_deref(),
@@ -261,7 +297,7 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
                 spans.push(Span::raw(" "));
                 match &state.details {
                     Some(details) => {
-                        spans.extend(ahead_behind_spans(details.ahead, details.behind, 9));
+                        spans.extend(ahead_behind_spans(details.ahead, details.behind, 9, icons));
                     }
                     None => spans.push(Span::styled(
                         format!("{:<9}", "…"),
@@ -271,11 +307,16 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
             }
             if columns.dirty {
                 let text = match &state.details {
-                    Some(details) if details.dirty_count > 0 => format!("•{}", details.dirty_count),
+                    Some(details) if details.dirty_count > 0 => {
+                        format!("{}{}", icons.dirty, details.dirty_count)
+                    }
                     Some(_) => String::new(),
                     None => "…".to_string(),
                 };
-                spans.push(Span::styled(format!(" {text:<3}"), Style::default().fg(Color::Red)));
+                spans.push(Span::styled(
+                    format!(" {}", pad_display(&text, dirty_w)),
+                    Style::default().fg(Color::Red),
+                ));
             }
             if columns.last_commit {
                 let text = match &state.details {
@@ -286,24 +327,37 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
             }
             if columns.worktrees {
                 let count = app.worktrees.iter().filter(|entry| entry.repo == state.name).count();
-                let text = if count > 0 { format!("⑂{count}") } else { String::new() };
-                spans.push(Span::styled(format!(" {text:<4}"), Style::default().fg(Color::Cyan)));
+                let text = if count > 0 { format!("{}{count}", icons.worktrees) } else { String::new() };
+                spans.push(Span::styled(
+                    format!(" {}", pad_display(&text, count_w)),
+                    Style::default().fg(Color::Cyan),
+                ));
             }
             if columns.branches {
                 let text = match &state.details {
-                    Some(details) if details.branch_count > 0 => format!("⑂{}", details.branch_count),
+                    Some(details) if details.branch_count > 0 => {
+                        format!("{}{}", icons.branches, details.branch_count)
+                    }
                     Some(_) => String::new(),
                     None => "…".to_string(),
                 };
-                spans.push(Span::styled(format!(" {text:<4}"), Style::default().fg(Color::Green)));
+                spans.push(Span::styled(
+                    format!(" {}", pad_display(&text, count_w)),
+                    Style::default().fg(Color::Green),
+                ));
             }
             if columns.stashes {
                 let text = match &state.details {
-                    Some(details) if details.stash_count > 0 => format!("≡{}", details.stash_count),
+                    Some(details) if details.stash_count > 0 => {
+                        format!("{}{}", icons.stashes, details.stash_count)
+                    }
                     Some(_) => String::new(),
                     None => "…".to_string(),
                 };
-                spans.push(Span::styled(format!(" {text:<4}"), Style::default().fg(Color::Magenta)));
+                spans.push(Span::styled(
+                    format!(" {}", pad_display(&text, count_w)),
+                    Style::default().fg(Color::Magenta),
+                ));
             }
 
             ListItem::new(Line::from(spans))
@@ -400,7 +454,9 @@ fn render_preview(frame: &mut Frame, app: &AppState, area: Rect, _tick: u64) {
         let repo_idx = visible[app.selected];
         let name = app.repos[repo_idx].lock().unwrap().name.clone();
         let lines = build_info_lines(app, repo_idx);
-        let desired = (lines.len() as u16 + 2).min(area.height / 2).max(3);
+        // +2 for the border, +2 more for inner padding when the setting is on.
+        let chrome = if app.panel_padding { 4 } else { 2 };
+        let desired = (lines.len() as u16 + chrome).min(area.height / 2).max(3);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(desired), Constraint::Min(0)])
@@ -458,6 +514,7 @@ fn render_preview(frame: &mut Frame, app: &AppState, area: Rect, _tick: u64) {
     let block = Block::default()
         .title(header_text)
         .borders(Borders::ALL)
+        .padding(panel_pad(app))
         .border_style(border_style);
 
     let inner = block.inner(area);
@@ -586,6 +643,7 @@ fn render_info_block(frame: &mut Frame, app: &AppState, area: Rect, title: Strin
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .padding(panel_pad(app))
         .border_style(border_style);
     let inner = block.inner(area);
     let total = lines.len();
@@ -917,6 +975,8 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (" filter · ".to_string(), hint, None),
                 ("enter".to_string(), active, Some(Command::OpenPage)),
                 (" page · ".to_string(), hint, None),
+                (",".to_string(), active, Some(Command::Settings)),
+                (" settings · ".to_string(), hint, None),
                 ("?".to_string(), active, Some(Command::Help)),
                 (" help".to_string(), hint, None),
             ],
@@ -1037,7 +1097,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     items.push(subhead("  Columns"));
     items.push(plain("    t then a/d/l/w/b/s → ahead-behind / dirty / last-commit / worktrees / branches / stashes · Esc done"));
     items.push(subhead("  Other"));
-    items.push(plain("    c claude in repo dir · D open docs site · ? this help · q quit · Ctrl-C exit"));
+    items.push(plain("    c claude in repo dir · , settings · D open docs site · ? this help · q quit · Ctrl-C exit"));
     items.push(plain(""));
 
     items.push(header("HOTKEYS — repo page  (enter / double-click a repo)"));
@@ -1062,15 +1122,18 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     items.push(plain("  0 all ok  ·  1 any failed  ·  2 quit mid-run  ·  130 Ctrl-C"));
 
     // Size the box to its content (capped to the screen), not a fixed near-fullscreen slab.
+    // Padding eats 2 rows/cols inside the border, so grow the box to keep the same content fit.
+    let pad = if app.panel_padding { 2 } else { 0 };
     let content_width = items.iter().map(|(line, _)| line.width()).max().unwrap_or(0) as u16;
     let max_width = area.width.saturating_sub(2);
     let max_height = area.height.saturating_sub(2);
-    let modal_width = (content_width + 4).min(max_width).max(40.min(max_width));
-    let modal_height = (items.len() as u16 + 2).min(max_height).max(8.min(max_height));
+    let modal_width = (content_width + 4 + pad).min(max_width).max(40.min(max_width));
+    let modal_height = (items.len() as u16 + 2 + pad).min(max_height).max(8.min(max_height));
     let modal_area = centered_rect(modal_width, modal_height, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(" pull-all — help ")
         .title_bottom(Line::from(" ↑/↓ scroll · click a link · ?/Esc close ").right_aligned());
@@ -1151,6 +1214,7 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
         .title_bottom(Line::from(footer).right_aligned());
@@ -1256,13 +1320,19 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
 /// Fixed-width ahead/behind spans (`↑a ↓b`), each arrow colored by its own count: a zero
 /// count is dim gray, a positive ahead is yellow, a positive behind is cyan. No upstream
 /// renders a dim `—`. Padded with trailing spaces to `width` (counted in chars).
-fn ahead_behind_spans(ahead: Option<u32>, behind: Option<u32>, width: usize) -> Vec<Span<'static>> {
+fn ahead_behind_spans(
+    ahead: Option<u32>,
+    behind: Option<u32>,
+    width: usize,
+    icons: &IconSet,
+) -> Vec<Span<'static>> {
     let gray = Style::default().fg(Color::DarkGray);
     match (ahead, behind) {
         (Some(ahead), Some(behind)) => {
-            let up = format!("↑{ahead}");
-            let down = format!("↓{behind}");
-            let used = up.chars().count() + 1 + down.chars().count();
+            let up = format!("{}{ahead}", icons.ahead);
+            let down = format!("{}{behind}", icons.behind);
+            // Pad by display width so double-width emoji arrows don't desync the column.
+            let used = UnicodeWidthStr::width(up.as_str()) + 1 + UnicodeWidthStr::width(down.as_str());
             let pad = width.saturating_sub(used);
             let up_style = if ahead > 0 {
                 Style::default().fg(Color::Yellow)
@@ -1315,14 +1385,16 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         .unwrap_or_else(|| "—".to_string());
 
     // Animated spinner in the title while a pull runs or the page (re)fetches branches.
+    let icons = app.icons();
     let mut title = format!(" {name} · {head_branch} · {path} ");
     if pulling {
-        title.push_str(&format!("· {} pulling… ", spinner_frame(tick)));
+        title.push_str(&format!("· {} pulling… ", spinner_frame(tick, icons)));
     } else if loading || !fetched {
-        title.push_str(&format!("· {} fetching… ", spinner_frame(tick)));
+        title.push_str(&format!("· {} fetching… ", spinner_frame(tick, icons)));
     }
     let block = Block::default()
         .borders(Borders::ALL)
+        .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
         .title_bottom(
@@ -1343,7 +1415,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let stash_count = rows.iter().filter(|row| row.kind == PageRowKind::Stash).count();
     let dirty_marker = |dirty: bool| {
         if dirty {
-            Span::styled(" ●", Style::default().fg(Color::Red))
+            Span::styled(format!(" {}", icons.dirty_marker), Style::default().fg(Color::Red))
         } else {
             Span::raw("  ")
         }
@@ -1392,7 +1464,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         let date = Span::styled(format!("  {}", row.last_commit_rel), label);
         let subject = Span::styled(format!("  {}", truncate_str(&row.subject, 50)), label);
         let mut line_spans = vec![marker, name_span, Span::raw("  ")];
-        line_spans.extend(ahead_behind_spans(row.ahead, row.behind, 10));
+        line_spans.extend(ahead_behind_spans(row.ahead, row.behind, 10, icons));
         line_spans.push(dirty_marker(row.dirty));
         line_spans.push(upstream);
         line_spans.push(date);
@@ -1413,7 +1485,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             Span::styled(format!("  {:<name_pad$}", row.branch), cyan),
             Span::raw("  "),
         ];
-        line_spans.extend(ahead_behind_spans(row.ahead, row.behind, 10));
+        line_spans.extend(ahead_behind_spans(row.ahead, row.behind, 10, icons));
         line_spans.push(dirty_marker(row.dirty));
         line_spans.push(Span::styled(format!("  {}", row.path.display()), label));
         items.push((Line::from(line_spans), Some(sel_index)));
@@ -1479,7 +1551,9 @@ fn render_confirm(frame: &mut Frame, app: &AppState, area: Rect) {
         .map(|file| file.chars().count() + 4)
         .max()
         .unwrap_or(0) as u16;
-    let content_width = (confirm.message.chars().count() as u16 + 8).max(file_width);
+    // Padding eats 2 rows/cols inside the border; grow the box so content still fits.
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let content_width = (confirm.message.chars().count() as u16 + 8).max(file_width) + pad;
     let width = content_width.clamp(30, area.width.saturating_sub(4).max(30));
 
     // Build the file-detail body first so we can size the dialog to it.
@@ -1514,16 +1588,19 @@ fn render_confirm(frame: &mut Frame, app: &AppState, area: Rect) {
     if has_files {
         height += detail_lines.len() as u16 + 1;
     }
+    height += pad;
     let height = height.min(area.height.saturating_sub(2).max(6));
 
+    let icons = app.icons();
     let modal = centered_rect(width, height, area);
     let (border_color, title) = if confirm.danger {
-        (Color::Red, " ⚠ Confirm — destructive ")
+        (Color::Red, format!(" {} Confirm — destructive ", icons.warning))
     } else {
-        (Color::Yellow, " Confirm ")
+        (Color::Yellow, " Confirm ".to_string())
     };
     let block = Block::default()
         .borders(Borders::ALL)
+        .padding(panel_pad(app))
         .border_style(Style::default().fg(border_color))
         .title(title);
     let inner = block.inner(modal);
@@ -1542,7 +1619,7 @@ fn render_confirm(frame: &mut Frame, app: &AppState, area: Rect) {
     }
     if confirm.danger {
         lines.push(Line::from(Span::styled(
-            "  ⚠ This cannot be undone.",
+            format!("  {} This cannot be undone.", icons.warning),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )));
     }
@@ -1551,5 +1628,76 @@ fn render_confirm(frame: &mut Frame, app: &AppState, area: Rect) {
         "  [y] yes     [n] no",
         Style::default().fg(Color::DarkGray),
     )));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Render the settings modal (`,`): a small centered box with toggle rows for panel padding
+/// and the icon style. `↑↓` move, `space`/`enter` toggle, `esc` closes.
+fn render_settings(frame: &mut Frame, app: &AppState, area: Rect) {
+    // One row: a `>` cursor for the selected row, a label, then two option chips where the
+    // active value is colored and the other dim.
+    let row = |selected: bool, label: &str, options: [(&str, bool); 2]| -> Line<'static> {
+        let cursor = if selected { "> " } else { "  " };
+        let label_style = if selected {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let mut spans = vec![
+            Span::styled(format!("  {cursor}"), label_style),
+            Span::styled(format!("{label:<14}"), label_style),
+        ];
+        for (index, (text, active)) in options.into_iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw("  "));
+            }
+            let style = if active {
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let dot = if active { "●" } else { "○" };
+            spans.push(Span::styled(format!("{dot} {text}"), style));
+        }
+        Line::from(spans)
+    };
+
+    let padding_on = app.panel_padding;
+    let emoji = app.icon_style == crate::app::IconStyle::Emoji;
+    let mut lines = vec![
+        Line::from(String::new()),
+        row(
+            app.settings_selected == 0,
+            "Panel padding",
+            [("on", padding_on), ("off", !padding_on)],
+        ),
+        row(
+            app.settings_selected == 1,
+            "Icons",
+            [("unicode", !emoji), ("emoji", emoji)],
+        ),
+        Line::from(String::new()),
+        Line::from(Span::styled(
+            "  ↑↓ move · space/enter toggle · esc close",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = 48u16.min(area.width.saturating_sub(2)).max(20) + pad;
+    let height = (lines.len() as u16 + 2 + pad).min(area.height.saturating_sub(2).max(6));
+    let modal = centered_rect(width, height, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Settings ");
+    let inner = block.inner(modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    // Drop the leading blank line if padding already provides the top gap.
+    if app.panel_padding {
+        lines.remove(0);
+    }
     frame.render_widget(Paragraph::new(lines), inner);
 }

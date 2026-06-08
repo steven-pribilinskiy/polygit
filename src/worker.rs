@@ -6,7 +6,7 @@ use tokio::process::Command;
 use tokio::sync::Semaphore;
 
 use crate::app::{
-    AppState, ConfirmAction, ConfirmDialog, DiffMode, DiffSource, PageRow, PageRowKind,
+    AppState, ConfirmAction, ConfirmDialog, DiffMode, DiffSource, IconStyle, PageRow, PageRowKind,
     RepoPageData, RepoStatus, SharedRepoState, WorktreeEntry,
 };
 use crate::git::{
@@ -24,8 +24,10 @@ pub async fn pull_repo(
     repo_state: SharedRepoState,
     semaphore: Arc<Semaphore>,
     timeout_secs: u64,
+    icon_style: IconStyle,
 ) -> Result<()> {
     let _permit = semaphore.acquire_owned().await?;
+    let icons = icon_style.icons();
 
     let started = std::time::Instant::now();
     let (path, name) = {
@@ -50,7 +52,7 @@ pub async fn pull_repo(
         state.status = RepoStatus::Skipped;
         state
             .log
-            .push(format!("⊘ Skipping {name} (has uncommitted changes)"));
+            .push(format!("{} Skipping {name} (has uncommitted changes)", icons.skip_log));
         return Ok(());
     }
 
@@ -68,7 +70,7 @@ pub async fn pull_repo(
                 .lock()
                 .unwrap()
                 .log
-                .push("↻ pull failed — retrying…".to_string());
+                .push(format!("{} pull failed — retrying…", icons.retry_log));
             tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         }
     }
@@ -180,18 +182,20 @@ pub async fn run_worktree_discovery(app_state: Arc<Mutex<AppState>>, cwd: std::p
     state.worktrees_done = true;
 }
 
-/// Run all pulls concurrently (up to `max_jobs` at a time).
+/// Run all pulls concurrently (up to `max_jobs` at a time). `icon_style` selects the glyphs
+/// used in log markers (skip / retry) so they match the active setting.
 pub async fn run_all_pulls(
     repos: Vec<SharedRepoState>,
     max_jobs: usize,
     timeout_secs: u64,
+    icon_style: IconStyle,
 ) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(max_jobs));
     let mut handles = Vec::new();
 
     for repo_state in repos {
         let semaphore = Arc::clone(&semaphore);
-        let handle = tokio::spawn(pull_repo(repo_state, semaphore, timeout_secs));
+        let handle = tokio::spawn(pull_repo(repo_state, semaphore, timeout_secs, icon_style));
         handles.push(handle);
     }
 
@@ -613,6 +617,39 @@ pub async fn run_pull_all_branches(app_state: Arc<Mutex<AppState>>, repo_idx: us
     let mut repo = app.repos[repo_idx].lock().unwrap();
     repo.pull_loading = false;
     repo.page = None;
+}
+
+/// Pull a batch of repos, then refresh ALL their cached data so the list columns and info
+/// panel reflect reality: re-fetch each repo's details (branch/stash/dirty counts, ahead/behind,
+/// last commit) and re-run worktree discovery. Used by refetch (`f`/`F`) and retry (`r`/`R`).
+pub async fn run_refetch_batch(
+    app_state: Arc<Mutex<AppState>>,
+    repos: Vec<SharedRepoState>,
+    max_jobs: usize,
+    timeout_secs: u64,
+    icon_style: IconStyle,
+    cwd: std::path::PathBuf,
+) {
+    let _ = run_all_pulls(repos.clone(), max_jobs, timeout_secs, icon_style).await;
+
+    // Refresh per-repo details (the column/info source), bounded by the same concurrency cap.
+    let semaphore = Arc::new(Semaphore::new(max_jobs.max(1)));
+    let mut handles = Vec::new();
+    for repo in repos {
+        let semaphore = Arc::clone(&semaphore);
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
+            let path = { repo.lock().unwrap().path.clone() };
+            let details = get_repo_details(&path).await;
+            repo.lock().unwrap().details = Some(details);
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
+
+    // Re-discover worktrees so the worktree column/list refreshes too.
+    run_worktree_discovery(app_state, cwd).await;
 }
 
 /// Fetch info-panel details for all repos that don't have them yet (background column fill).

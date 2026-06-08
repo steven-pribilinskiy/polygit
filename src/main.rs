@@ -35,8 +35,8 @@ use app::{
 use worker::{
     run_all_details, run_all_pulls, run_checkout, run_delete, run_diff_modal, run_diff_modal_file,
     run_discard_changes, run_drop_stash, run_prepare_discard, run_prepare_drop_stash,
-    run_pull_all_branches, run_pull_branch, run_remote_url_discovery, run_remove_worktree,
-    run_repo_details, run_repo_diff, run_repo_page, run_worktree_discovery,
+    run_pull_all_branches, run_pull_branch, run_refetch_batch, run_remote_url_discovery,
+    run_remove_worktree, run_repo_details, run_repo_diff, run_repo_page, run_worktree_discovery,
 };
 
 /// Interactive multi-repo git pull dashboard.
@@ -272,6 +272,10 @@ fn dispatch_command(command: Cmd, app: &mut AppState, retry_queue: &mut Vec<usiz
             app.set_status_filter(filter);
             app.pending_leader = None;
         }
+        Cmd::Settings => {
+            app.show_settings = true;
+            app.settings_selected = 0;
+        }
         Cmd::Quit => {
             return Some(if app.all_done {
                 let failed = app
@@ -403,6 +407,9 @@ async fn run_tui(
         .collect();
 
     let app_state = Arc::new(Mutex::new(AppState::new(repos.clone(), max_jobs)));
+    // The scanned directory drives worktree re-discovery on refetch.
+    app_state.lock().unwrap().root_dir = cwd.clone();
+    let icon_style = app_state.lock().unwrap().icon_style;
 
     // Set up terminal
     enable_raw_mode()?;
@@ -428,7 +435,7 @@ async fn run_tui(
     // Spawn pull workers
     let repos_clone = repos.clone();
     tokio::spawn(async move {
-        let _ = run_all_pulls(repos_clone, max_jobs, timeout_secs).await;
+        let _ = run_all_pulls(repos_clone, max_jobs, timeout_secs, icon_style).await;
     });
 
     // Discover origin remote URLs in the background for the help modal's clickable links.
@@ -571,7 +578,10 @@ async fn run_event_loop(
 
         // Process retry queue
         if !retry_queue.is_empty() {
-            let max_jobs = app_state.lock().unwrap().max_jobs;
+            let (max_jobs, icon_style, cwd) = {
+                let app = app_state.lock().unwrap();
+                (app.max_jobs, app.icon_style, app.root_dir.clone())
+            };
             let timeout_secs = 30u64;
 
             // A fresh batch of work is starting: restart the header timer and re-arm the
@@ -593,14 +603,24 @@ async fn run_event_loop(
                         state.status = RepoStatus::Queued;
                         state.log.clear();
                         state.auto_scroll = true;
+                        // Drop cached details so columns show `…` until the refresh lands.
+                        state.details = None;
                     }
                     repo
                 })
                 .collect();
 
-            let repos_clone = repos_to_retry.clone();
+            let app_state_clone = Arc::clone(&app_state);
             tokio::spawn(async move {
-                let _ = run_all_pulls(repos_clone, max_jobs, timeout_secs).await;
+                run_refetch_batch(
+                    app_state_clone,
+                    repos_to_retry,
+                    max_jobs,
+                    timeout_secs,
+                    icon_style,
+                    cwd,
+                )
+                .await;
             });
         }
 
@@ -875,6 +895,33 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Settings modal (`,`): j/k move, space/enter toggle, esc/q/, close. Works over
+                // both the main list and the repo page since it's gated before either.
+                if app.show_settings {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => {
+                            app.show_settings = false;
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if app.settings_selected + 1 < AppState::SETTINGS_ROWS {
+                                app.settings_selected += 1;
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.settings_selected = app.settings_selected.saturating_sub(1);
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter => app.toggle_selected_setting(),
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Diff modal: scroll, toggle the dirty-diff mode, or close.
                 if app.diff_modal.is_some() {
                     if key.code == KeyCode::Char('c')
@@ -1009,6 +1056,11 @@ async fn run_event_loop(
                     let len = app.repo_page_selectable_len();
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
+                        // `,` opens settings (handled by the early gate next iteration).
+                        KeyCode::Char(',') => {
+                            app.show_settings = true;
+                            app.settings_selected = 0;
+                        }
                         KeyCode::Char('j') | KeyCode::Down => {
                             if app.repo_page_selected + 1 < len {
                                 app.repo_page_selected += 1;
@@ -1269,6 +1321,12 @@ async fn run_event_loop(
                     // `s` leader: arm the status-filter chord (next key picks the filter).
                     (KeyCode::Char('s'), _) => {
                         app.pending_leader = Some(Leader::Filter);
+                    }
+
+                    // `,` opens the settings modal.
+                    (KeyCode::Char(','), _) => {
+                        app.show_settings = true;
+                        app.settings_selected = 0;
                     }
 
                     // Resize the split: [ narrows the left pane, ] widens it.

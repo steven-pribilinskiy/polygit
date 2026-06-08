@@ -11,11 +11,12 @@ Interactive multi-repo git pull dashboard. Pulls every git repo in a directory i
 - Status glyphs: queued / running / up-to-date / updated / skipped / failed
 - Automatic one-shot retry of a failed pull before marking it failed
 - Dynamic `Errors (N)` page (after `Result`) listing each failed repo with its error output
-- Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`f` / `F`)
+- Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`f` / `F`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees)
 - Action hints dim when they'd be a no-op
 - Worktree discovery (`.worktrees/*/.git`)
 - Filter repos by name (`/`) or by status (`s` leader: updated / up-to-date / skipped / failed / issues)
 - Diff modal with a clickable file list over the selected file's diff (stash, uncommitted, or vs base branch)
+- Settings modal (`,`): toggle 1-cell panel/modal padding and switch between Unicode glyphs and emoji icons (persisted)
 - Non-TUI fallback (same output as bash reference) when not on a TTY or with `--no-tui`
 - Exit codes: 0 (all ok), 1 (any failed), 2 (user quit mid-run), 130 (Ctrl-C)
 
@@ -91,6 +92,7 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `c` | Start claude code in the selected repo (suspends the TUI, returns on exit) |
 | `x` | Clear **this repo's log buffer** (empties the streamed pull output) |
 | `D` | Open the [documentation website](https://steven-pribilinskiy.github.io/pull-all/) in the browser |
+| `,` | Open the settings modal (panel padding, icon style) |
 | `?` | Open the help modal (docs/GitHub/notes links, all keys, flags & env) |
 | `/` | Filter repos by name |
 | `Esc` | Clear filter (or quit when no filter) |
@@ -114,6 +116,13 @@ The list always shows the status glyph + name + branch. Press `t` then a column 
 ### Info panel (`i`)
 
 `i` toggles an info block above the right pane's content (the pull log or the diff) for the selected repo: status + elapsed, branch, ahead/behind vs upstream, remote, last commit (hash · subject · author · relative date), worktrees, uncommitted/stash counts, and the local path. The block is additive — the log/diff stays beneath it — and tracks the selection as you move. The extra git facts are fetched lazily for the selected repo only. `c` starts claude code (`cc`, i.e. `claude --dangerously-skip-permissions`, in the repo dir; override with `PULL_CLAUDE_CMD`).
+
+### Settings modal (`,`)
+
+`,` opens a small settings modal (from the list or the repo page). Move between rows with `j`/`k` (or `↑`/`↓`), toggle the selected setting with `Space`/`Enter`, and close with `Esc`/`q`/`,`. Both settings persist across runs (in `~/.config/pull-all/state.json`):
+
+- **Panel padding** — adds a 1-cell inner padding inside every bordered panel and modal.
+- **Icons** — switches the status / column / marker glyphs between the default Unicode set (`◌ ✓ ⊘ ✗ ⑂ ≡ •`) and an emoji set (`✅ ✨ ⏭️ ❌ 🌿 📦 📝`). The list columns stay aligned in either mode (emoji render double-width).
 
 ### Help modal (`?`)
 
