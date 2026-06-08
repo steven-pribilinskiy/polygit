@@ -1,4 +1,4 @@
-// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.12.0).
+// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.13.0).
 // Keep this in sync with the event loop when bindings change.
 
 export type Binding = {
@@ -41,6 +41,7 @@ export const keymap: KeymapSection[] = [
       { keys: ['i'], action: 'Toggle the info panel above the log/diff', note: 'additive block; tracks the selection' },
       { keys: ['d'], action: 'Toggle the per-repo diff view' },
       { keys: ['t'], action: 'Column-toggle leader', note: 'then a/d/l/w/b/s; stays active until Esc' },
+      { keys: ['s'], action: 'Status-filter leader', note: 'then a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues', keywords: ['filter', 'status'] },
       { keys: ['o'], action: "Open the selected repo's remote in the browser" },
       { keys: ['y'], action: "Copy the selected repo's absolute path" },
       { keys: ['Y'], action: "Copy the selected repo's remote (origin) URL" },
@@ -75,11 +76,13 @@ export const keymap: KeymapSection[] = [
   {
     id: 'diff',
     title: 'Diff modal',
-    blurb: 'A 90%-of-screen overlay: a stash diff, or a dirty branch/worktree’s changes.',
+    blurb: 'A 90%-of-screen overlay: a scrollable file-list panel over the selected file’s diff.',
     bindings: [
-      { keys: ['↑', '↓'], action: 'Scroll' },
-      { keys: ['PgUp', 'PgDn', 'Home', 'End'], action: 'Scroll by page / jump' },
-      { keys: ['t'], action: 'Toggle uncommitted ⇄ vs base branch', note: 'dirty rows only' },
+      { keys: ['↑', '↓', 'j', 'k'], action: 'Pick a file in the list', note: 'loads that file’s diff below' },
+      { keys: ['click', 'double-click'], action: 'Pick the clicked file' },
+      { keys: ['g', 'G'], action: 'Jump to the first / last file' },
+      { keys: ['PgUp', 'PgDn', 'Home', 'End'], action: 'Scroll the diff panel' },
+      { keys: ['t'], action: 'Toggle uncommitted ⇄ vs base branch', note: 'dirty rows only; re-lists files' },
       { keys: ['d'], action: 'Discard changes (current branch) / remove worktree / drop stash', note: 'with confirmation' },
       { keys: ['Esc', 'q'], action: 'Close the modal' },
     ],

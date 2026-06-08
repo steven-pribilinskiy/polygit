@@ -10,11 +10,12 @@ use crate::app::{
     RepoPageData, RepoStatus, SharedRepoState, WorktreeEntry,
 };
 use crate::git::{
-    base_branch_diff, checkout_branch, classify_pull_output, delete_branch, diff_stat,
-    discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch, fetch_remote,
-    get_branch, get_diff, get_remote_url, get_repo_details, is_dirty, list_local_branches,
-    list_stashes, list_worktrees, pull_all_branches, pull_ff_only, remove_worktree, stash_diff,
-    stash_files, uncommitted_diff, PullOutcome,
+    base_file_list, base_merge_base, checkout_branch, classify_pull_output, delete_branch,
+    diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
+    fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
+    list_local_branches, list_stashes, list_worktrees, pull_all_branches, pull_ff_only,
+    remove_worktree, stash_file_diff, stash_file_list, stash_files, uncommitted_file_list,
+    PullOutcome,
 };
 
 /// Pull a single repository, updating `repo_state` as progress arrives.
@@ -288,6 +289,20 @@ pub async fn run_repo_page(repo: SharedRepoState) {
 
 /// Compute the diff lines for the currently open diff modal (based on its source + mode)
 /// and write them back, if the modal is still open and unchanged.
+/// True when two diff sources point at the same stash/worktree (ignoring labels), so a
+/// late-arriving fetch can tell whether the modal still wants its result.
+fn same_diff_source(a: &DiffSource, b: &DiffSource) -> bool {
+    matches!(
+        (a, b),
+        (DiffSource::Stash { index: x, .. }, DiffSource::Stash { index: y, .. }) if x == y
+    ) || matches!(
+        (a, b),
+        (DiffSource::Dirty { path: x, .. }, DiffSource::Dirty { path: y, .. }) if x == y
+    )
+}
+
+/// Fetch the diff modal's file list for the current source + mode, then load the first file's
+/// diff. Runs on open and whenever the mode toggles (`t`).
 pub async fn run_diff_modal(app_state: Arc<Mutex<AppState>>) {
     let Some((source, mode)) = ({
         let app = app_state.lock().unwrap();
@@ -296,27 +311,70 @@ pub async fn run_diff_modal(app_state: Arc<Mutex<AppState>>) {
         return;
     };
 
-    let lines = match &source {
-        DiffSource::Stash { path, index, .. } => stash_diff(path, *index).await,
+    let files = match &source {
+        DiffSource::Stash { path, index, .. } => stash_file_list(path, *index).await,
         DiffSource::Dirty { path, .. } => match mode {
-            DiffMode::Uncommitted => uncommitted_diff(path).await,
-            DiffMode::BaseBranch => base_branch_diff(path).await,
+            DiffMode::Uncommitted => uncommitted_file_list(path).await,
+            DiffMode::BaseBranch => base_file_list(path).await,
+        },
+    };
+
+    {
+        let mut app = app_state.lock().unwrap();
+        if let Some(modal) = app.diff_modal.as_mut() {
+            if same_diff_source(&modal.source, &source) && modal.mode == mode {
+                modal.files = files;
+                modal.selected = 0;
+                modal.file_scroll = 0;
+                modal.loading = false;
+                if modal.files.is_empty() {
+                    modal.lines = vec!["(no changes)".to_string()];
+                    modal.diff_loading = false;
+                }
+            }
+        }
+    }
+
+    run_diff_modal_file(app_state).await;
+}
+
+/// Fetch the diff of the diff modal's currently-selected file. Runs after the file list loads
+/// and whenever the selection changes (`j`/`k` or a click).
+pub async fn run_diff_modal_file(app_state: Arc<Mutex<AppState>>) {
+    let Some((source, mode, file)) = ({
+        let app = app_state.lock().unwrap();
+        app.diff_modal.as_ref().and_then(|modal| {
+            modal
+                .files
+                .get(modal.selected)
+                .map(|file| (modal.source.clone(), modal.mode, file.clone()))
+        })
+    }) else {
+        return;
+    };
+
+    let lines = match &source {
+        DiffSource::Stash { path, index, .. } => {
+            stash_file_diff(path, *index, &file.path, file.untracked).await
+        }
+        DiffSource::Dirty { path, .. } => match mode {
+            DiffMode::Uncommitted => file_diff_vs(path, None, &file.path, file.untracked).await,
+            DiffMode::BaseBranch => {
+                let merge_base = base_merge_base(path).await;
+                file_diff_vs(path, merge_base.as_deref(), &file.path, false).await
+            }
         },
     };
 
     let mut app = app_state.lock().unwrap();
     if let Some(modal) = app.diff_modal.as_mut() {
-        // Only apply if the modal still wants this exact view (source + mode unchanged).
-        let same_source = matches!(
-            (&modal.source, &source),
-            (DiffSource::Stash { index: a, .. }, DiffSource::Stash { index: b, .. }) if a == b
-        ) || matches!(
-            (&modal.source, &source),
-            (DiffSource::Dirty { path: a, .. }, DiffSource::Dirty { path: b, .. }) if a == b
-        );
-        if same_source && modal.mode == mode {
+        let still_selected = modal
+            .files
+            .get(modal.selected)
+            .is_some_and(|current| current.path == file.path);
+        if same_diff_source(&modal.source, &source) && modal.mode == mode && still_selected {
             modal.lines = lines;
-            modal.loading = false;
+            modal.diff_loading = false;
         }
     }
 }

@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
     AppState, ClickRegion, Column, Command, DiffMode, DiffSource, Leader, PageRowKind, RepoStatus,
-    RightView,
+    RightView, StatusFilter,
 };
 
 const SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
@@ -843,6 +843,7 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let filter_text = app.filter.clone().unwrap_or_default();
     let leader = app.pending_leader;
     let columns = app.columns;
+    let status_filter = app.status_filter;
     let stats = format!(
         "  ·  {} jobs · {done}/{total} done · {running} running · {elapsed:.1}s",
         app.max_jobs
@@ -875,19 +876,45 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             area.y,
             &mut clickable,
         )
+    } else if leader == Some(Leader::Filter) {
+        let pick = |on: bool| if on { "●" } else { "○" };
+        let chosen = |filter: StatusFilter| status_filter == filter;
+        build_status_row(
+            vec![
+                ("filter: ".to_string(), hint, None),
+                (format!("{} a all", pick(chosen(StatusFilter::All))), active, Some(Command::SetFilter(StatusFilter::All))),
+                (" · ".to_string(), hint, None),
+                (format!("{} u updated", pick(chosen(StatusFilter::Updated))), active, Some(Command::SetFilter(StatusFilter::Updated))),
+                (" · ".to_string(), hint, None),
+                (format!("{} c up-to-date", pick(chosen(StatusFilter::UpToDate))), active, Some(Command::SetFilter(StatusFilter::UpToDate))),
+                (" · ".to_string(), hint, None),
+                (format!("{} s skipped", pick(chosen(StatusFilter::Skipped))), active, Some(Command::SetFilter(StatusFilter::Skipped))),
+                (" · ".to_string(), hint, None),
+                (format!("{} f failed", pick(chosen(StatusFilter::Failed))), active, Some(Command::SetFilter(StatusFilter::Failed))),
+                (" · ".to_string(), hint, None),
+                (format!("{} i issues", pick(chosen(StatusFilter::Issues))), active, Some(Command::SetFilter(StatusFilter::Issues))),
+                (" · esc".to_string(), hint, None),
+            ],
+            area.x,
+            area.y,
+            &mut clickable,
+        )
     } else {
-        let filter_tag = if filter_text.is_empty() {
+        let name_tag = if filter_text.is_empty() {
             String::new()
         } else {
             format!("[{filter_text}] ")
         };
+        let status_tag = status_filter.tag().map(|tag| format!("{{{tag}}} ")).unwrap_or_default();
         build_status_row(
             vec![
-                (format!("{filter_tag}j/k ↑/↓ move · g/G top/end · space result · "), hint, None),
+                (format!("{name_tag}{status_tag}j/k ↑/↓ move · space result · "), hint, None),
                 ("i".to_string(), active, Some(Command::Info)),
                 (" info · ".to_string(), hint, None),
                 ("t".to_string(), active, Some(Command::ToggleLeader)),
                 (" cols · ".to_string(), hint, None),
+                ("s".to_string(), active, Some(Command::FilterLeader)),
+                (" filter · ".to_string(), hint, None),
                 ("enter".to_string(), active, Some(Command::OpenPage)),
                 (" page · ".to_string(), hint, None),
                 ("?".to_string(), active, Some(Command::Help)),
@@ -1025,8 +1052,10 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     items.push(plain("    ↑↓/PgUp/PgDn/Home/End scroll · t toggle uncommitted⇄base branch · d discard / remove / drop (confirm) · esc close"));
     items.push(plain(""));
 
-    items.push(header("HOTKEYS — layout & filter"));
-    items.push(plain("    [ ] resize panes · drag the divider · / filter by name · Esc clear filter"));
+    items.push(header("HOTKEYS — filter & layout"));
+    items.push(plain("    / filter by name · Esc clear filter"));
+    items.push(plain("    s then a/u/c/s/f/i → filter by all / updated / up-to-date / skipped / failed / issues"));
+    items.push(plain("    [ ] resize panes · drag the divider"));
     items.push(plain(""));
 
     items.push(header("EXIT CODES"));
@@ -1071,22 +1100,32 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     render_scrollbar(frame, modal_area, app.help_scroll, items.len(), inner_height);
 }
 
-/// Render the 90%-of-screen diff modal (a stash diff, or a dirty branch/worktree diff).
+/// The accent color for a file's git status char in the diff-modal file list.
+fn diff_status_color(status: &str) -> Color {
+    match status {
+        "A" | "?" => Color::Green,
+        "D" => Color::Red,
+        "R" | "C" => Color::Cyan,
+        _ => Color::Yellow,
+    }
+}
+
+/// Render the 90%-of-screen diff modal: a scrollable file-list panel (top, ≤40% height) over
+/// the selected file's diff (bottom). Clicking or `j`/`k` selects a file.
 fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let modal_width = (area.width * 9 / 10).max(20);
-    let modal_height = (area.height * 9 / 10).max(6);
+    let modal_height = (area.height * 9 / 10).max(8);
     let modal_area = centered_rect(modal_width, modal_height, area);
-    let inner_height = (modal_height.saturating_sub(2)) as usize;
 
-    // Read what we need (owned) so the immutable borrow ends before we write scroll/viewport.
-    let (title, footer, total, scroll, view) = {
+    // Owned snapshot so the immutable borrow ends before we write scroll/areas back.
+    let (title, footer, files, selected, diff_lines, diff_scroll_req, file_scroll_in) = {
         let Some(modal) = app.diff_modal.as_ref() else {
             return;
         };
         let (title, footer) = match &modal.source {
             DiffSource::Stash { index, label, .. } => (
-                format!(" stash@{{{index}}} · {} ", truncate_str(label, 60)),
-                " ↑↓ · PgUp/PgDn · Home/End · d drop · esc close ".to_string(),
+                format!(" stash@{{{index}}} · {} ", truncate_str(label, 50)),
+                " ↑↓ pick file · PgUp/PgDn scroll · d drop · esc ".to_string(),
             ),
             DiffSource::Dirty { name, .. } => {
                 let mode = match modal.mode {
@@ -1095,17 +1134,19 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 };
                 (
                     format!(" {name} · {mode} "),
-                    " ↑↓ · PgUp/PgDn · Home/End · t toggle uncommitted⇄base · d discard/remove · esc close ".to_string(),
+                    " ↑↓ pick file · PgUp/PgDn scroll · t toggle · d discard/remove · esc ".to_string(),
                 )
             }
         };
-        let total = modal.lines.len();
-        let scroll = modal.scroll.min(total.saturating_sub(inner_height));
-        let view: Vec<Line> = modal.lines[scroll..(scroll + inner_height).min(total)]
-            .iter()
-            .map(|line| ansi_line_to_ratatui(line))
-            .collect();
-        (title, footer, total, scroll, view)
+        (
+            title,
+            footer,
+            modal.files.clone(),
+            modal.selected,
+            modal.lines.clone(),
+            modal.scroll,
+            modal.file_scroll,
+        )
     };
 
     let block = Block::default()
@@ -1114,16 +1155,102 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .title(title)
         .title_bottom(Line::from(footer).right_aligned());
     let inner = block.inner(modal_area);
-
     frame.render_widget(Clear, modal_area);
     frame.render_widget(block, modal_area);
-    frame.render_widget(Paragraph::new(view), inner);
-    render_scrollbar(frame, modal_area, scroll, total, inner_height);
+
+    // File list takes up to 40% of the modal height (at least 1 row); the diff gets the rest.
+    let max_file_height = (inner.height * 4 / 10).max(1);
+    let file_height = (files.len() as u16).clamp(1, max_file_height);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(file_height),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(inner);
+    let file_area = chunks[0];
+    let divider_area = chunks[1];
+    let diff_area = chunks[2];
+
+    // Keep the selected file visible within the file panel.
+    let view_rows = file_area.height as usize;
+    let mut file_scroll = file_scroll_in.min(files.len().saturating_sub(view_rows));
+    if selected < file_scroll {
+        file_scroll = selected;
+    } else if view_rows > 0 && selected >= file_scroll + view_rows {
+        file_scroll = selected + 1 - view_rows;
+    }
+
+    if files.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " (no changed files)",
+                Style::default().fg(Color::DarkGray),
+            ))),
+            file_area,
+        );
+    } else {
+        let path_width = file_area.width.saturating_sub(5) as usize;
+        let rows: Vec<Line> = files
+            .iter()
+            .enumerate()
+            .skip(file_scroll)
+            .take(view_rows)
+            .map(|(index, file)| {
+                let status = Span::styled(
+                    format!(" {} ", file.status),
+                    Style::default().fg(diff_status_color(&file.status)),
+                );
+                let path = Span::raw(truncate_str(&file.path, path_width.max(1)));
+                let line = Line::from(vec![status, path]);
+                if index == selected {
+                    line.style(
+                        Style::default()
+                            .bg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    line
+                }
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(rows), file_area);
+        render_scrollbar(frame, file_area, file_scroll, files.len(), view_rows);
+    }
+
+    // Divider showing how many files and which one is selected.
+    let divider_label = if files.is_empty() {
+        format!(" {} ", "─".repeat(20))
+    } else {
+        format!(" file {}/{} ", selected + 1, files.len())
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            divider_label,
+            Style::default().fg(Color::DarkGray),
+        ))),
+        divider_area,
+    );
+
+    // Selected file's diff.
+    let diff_view_h = diff_area.height as usize;
+    let diff_total = diff_lines.len();
+    let diff_scroll = diff_scroll_req.min(diff_total.saturating_sub(diff_view_h));
+    let diff_view: Vec<Line> = diff_lines[diff_scroll..(diff_scroll + diff_view_h).min(diff_total)]
+        .iter()
+        .map(|line| ansi_line_to_ratatui(line))
+        .collect();
+    frame.render_widget(Paragraph::new(diff_view), diff_area);
+    render_scrollbar(frame, modal_area, diff_scroll, diff_total, diff_view_h);
 
     if let Some(modal) = app.diff_modal.as_mut() {
-        modal.scroll = scroll;
+        modal.scroll = diff_scroll;
+        modal.file_scroll = file_scroll;
     }
-    app.diff_modal_viewport = inner_height;
+    app.diff_modal_viewport = diff_view_h;
+    app.diff_files_area = file_area;
+    app.diff_body_area = diff_area;
 }
 
 /// Fixed-width ahead/behind spans (`↑a ↓b`), each arrow colored by its own count: a zero

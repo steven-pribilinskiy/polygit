@@ -14,7 +14,8 @@ Interactive multi-repo git pull dashboard. Pulls every git repo in a directory i
 - Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`f` / `F`)
 - Action hints dim when they'd be a no-op
 - Worktree discovery (`.worktrees/*/.git`)
-- Filter repos by name with `/`
+- Filter repos by name (`/`) or by status (`s` leader: updated / up-to-date / skipped / failed / issues)
+- Diff modal with a clickable file list over the selected file's diff (stash, uncommitted, or vs base branch)
 - Non-TUI fallback (same output as bash reference) when not on a TTY or with `--no-tui`
 - Exit codes: 0 (all ok), 1 (any failed), 2 (user quit mid-run), 130 (Ctrl-C)
 
@@ -83,6 +84,7 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `i` | Toggle the info panel — an additive block above the log/diff (status, branch, ahead/behind, remote, last commit, worktrees, changes, path) |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
 | `t` | Column-toggle leader: press `t` then `a`/`d`/`l`/`w`/`b`/`s` to show/hide a column (mode stays active until `Esc`) |
+| `s` | Status-filter leader: press `s` then `a`/`u`/`c`/`s`/`f`/`i` to filter the list by all / updated / up-to-date / skipped / failed / issues (applies on top of `/`) |
 | `o` | Open the selected repo's remote in the browser |
 | `y` | Copy the selected repo's **absolute path** to the clipboard |
 | `Y` | Copy the selected repo's **remote (origin) URL** to the clipboard |
@@ -103,7 +105,7 @@ The repo list, the log/diff preview, the help modal, and the repo page all show 
 
 Opens a full-screen page for the selected repo that runs `git fetch` and lists every local branch (with HEAD marker, fresh ahead/behind vs upstream, upstream name, last-commit date, subject), every worktree (branch + path), and every stash (`STASHES` section). A red `●` marks branches/worktrees with uncommitted changes. Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / click); `Enter` (or double-click) opens the diff modal on a stash or dirty row; `Shift+Enter` checks out the selected branch (clean, non-current); `p` fast-forwards the selected branch, `P` all fast-forwardable branches; `d` deletes a branch / drops a stash / removes a worktree / discards the current branch's uncommitted changes (with a confirmation dialog whose severity scales with danger); `c` starts claude code in that branch/worktree's path; `o` opens the branch on the remote; `y` copies its path; `Esc`/`q` returns.
 
-`Enter` or a double-click on a **stash** or a **dirty** branch/worktree opens a 90%-of-screen **diff modal**: a stash shows `git stash show -p`; a dirty row shows its uncommitted changes, and `t` toggles between *uncommitted* (vs HEAD) and *vs base branch* (everything changed since forking from `origin/HEAD`). Scroll with `↑↓`/`PgUp`/`PgDn`/`Home`/`End` or the wheel; `Esc` closes.
+`Enter` or a double-click on a **stash** or a **dirty** branch/worktree opens a 90%-of-screen **diff modal**, split into a scrollable **file-list panel** (top, ≤40% height) over the **selected file's diff** (bottom). Pick a file with `↑↓`/`j`/`k` or by clicking it (`g`/`G` jump to first/last); its diff loads beneath. `PgUp`/`PgDn`/`Home`/`End` (or the wheel over the diff) scroll the diff. For a dirty row, `t` toggles the file set between *uncommitted* (vs HEAD) and *vs base branch* (everything changed since forking from `origin/HEAD`); a stash lists its files (including untracked). `d` discards/removes/drops (with confirm); `Esc` closes.
 
 ### Columns (`t` leader)
 

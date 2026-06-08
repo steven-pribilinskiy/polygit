@@ -30,13 +30,13 @@ use ratatui::Terminal;
 
 use app::{
     AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog, DiffSource, Leader, PageRow,
-    PageRowKind, RepoState, RepoStatus, RightView, SharedRepoState,
+    PageRowKind, RepoState, RepoStatus, RightView, SharedRepoState, StatusFilter,
 };
 use worker::{
-    run_all_details, run_all_pulls, run_checkout, run_delete, run_diff_modal, run_discard_changes,
-    run_drop_stash, run_prepare_discard, run_prepare_drop_stash, run_pull_all_branches, run_pull_branch,
-    run_remote_url_discovery, run_remove_worktree, run_repo_details, run_repo_diff, run_repo_page,
-    run_worktree_discovery,
+    run_all_details, run_all_pulls, run_checkout, run_delete, run_diff_modal, run_diff_modal_file,
+    run_discard_changes, run_drop_stash, run_prepare_discard, run_prepare_drop_stash,
+    run_pull_all_branches, run_pull_branch, run_remote_url_discovery, run_remove_worktree,
+    run_repo_details, run_repo_diff, run_repo_page, run_worktree_discovery,
 };
 
 /// Interactive multi-repo git pull dashboard.
@@ -259,6 +259,18 @@ fn dispatch_command(command: Cmd, app: &mut AppState, retry_queue: &mut Vec<usiz
             // Stay in toggle mode (matches the sticky `t` keyboard behavior) so several
             // columns can be clicked in a row; `t`/Esc or a non-toggle key exits.
             app.toggle_column(column);
+        }
+        Cmd::FilterLeader => {
+            app.pending_leader = if app.pending_leader == Some(Leader::Filter) {
+                None
+            } else {
+                Some(Leader::Filter)
+            };
+        }
+        Cmd::SetFilter(filter) => {
+            // Picking a filter applies it and closes the leader (unlike the sticky column menu).
+            app.set_status_filter(filter);
+            app.pending_leader = None;
         }
         Cmd::Quit => {
             return Some(if app.all_done {
@@ -612,16 +624,44 @@ async fn run_event_loop(
 
                 // Diff modal: the wheel scrolls; clicks are ignored (esc/q closes it).
                 if app.diff_modal.is_some() {
-                    if let Some(modal) = app.diff_modal.as_mut() {
-                        match mouse.kind {
-                            MouseEventKind::ScrollDown => {
+                    let files_area = app.diff_files_area;
+                    let over_files = mouse.row >= files_area.y
+                        && mouse.row < files_area.y + files_area.height;
+                    match mouse.kind {
+                        // Wheel over the file list moves the selection; over the diff it scrolls.
+                        MouseEventKind::ScrollDown => {
+                            if over_files {
+                                if app.diff_modal_select(1) {
+                                    drop(app);
+                                    tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
+                                    continue;
+                                }
+                            } else if let Some(modal) = app.diff_modal.as_mut() {
                                 modal.scroll = modal.scroll.saturating_add(3);
                             }
-                            MouseEventKind::ScrollUp => {
+                        }
+                        MouseEventKind::ScrollUp => {
+                            if over_files {
+                                if app.diff_modal_select(-1) {
+                                    drop(app);
+                                    tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
+                                    continue;
+                                }
+                            } else if let Some(modal) = app.diff_modal.as_mut() {
                                 modal.scroll = modal.scroll.saturating_sub(3);
                             }
-                            _ => {}
                         }
+                        // Click a file row to view its diff.
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(index) = app.diff_modal_file_at(mouse.row) {
+                                if app.diff_modal_select_index(index) {
+                                    drop(app);
+                                    tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                     continue;
                 }
@@ -853,18 +893,56 @@ async fn run_event_loop(
                             };
                         }
                     };
+                    // Re-fetch the selected file's diff after a selection change.
+                    let refetch_file = |app_state: &Arc<Mutex<AppState>>| {
+                        tokio::spawn(run_diff_modal_file(Arc::clone(app_state)));
+                    };
+                    let last_file = app
+                        .diff_modal
+                        .as_ref()
+                        .map(|modal| modal.files.len().saturating_sub(1));
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.diff_modal = None,
-                        KeyCode::Char('j') | KeyCode::Down => scroll_by(&mut app, 1),
-                        KeyCode::Char('k') | KeyCode::Up => scroll_by(&mut app, -1),
+                        // j/k/↑/↓ move the file selection (and load that file's diff).
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if app.diff_modal_select(1) {
+                                drop(app);
+                                refetch_file(&app_state);
+                                continue;
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if app.diff_modal_select(-1) {
+                                drop(app);
+                                refetch_file(&app_state);
+                                continue;
+                            }
+                        }
+                        KeyCode::Char('g') => {
+                            if app.diff_modal_select_index(0) {
+                                drop(app);
+                                refetch_file(&app_state);
+                                continue;
+                            }
+                        }
+                        KeyCode::Char('G') => {
+                            if let Some(last) = last_file {
+                                if app.diff_modal_select_index(last) {
+                                    drop(app);
+                                    refetch_file(&app_state);
+                                    continue;
+                                }
+                            }
+                        }
+                        // Page keys scroll the diff panel.
                         KeyCode::PageDown => scroll_by(&mut app, isize::try_from(page).unwrap_or(isize::MAX)),
                         KeyCode::PageUp => scroll_by(&mut app, -isize::try_from(page).unwrap_or(isize::MAX)),
-                        KeyCode::Char('g') | KeyCode::Home => {
+                        KeyCode::Home => {
                             if let Some(modal) = app.diff_modal.as_mut() {
                                 modal.scroll = 0;
                             }
                         }
-                        KeyCode::Char('G') | KeyCode::End => {
+                        KeyCode::End => {
                             if let Some(modal) = app.diff_modal.as_mut() {
                                 modal.scroll = usize::MAX;
                             }
@@ -1117,6 +1195,25 @@ async fn run_event_loop(
                     }
                 }
 
+                // `s` filter mode: pick one status filter (a/u/c/s/f/i), then exit. Esc cancels;
+                // any other key just exits without changing the filter.
+                if app.pending_leader == Some(Leader::Filter) {
+                    let picked = match key.code {
+                        KeyCode::Char('a') => Some(StatusFilter::All),
+                        KeyCode::Char('u') => Some(StatusFilter::Updated),
+                        KeyCode::Char('c') => Some(StatusFilter::UpToDate),
+                        KeyCode::Char('s') => Some(StatusFilter::Skipped),
+                        KeyCode::Char('f') => Some(StatusFilter::Failed),
+                        KeyCode::Char('i') => Some(StatusFilter::Issues),
+                        _ => None,
+                    };
+                    if let Some(filter) = picked {
+                        app.set_status_filter(filter);
+                    }
+                    app.pending_leader = None;
+                    continue;
+                }
+
                 // Normal key handling
                 match (key.code, key.modifiers) {
                     // Quit
@@ -1167,6 +1264,11 @@ async fn run_event_loop(
                     // `t` leader: arm the column-toggle chord (next key picks the column).
                     (KeyCode::Char('t'), _) => {
                         app.pending_leader = Some(Leader::Toggle);
+                    }
+
+                    // `s` leader: arm the status-filter chord (next key picks the filter).
+                    (KeyCode::Char('s'), _) => {
+                        app.pending_leader = Some(Leader::Filter);
                     }
 
                     // Resize the split: [ narrows the left pane, ] widens it.

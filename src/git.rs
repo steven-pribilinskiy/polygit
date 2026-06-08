@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tokio::process::Command;
 
-use crate::app::{BranchInfo, RepoDetails, StashInfo, WorktreeInfo};
+use crate::app::{BranchInfo, DiffFile, RepoDetails, StashInfo, WorktreeInfo};
 
 /// Branches excluded from the feature-branch count.
 const EXCLUDED_BRANCHES: [&str; 2] = ["main", "dev"];
@@ -335,19 +335,6 @@ pub async fn list_stashes(dir: &Path) -> Vec<StashInfo> {
         .collect()
 }
 
-/// Colored diff of a stash entry (`git stash show -p stash@{index}`).
-pub async fn stash_diff(dir: &Path, index: usize) -> Vec<String> {
-    let dir_str = dir.to_str().unwrap_or(".");
-    let stash_ref = format!("stash@{{{index}}}");
-    run_diff(&["-C", dir_str, "stash", "show", "-p", "--color=always", &stash_ref]).await
-}
-
-/// Colored diff of uncommitted changes against the branch's own HEAD (`git diff HEAD`).
-pub async fn uncommitted_diff(dir: &Path) -> Vec<String> {
-    let dir_str = dir.to_str().unwrap_or(".");
-    run_diff(&["-C", dir_str, "diff", "--color=always", "HEAD"]).await
-}
-
 /// Resolve the repo's base branch ref: the remote's default branch (`origin/HEAD`) if set,
 /// otherwise the first of origin/{main,master,dev} or local {main,master,dev} that exists.
 pub async fn default_base_branch(dir: &Path) -> Option<String> {
@@ -385,26 +372,175 @@ pub async fn default_base_branch(dir: &Path) -> Option<String> {
     None
 }
 
-/// Colored diff of everything HEAD changed since it forked from its base branch, including
-/// uncommitted work (`git diff <merge-base(base, HEAD)>`).
-pub async fn base_branch_diff(dir: &Path) -> Vec<String> {
+/// Resolve the merge-base between the repo's default base branch and HEAD (the point a feature
+/// branch forked from). None if no base branch is found.
+pub async fn base_merge_base(dir: &Path) -> Option<String> {
     let dir_str = dir.to_str().unwrap_or(".");
-    let Some(base) = default_base_branch(dir).await else {
-        return vec!["(no base branch found — is there an origin remote?)".to_string()];
-    };
-    let merge_base = match Command::new("git")
+    let base = default_base_branch(dir).await?;
+    let output = Command::new("git")
         .args(["-C", dir_str, "merge-base", &base, "HEAD"])
         .output()
         .await
+        .ok()?;
+    if !output.status.success() {
+        return Some(base);
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Parse `--name-status` output (`STATUS\tPATH`, or `R100\tOLD\tNEW` for renames) into files.
+fn parse_name_status(stdout: &str) -> Vec<DiffFile> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let status = fields.next()?.chars().next()?.to_string();
+            // For renames/copies the new path is the last tab-separated field.
+            let path = fields.next_back()?.to_string();
+            if path.is_empty() {
+                return None;
+            }
+            Some(DiffFile { status, path, untracked: false })
+        })
+        .collect()
+}
+
+/// The empty-tree object — diff against it to render an untracked/added file whole.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// Files in a stash entry (`git stash show --include-untracked --name-status`), with the
+/// untracked ones (stored in the stash's `^3` tree) flagged so their diff uses the right command.
+pub async fn stash_file_list(dir: &Path, index: usize) -> Vec<DiffFile> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let stash_ref = format!("stash@{{{index}}}");
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "stash", "show", "--include-untracked", "--name-status", &stash_ref])
+        .output()
+        .await
     {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        }
-        _ => base.clone(),
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
     };
-    let mut lines = run_diff(&["-C", dir_str, "diff", "--color=always", &merge_base]).await;
-    lines.insert(0, format!("(vs base branch: {base})"));
-    lines
+    let mut files = parse_name_status(&String::from_utf8_lossy(&output.stdout));
+
+    // Untracked files captured by `git stash -u` live in the stash's third parent (`^3`).
+    let untracked_ref = format!("stash@{{{index}}}^3");
+    if let Ok(tree) = Command::new("git")
+        .args(["-C", dir_str, "ls-tree", "-r", "--name-only", &untracked_ref])
+        .output()
+        .await
+    {
+        if tree.status.success() {
+            let untracked: Vec<String> = String::from_utf8_lossy(&tree.stdout)
+                .lines()
+                .map(|line| line.to_string())
+                .collect();
+            for file in &mut files {
+                if untracked.contains(&file.path) {
+                    file.untracked = true;
+                }
+            }
+        }
+    }
+    files
+}
+
+/// All uncommitted + untracked files (`git status --porcelain`), for the uncommitted diff view.
+pub async fn uncommitted_file_list(dir: &Path) -> Vec<DiffFile> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "status", "--porcelain", "--untracked-files=all"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            if line.len() < 4 {
+                return None;
+            }
+            let code = &line[..2];
+            let untracked = code == "??";
+            // Status char: the meaningful side of XY (index then worktree), or ? for untracked.
+            let status = if untracked {
+                "?".to_string()
+            } else {
+                code.trim().chars().next().unwrap_or('M').to_string()
+            };
+            let path = line[3..]
+                .split_once(" -> ")
+                .map(|(_, new)| new)
+                .unwrap_or(&line[3..])
+                .to_string();
+            Some(DiffFile { status, path, untracked })
+        })
+        .collect()
+}
+
+/// Files changed since the branch forked from its base (`git diff --name-status <merge-base>`).
+pub async fn base_file_list(dir: &Path) -> Vec<DiffFile> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let Some(merge_base) = base_merge_base(dir).await else {
+        return Vec::new();
+    };
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "diff", "--name-status", &merge_base])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    parse_name_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Colored diff of a single file within a stash entry. Tracked files diff the stash against its
+/// first parent (the state when stashed); untracked files diff the `^3` tree against the empty
+/// tree (`git stash show -p` itself rejects a pathspec, so we go through `git diff`).
+pub async fn stash_file_diff(dir: &Path, index: usize, path: &str, untracked: bool) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    if untracked {
+        let untracked_tree = format!("stash@{{{index}}}^3");
+        run_diff(&["-C", dir_str, "diff", "--color=always", EMPTY_TREE, &untracked_tree, "--", path])
+            .await
+    } else {
+        let stash_ref = format!("stash@{{{index}}}");
+        let parent = format!("stash@{{{index}}}^1");
+        run_diff(&["-C", dir_str, "diff", "--color=always", &parent, &stash_ref, "--", path]).await
+    }
+}
+
+/// Colored diff of a single file against `base` (a ref/sha), or against HEAD when `base` is None.
+/// Untracked files (not in HEAD/base) are shown whole via `git diff --no-index`.
+pub async fn file_diff_vs(dir: &Path, base: Option<&str>, path: &str, untracked: bool) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    if untracked {
+        let abs = dir.join(path);
+        let abs_str = abs.to_str().unwrap_or(path);
+        // --no-index exits 1 when files differ (always, here), so don't treat that as failure.
+        let output = match Command::new("git")
+            .args(["-C", dir_str, "diff", "--no-index", "--color=always", "/dev/null", abs_str])
+            .output()
+            .await
+        {
+            Ok(output) => output,
+            Err(_) => return vec!["(diff unavailable)".to_string()],
+        };
+        let lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.to_string())
+            .collect();
+        return if lines.is_empty() {
+            vec!["(new file)".to_string()]
+        } else {
+            lines
+        };
+    }
+    let reference = base.unwrap_or("HEAD");
+    run_diff(&["-C", dir_str, "diff", "--color=always", reference, "--", path]).await
 }
 
 /// Run `git fetch --all` to refresh remote-tracking refs. Best-effort.

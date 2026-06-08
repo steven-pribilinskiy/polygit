@@ -117,14 +117,36 @@ pub enum DiffSource {
     Dirty { path: PathBuf, name: String },
 }
 
-/// The full-screen-ish (90%) diff modal state.
+/// One changed file shown in the diff modal's file-list panel.
+#[derive(Debug, Clone)]
+pub struct DiffFile {
+    /// Single-char git status: M(odified) A(dded) D(eleted) R(enamed) ?(untracked) …
+    pub status: String,
+    /// Path relative to the repo root.
+    pub path: String,
+    /// Untracked file — its per-file diff needs `git diff --no-index`.
+    pub untracked: bool,
+}
+
+/// The full-screen-ish (90%) diff modal state: a file-list panel over the selected file's diff.
 #[derive(Debug, Clone)]
 pub struct DiffModal {
     pub source: DiffSource,
     pub mode: DiffMode,
+    /// The changed files (top panel). `None` while the list is still loading.
+    pub files: Vec<DiffFile>,
+    /// Index of the selected file in `files`.
+    pub selected: usize,
+    /// Scroll offset of the file-list panel.
+    pub file_scroll: usize,
+    /// Diff lines of the selected file (bottom panel).
     pub lines: Vec<String>,
+    /// Scroll offset of the diff panel.
     pub scroll: usize,
+    /// The file list is being (re)fetched.
     pub loading: bool,
+    /// The selected file's diff is being fetched.
+    pub diff_loading: bool,
 }
 
 /// Data backing the dedicated repo page (branches + worktrees + fetch state).
@@ -200,10 +222,51 @@ impl ColumnFlags {
     }
 }
 
-/// A pending two-key chord. `t` then a column key toggles that column.
+/// A pending two-key chord: `t` then a column key toggles that column; `s` then a status key
+/// picks a list filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Leader {
     Toggle,
+    Filter,
+}
+
+/// Filter the repo list by pull outcome. Applied on top of the `/` name filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatusFilter {
+    #[default]
+    All,
+    Updated,
+    UpToDate,
+    Skipped,
+    Failed,
+    /// Failed or skipped — the repos that need attention.
+    Issues,
+}
+
+impl StatusFilter {
+    /// Whether a repo with `status` passes this filter.
+    pub fn matches(&self, status: &RepoStatus) -> bool {
+        match self {
+            StatusFilter::All => true,
+            StatusFilter::Updated => matches!(status, RepoStatus::Updated),
+            StatusFilter::UpToDate => matches!(status, RepoStatus::UpToDate),
+            StatusFilter::Skipped => matches!(status, RepoStatus::Skipped),
+            StatusFilter::Failed => matches!(status, RepoStatus::Failed),
+            StatusFilter::Issues => status.is_retryable(),
+        }
+    }
+
+    /// Short tag shown in the status bar when the filter is active (None for All).
+    pub fn tag(&self) -> Option<&'static str> {
+        match self {
+            StatusFilter::All => None,
+            StatusFilter::Updated => Some("updated"),
+            StatusFilter::UpToDate => Some("up-to-date"),
+            StatusFilter::Skipped => Some("skipped"),
+            StatusFilter::Failed => Some("failed"),
+            StatusFilter::Issues => Some("issues"),
+        }
+    }
 }
 
 /// A mouse-clickable command region in the status bar (rebuilt each render).
@@ -227,6 +290,8 @@ pub enum Command {
     OpenPage,
     ToggleLeader,
     ToggleColumn(Column),
+    FilterLeader,
+    SetFilter(StatusFilter),
     Quit,
 }
 
@@ -368,6 +433,8 @@ pub struct AppState {
     pub preview_focused: bool,
     /// Filter string (from `/` mode).
     pub filter: Option<String>,
+    /// Status filter picked via the `s` leader (default: show all).
+    pub status_filter: StatusFilter,
     /// Filter input mode active?
     pub filter_input_mode: bool,
     /// Wall-clock start time (reset to now whenever a fresh batch of work is kicked off).
@@ -425,8 +492,12 @@ pub struct AppState {
     pub repo_page_click: Vec<(u16, usize)>,
     /// The 90% diff modal (stash diff or a dirty branch/worktree diff), if open.
     pub diff_modal: Option<DiffModal>,
-    /// Visible line count of the diff modal, captured at render for PgUp/PgDn paging.
+    /// Visible line count of the diff modal's diff panel, captured at render for PgUp/PgDn.
     pub diff_modal_viewport: usize,
+    /// Inner rect of the diff modal's file-list panel (mouse hit-testing + wheel routing).
+    pub diff_files_area: Rect,
+    /// Inner rect of the diff modal's diff panel (wheel routing).
+    pub diff_body_area: Rect,
 }
 
 impl AppState {
@@ -447,6 +518,7 @@ impl AppState {
             user_navigated: false,
             preview_focused: false,
             filter: None,
+            status_filter: StatusFilter::default(),
             filter_input_mode: false,
             start: Instant::now(),
             finished_elapsed: None,
@@ -476,6 +548,8 @@ impl AppState {
             repo_page_click: Vec::new(),
             diff_modal: None,
             diff_modal_viewport: 0,
+            diff_files_area: Rect::default(),
+            diff_body_area: Rect::default(),
         }
     }
 
@@ -544,21 +618,26 @@ impl AppState {
 
     /// Returns indices of repos visible given the current filter.
     pub fn visible_indices(&self) -> Vec<usize> {
-        match &self.filter {
-            None => (0..self.repos.len()).collect(),
-            Some(filter) => {
-                let filter_lower = filter.to_lowercase();
-                self.repos
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, repo)| {
-                        let state = repo.lock().unwrap();
-                        state.name.to_lowercase().contains(&filter_lower)
-                    })
-                    .map(|(index, _)| index)
-                    .collect()
-            }
-        }
+        let name_filter = self.filter.as_ref().map(|filter| filter.to_lowercase());
+        self.repos
+            .iter()
+            .enumerate()
+            .filter(|(_, repo)| {
+                let state = repo.lock().unwrap();
+                let name_ok = name_filter
+                    .as_ref()
+                    .is_none_or(|needle| state.name.to_lowercase().contains(needle));
+                name_ok && self.status_filter.matches(&state.status)
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Apply a status filter and reset the selection (the visible set just changed).
+    pub fn set_status_filter(&mut self, filter: StatusFilter) {
+        self.status_filter = filter;
+        self.selected = 0;
+        self.result_overlay = false;
     }
 
     /// Total items in the list (visible repos + Result item + optional Errors item).
@@ -814,9 +893,13 @@ impl AppState {
         self.diff_modal = Some(DiffModal {
             source,
             mode: DiffMode::Uncommitted,
+            files: Vec::new(),
+            selected: 0,
+            file_scroll: 0,
             lines: vec!["(loading…)".to_string()],
             scroll: 0,
             loading: true,
+            diff_loading: true,
         });
     }
 
@@ -833,10 +916,61 @@ impl AppState {
             DiffMode::Uncommitted => DiffMode::BaseBranch,
             DiffMode::BaseBranch => DiffMode::Uncommitted,
         };
+        modal.files = Vec::new();
+        modal.selected = 0;
+        modal.file_scroll = 0;
         modal.lines = vec!["(loading…)".to_string()];
         modal.scroll = 0;
         modal.loading = true;
+        modal.diff_loading = true;
         true
+    }
+
+    /// Move the diff modal's file selection by `delta`, clamped. Returns true if it changed
+    /// (so the caller can refetch the newly-selected file's diff).
+    pub fn diff_modal_select(&mut self, delta: isize) -> bool {
+        let Some(modal) = self.diff_modal.as_mut() else {
+            return false;
+        };
+        if modal.files.is_empty() {
+            return false;
+        }
+        let last = modal.files.len() - 1;
+        let next = (modal.selected as isize + delta).clamp(0, last as isize) as usize;
+        if next == modal.selected {
+            return false;
+        }
+        modal.selected = next;
+        modal.scroll = 0;
+        modal.lines = vec!["(loading…)".to_string()];
+        modal.diff_loading = true;
+        true
+    }
+
+    /// Select a specific diff-modal file by index (mouse click). Returns true if it changed.
+    pub fn diff_modal_select_index(&mut self, index: usize) -> bool {
+        let Some(modal) = self.diff_modal.as_mut() else {
+            return false;
+        };
+        if index >= modal.files.len() || index == modal.selected {
+            return false;
+        }
+        modal.selected = index;
+        modal.scroll = 0;
+        modal.lines = vec!["(loading…)".to_string()];
+        modal.diff_loading = true;
+        true
+    }
+
+    /// The file index at a screen row inside the diff modal's file-list panel (mouse hit-test).
+    pub fn diff_modal_file_at(&self, row: u16) -> Option<usize> {
+        let modal = self.diff_modal.as_ref()?;
+        let area = self.diff_files_area;
+        if row < area.y || row >= area.y + area.height {
+            return None;
+        }
+        let index = (row - area.y) as usize + modal.file_scroll;
+        (index < modal.files.len()).then_some(index)
     }
 
     pub fn repo_page_selectable_len(&self) -> usize {

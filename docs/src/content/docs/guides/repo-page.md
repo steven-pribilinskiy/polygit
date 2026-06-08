@@ -50,13 +50,17 @@ the main list uses for an in-progress pull.
 ## The diff modal
 
 `Enter` or a double-click on a **stash** or a **dirty** branch/worktree opens a
-90%-of-screen diff modal:
+90%-of-screen diff modal, split into two panels:
 
-- A **stash** shows `git stash show -p`.
-- A **dirty row** shows its uncommitted changes. Press `t` to toggle between
-  *uncommitted* (vs HEAD) and *vs base branch* (everything changed since you forked from
-  `origin/HEAD`).
+- **Top — file list** (≤40% of the height, scrollable): every changed file with its git status
+  (`M`/`A`/`D`/`R`/`?`). Pick a file with `↑`/`↓`/`j`/`k`, `g`/`G` for first/last, or by clicking it.
+- **Bottom — the selected file's diff**, loaded on demand. Scroll it with `PgUp`/`PgDn`/`Home`/`End`
+  or the wheel.
 
-Scroll with `↑`/`↓`/`PgUp`/`PgDn`/`Home`/`End` or the wheel. Inside the modal, `d`
+What the file set contains depends on the source: a **stash** lists the files it holds (including
+untracked); a **dirty row** lists uncommitted changes, and `t` toggles between *uncommitted*
+(vs HEAD) and *vs base branch* (everything changed since you forked from `origin/HEAD`).
+
+Inside the modal, `d`
 discards (current branch), removes (worktree), or drops (stash) — same confirm as the
 page. `Esc` or `q` closes it.
