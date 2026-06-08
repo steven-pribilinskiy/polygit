@@ -441,7 +441,7 @@ fn status_label(status: &RepoStatus) -> &'static str {
     }
 }
 
-fn render_preview(frame: &mut Frame, app: &AppState, area: Rect, _tick: u64) {
+fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, _tick: u64) {
     let visible = app.visible_indices();
 
     // Which pane is showing: a repo's log/diff, the Result summary, or the Errors list.
@@ -539,6 +539,11 @@ fn render_preview(frame: &mut Frame, app: &AppState, area: Rect, _tick: u64) {
         .wrap(Wrap { trim: false });
     frame.render_widget(para, inner);
     render_scrollbar(frame, area, effective_scroll, total_lines, inner_height);
+
+    // Capture scroll geometry for the event loop's wheel/scrollbar hit-testing.
+    app.preview_total = total_lines;
+    app.preview_viewport = inner_height;
+    app.preview_scroll_area = area;
 }
 
 /// Render the per-repo info view (status, branch, ahead/behind, remote, last commit,
@@ -1444,7 +1449,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         .map(|row| row.branch.chars().count())
         .max()
         .unwrap_or(8)
-        .min(30);
+        .min(120);
 
     // (Line, Option<selectable index>) — None for headers/blanks/banners.
     let mut items: Vec<(Line<'static>, Option<usize>)> = Vec::new();
@@ -1476,7 +1481,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             Span::raw("  ")
         };
         let name_span = Span::styled(
-            format!("{:<name_pad$}", row.branch),
+            format!("{:<name_pad$}", truncate_str(&row.branch, name_pad)),
             if row.is_head { head_style } else { value },
         );
         let upstream = Span::styled(format!("  {}", row.upstream.clone().unwrap_or_default()), label);
@@ -1501,7 +1506,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             continue;
         }
         let mut line_spans = vec![
-            Span::styled(format!("  {:<name_pad$}", row.branch), cyan),
+            Span::styled(format!("  {:<name_pad$}", truncate_str(&row.branch, name_pad)), cyan),
             Span::raw("  "),
         ];
         line_spans.extend(ahead_behind_spans(row.ahead, row.behind, 10, icons));

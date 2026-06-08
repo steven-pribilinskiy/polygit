@@ -131,10 +131,10 @@ The list always shows the status glyph + name + branch. Press `t` then a column 
 ### Mouse
 
 Click a repo row to select it, scroll the wheel over the left pane to move the
-selection or over the right pane to scroll the preview, and drag the divider
-between the panes to resize. While the TUI is running it captures the mouse, so
-native terminal text-selection is suspended until you quit (same tradeoff as
-lazygit/htop).
+selection or over the right pane to scroll the preview, click or drag the preview
+scrollbar to jump/scroll, and drag the divider between the panes to resize. While
+the TUI is running it captures the mouse, so native terminal text-selection is
+suspended until you quit (same tradeoff as lazygit/htop).
 
 ## Testing
 

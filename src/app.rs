@@ -545,6 +545,13 @@ pub struct AppState {
     pub list_area: Rect,
     /// Right preview pane rect — captured each render for hit-testing.
     pub preview_area: Rect,
+    /// Total content lines + visible height of the preview, captured each render so wheel/
+    /// scrollbar scrolling clamps to the real content (not the log length) and never over-scrolls.
+    pub preview_total: usize,
+    pub preview_viewport: usize,
+    /// The rect `render_scrollbar` drew the preview scrollbar on (the info-split lower chunk when
+    /// the info block is pinned, else the full preview) — for scrollbar click/drag hit-testing.
+    pub preview_scroll_area: Rect,
     /// Column of the divider between the panes (= preview_area.x).
     pub divider_col: u16,
     /// Scroll offset of the list widget, read back after render for row hit-testing.
@@ -629,6 +636,9 @@ impl AppState {
             main_area: Rect::default(),
             list_area: Rect::default(),
             preview_area: Rect::default(),
+            preview_total: 0,
+            preview_viewport: 0,
+            preview_scroll_area: Rect::default(),
             divider_col: 0,
             list_offset: 0,
             right_view: RightView::Log,

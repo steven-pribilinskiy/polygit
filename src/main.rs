@@ -220,6 +220,37 @@ fn pop_key_enhancement(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
     }
 }
 
+/// True when `(col,row)` lands on the preview's scrollbar track and the preview is scrollable.
+/// The track is the rightmost column of the area the scrollbar was drawn on.
+fn on_preview_scrollbar(app: &AppState, col: u16, row: u16) -> bool {
+    let area = app.preview_scroll_area;
+    area.width > 0
+        && app.preview_total > app.preview_viewport
+        && col == area.x + area.width - 1
+        && row >= area.y
+        && row < area.y + area.height
+}
+
+/// Preview scroll offset that maps the view-top to `row` on the scrollbar track (absolute
+/// jump-to-cursor), clamped to the scrollable range. Row-only so it works mid-drag.
+fn preview_scroll_from_row(app: &AppState, row: u16) -> usize {
+    let area = app.preview_scroll_area;
+    let track_height = f64::from(area.height.max(1));
+    let rel = f64::from(row.saturating_sub(area.y));
+    let fraction = (rel / track_height).clamp(0.0, 1.0);
+    let max_scroll = app.preview_total.saturating_sub(app.preview_viewport);
+    ((fraction * app.preview_total as f64) as usize).min(max_scroll)
+}
+
+/// Set the selected repo's preview scroll (disabling auto-scroll). No-op on Result/Errors.
+fn set_preview_scroll(app: &mut AppState, scroll: usize) {
+    if let Some(repo_idx) = app.selected_repo_index() {
+        let mut state = app.repos[repo_idx].lock().unwrap();
+        state.auto_scroll = false;
+        state.preview_scroll = scroll;
+    }
+}
+
 /// Apply a command triggered by key OR by clicking its status-bar hint. Returns
 /// `Some(exit_code)` when the command should quit the app.
 fn dispatch_command(command: Cmd, app: &mut AppState, retry_queue: &mut Vec<usize>) -> Option<i32> {
@@ -530,6 +561,8 @@ async fn run_event_loop(
 
     // Whether the divider is currently being dragged with the mouse.
     let mut dragging_divider = false;
+    // Whether the preview scrollbar is currently being dragged with the mouse.
+    let mut dragging_scrollbar = false;
 
     // Set when `c` is pressed; the TUI is suspended to run claude code after event handling.
     let mut pending_claude: Option<std::path::PathBuf> = None;
@@ -762,6 +795,11 @@ async fn run_event_loop(
                                 drop(app);
                                 return Ok(code);
                             }
+                        } else if on_preview_scrollbar(&app, mouse.column, mouse.row) {
+                            // Grab the preview scrollbar: jump to the click and start dragging.
+                            dragging_scrollbar = true;
+                            let scroll = preview_scroll_from_row(&app, mouse.row);
+                            set_preview_scroll(&mut app, scroll);
                         } else {
                             let on_divider = (i32::from(mouse.column)
                                 - i32::from(app.divider_col))
@@ -795,12 +833,16 @@ async fn run_event_loop(
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
-                        if dragging_divider {
+                        if dragging_scrollbar {
+                            let scroll = preview_scroll_from_row(&app, mouse.row);
+                            set_preview_scroll(&mut app, scroll);
+                        } else if dragging_divider {
                             app.set_split_from_col(mouse.column);
                         }
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
                         dragging_divider = false;
+                        dragging_scrollbar = false;
                     }
                     MouseEventKind::ScrollUp => {
                         if mouse.column < app.divider_col {
@@ -815,11 +857,13 @@ async fn run_event_loop(
                         if mouse.column < app.divider_col {
                             app.nav_down();
                         } else if let Some(repo_idx) = app.selected_repo_index() {
-                            let total = app.repos[repo_idx].lock().unwrap().log.lines().len();
+                            // Clamp to the real content (works for log AND diff views) so wheel-up
+                            // responds immediately instead of undoing invisible over-scroll.
+                            let max_scroll =
+                                app.preview_total.saturating_sub(app.preview_viewport);
                             let mut state = app.repos[repo_idx].lock().unwrap();
                             state.auto_scroll = false;
-                            state.preview_scroll =
-                                (state.preview_scroll + 3).min(total.saturating_sub(1));
+                            state.preview_scroll = (state.preview_scroll + 3).min(max_scroll);
                         }
                     }
                     _ => {}
