@@ -11,6 +11,9 @@ export default defineConfig({
       title: 'pull-all',
       description:
         'Interactive multi-repo git pull dashboard — a Rust/ratatui TUI that pulls every repo in a directory in parallel.',
+      // Show each page's git last-modified date in the footer — a visible staleness signal when
+      // a page lags behind code churn. Needs full git history (fetch-depth: 0) in the deploy.
+      lastUpdated: true,
       social: [
         {
           icon: 'github',

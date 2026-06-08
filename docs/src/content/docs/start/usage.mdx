@@ -47,22 +47,36 @@ PULL_TIMEOUT=60 pull-all ~/projects
 
 ## The two panes
 
-- **Left** — the repo list with a status glyph, name, and current branch. Optional
+- **Left `[1]`** — the repo list with a status glyph, name, and current branch. Optional
   [columns](../../guides/columns-and-glyphs/) add ahead/behind, dirty, last-commit,
-  worktree, branch, and stash counts.
-- **Right** — a live log of the selected repo's pull output, or (with `i`) an info
+  worktree, branch, and stash counts, and a clickable column header lets you sort.
+- **Right `[2]`** — a live log of the selected repo's pull output, or (with `i`) an info
   panel, or (with `d`) the working-tree / last-pull diff.
 
+`Tab` (or `1`/`2`) switches focus; the active pane shows a bright rounded border. Drag the
+divider between them (it shows a grip and highlights while dragging) or use `[` / `]`.
+
 <Aside type="tip">
-Press `?` at any time for the in-app help modal: every key, flag, and environment
-variable, plus clickable links to the repo and design notes.
+Press `?` at any time for the in-app help modal — two tabs (**Hotkeys** and **CLI & Flags**)
+switched with `Tab`, with clickable links to the repo and design notes.
 </Aside>
+
+## Settings
+
+`,` opens a small settings modal (persisted in `~/.config/pull-all/state.json`):
+
+- **Panel padding** — a 1-cell inner padding inside every bordered panel and modal.
+- **Icons** — switch the status / column / marker glyphs between the default Unicode set and
+  an emoji set.
 
 ## Reading the result
 
 When the run finishes, a **Result** summary row reports how many repos were updated, were
-already up to date, were skipped, or failed. The process [exit code](../../reference/exit-codes/)
-reflects the outcome so scripts can branch on it.
+already up to date, were skipped, had no upstream, or failed. The process
+[exit code](../../reference/exit-codes/) reflects the outcome so scripts can branch on it.
+
+A branch with no upstream configured is a distinct **no-upstream** state (glyph `⊝`), not a
+failure — it's kept off the Errors page and counts as done.
 
 If any repo fails, a dynamic **Errors (N)** row appears right after Result; select it to see
 each failed repo with the tail of its error output. A failed pull is retried once automatically

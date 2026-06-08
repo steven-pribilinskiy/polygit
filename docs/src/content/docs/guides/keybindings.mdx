@@ -22,9 +22,12 @@ import KeymapExplorer from '../../../components/KeymapExplorer.astro';
   status (on top of the `/` name filter); `s` is now the sort leader.
 - **Panes** — the focused pane (`Tab`, or `1`/`2`) shows a bright rounded border and a `[1]`/`[2]`
   label; the divider shows a grip and highlights while you drag it.
-- **`l` opens lazygit** — suspends the TUI and runs lazygit in the selected repo (or the selected
-  row's path on the repo page), returning when you quit it. If lazygit isn't installed, a note
-  appears instead.
+- **`l` opens [lazygit](https://github.com/jesseduffield/lazygit)** — lazygit is a fast,
+  full-featured terminal UI for git (stage hunks, commit, branch, merge, rebase, cherry-pick,
+  resolve conflicts, browse the log, and more). `l` suspends `pull-all` and opens lazygit in the
+  selected repo (or the selected row's path on the repo page), returning you here when you quit it
+  (`q`). If lazygit isn't [installed](https://github.com/jesseduffield/lazygit#installation), a
+  note appears instead of launching.
 - **Checkout moved to `Shift`+`Enter`** — on the repo page, plain `Enter` (and a
   double-click) opens the diff for a stash or dirty row. `Shift`+`Enter` checks out the
   selected clean, non-current branch, so the two actions no longer collide.

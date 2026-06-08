@@ -24,6 +24,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # Full history so Starlight's lastUpdated can read each page's git date.
+          fetch-depth: 0
       - name: Build with Astro
         uses: withastro/action@v6
         with:

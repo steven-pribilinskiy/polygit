@@ -8,12 +8,16 @@ full-screen view that runs `git fetch` and then lists everything about the repo.
 
 ## What the page shows
 
-- **Branches** — every local branch, with a HEAD marker, fresh ahead/behind vs upstream,
-  the upstream name, last-commit date, and subject.
-- **Worktrees** — each linked worktree's branch and path.
-- **Stashes** — a `STASHES` section listing every stash entry.
+Each section header is prefixed with its type icon. The worktrees and stashes sections only
+appear when there's something to list.
 
-A red `●` marks any branch or worktree with uncommitted changes.
+- **`⑂ BRANCHES`** — every local branch, with a HEAD marker, fresh ahead/behind vs upstream,
+  the upstream name, last-commit date, and subject.
+- **`⑂ WORKTREES`** — each linked worktree's branch and path.
+- **`≡ STASHES`** — every stash entry.
+
+A red `●` marks any branch or worktree with uncommitted changes. The result of an action
+(e.g. "Dropped stash@{0}") and any fetch error appear in a banner pinned to the bottom row.
 
 ## Acting on a row
 
@@ -29,6 +33,7 @@ Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / a click), then:
 | `o` | Open the selected branch on the remote |
 | `y` | Copy the selected row's path |
 | `c` | Start claude code in the row's path |
+| `l` | Open [lazygit](https://github.com/jesseduffield/lazygit) in the row's path |
 | `Esc` / `q` | Return to the repo list |
 
 ### The `d` key, by row type
@@ -50,9 +55,10 @@ the main list uses for an in-progress pull.
 ## The diff modal
 
 `Enter` or a double-click on a **stash** or a **dirty** branch/worktree opens a
-90%-of-screen diff modal, split into two panels:
+90%-of-screen diff modal, split into two bordered, independently scrollable sub-panels (which
+also pick up panel padding when that setting is on):
 
-- **Top — file list** (≤40% of the height, scrollable): every changed file with its git status
+- **Top — `files (N)`** (≤40% of the height): every changed file with its git status
   (`M`/`A`/`D`/`R`/`?`). Pick a file with `↑`/`↓`/`j`/`k`, `g`/`G` for first/last, or by clicking it.
 - **Bottom — the selected file's diff**, loaded on demand. Scroll it with `PgUp`/`PgDn`/`Home`/`End`
   or the wheel.

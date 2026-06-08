@@ -1,4 +1,4 @@
-// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.17.0).
+// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.17.1).
 // Keep this in sync with the event loop when bindings change.
 
 export type Binding = {
