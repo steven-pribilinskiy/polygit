@@ -10,8 +10,8 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
-    AppState, ClickRegion, Column, Command, DiffMode, DiffSource, IconSet, Leader, PageRowKind,
-    RepoStatus, RightView, StatusFilter,
+    AppState, ClickRegion, Column, ColumnFlags, Command, DiffMode, DiffSource, HelpTab, IconSet,
+    Leader, PageRowKind, RepoStatus, RightView, SortColumn, SortDir, StatusFilter,
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
@@ -51,6 +51,9 @@ fn status_glyph_colored(status: &RepoStatus, tick: u64, icons: &IconSet) -> Span
         }
         RepoStatus::UpToDate => Span::styled(icons.up_to_date, Style::default().fg(Color::Gray)),
         RepoStatus::Updated => Span::styled(icons.updated, Style::default().fg(Color::Green)),
+        RepoStatus::NoUpstream => {
+            Span::styled(icons.no_upstream, Style::default().fg(Color::DarkGray))
+        }
         RepoStatus::Skipped => Span::styled(icons.skipped, Style::default().fg(Color::DarkGray)),
         RepoStatus::Failed => Span::styled(icons.failed, Style::default().fg(Color::Red)),
     }
@@ -94,10 +97,10 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
         return;
     }
 
-    // Layout: main area + two-line status bar at bottom
+    // Layout: main area + three-line status bar at bottom
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .constraints([Constraint::Min(3), Constraint::Length(3)])
         .split(area);
 
     let main_area = vertical_chunks[0];
@@ -202,7 +205,7 @@ fn highlight_name(name: &str, filter: Option<&str>, base: Style, width: usize) -
     spans
 }
 
-fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usize {
+fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> usize {
     let visible = app.visible_indices();
     let total_repos = app.repos.len();
     let elapsed = app.finished_elapsed.unwrap_or_else(|| app.start.elapsed()).as_secs_f64();
@@ -288,7 +291,7 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
             let name_style = match &state.status {
                 RepoStatus::Failed => Style::default().fg(Color::Red),
                 RepoStatus::Updated => Style::default().fg(Color::Green),
-                RepoStatus::Skipped => Style::default().fg(Color::DarkGray),
+                RepoStatus::Skipped | RepoStatus::NoUpstream => Style::default().fg(Color::DarkGray),
                 RepoStatus::Running { .. } => Style::default().fg(Color::Yellow),
                 _ => Style::default(),
             };
@@ -394,7 +397,7 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
 
     let result_icons = app.icons();
     let result_glyph = if app.all_done {
-        let (_, _, _, _, _, failed) = app.counts();
+        let (_, _, _, _, _, failed, _) = app.counts();
         if failed > 0 {
             Span::styled(result_icons.failed, Style::default().fg(Color::Red))
         } else {
@@ -436,6 +439,39 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
         list_state.select(Some(visible.len() + 3));
     }
 
+    // Split the inner area into a 2-row column header (titles + sort indicator) and the repo
+    // rows beneath. Too short for a header → use the whole inner area for rows.
+    let header_height: u16 = if inner.height >= 4 { 2 } else { 0 };
+    let rows_area = Rect {
+        x: inner.x,
+        y: inner.y + header_height,
+        width: inner.width,
+        height: inner.height.saturating_sub(header_height),
+    };
+    let (header_lines, header_click) = if header_height > 0 {
+        build_list_header(
+            inner,
+            icon_width,
+            name_col_width,
+            branch_col_width,
+            columns,
+            count_w,
+            dirty_w,
+            app.sort_column,
+            app.sort_dir,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    if header_height > 0 {
+        let header_area = Rect { height: header_height, ..inner };
+        frame.render_widget(Paragraph::new(header_lines), header_area);
+        app.header_area = header_area;
+    } else {
+        app.header_area = Rect::default();
+    }
+    app.header_click = header_click;
+
     let total_items = items.len();
     let list = List::new(items)
         .highlight_style(
@@ -443,12 +479,109 @@ fn render_list(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) -> usiz
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("→ ");
+        .highlight_symbol("");
 
-    frame.render_stateful_widget(list, inner, &mut list_state);
-    render_scrollbar(frame, area, list_state.offset(), total_items, inner.height as usize);
+    frame.render_stateful_widget(list, rows_area, &mut list_state);
+    // Scrollbar on the pane's right border, aligned to the rows region (below the header).
+    let scrollbar_area = Rect {
+        x: area.x,
+        y: rows_area.y,
+        width: area.width,
+        height: rows_area.height,
+    };
+    render_scrollbar(
+        frame,
+        scrollbar_area,
+        list_state.offset(),
+        total_items,
+        rows_area.height as usize,
+    );
 
+    app.list_rows_area = rows_area;
     list_state.offset()
+}
+
+/// Build the 2-row repo-list column header: titles aligned to the row column widths with a
+/// `▲`/`▼` indicator on the active sort column, plus the clickable sort-cell regions.
+#[allow(clippy::too_many_arguments)]
+fn build_list_header(
+    inner: Rect,
+    icon_width: usize,
+    name_col_width: usize,
+    branch_col_width: usize,
+    columns: ColumnFlags,
+    count_w: usize,
+    dirty_w: usize,
+    sort_column: SortColumn,
+    sort_dir: SortDir,
+) -> (Vec<Line<'static>>, Vec<(u16, u16, SortColumn)>) {
+    // (label, width, leading_space, sort) — mirrors the exact widths the rows use.
+    struct Cell {
+        label: &'static str,
+        width: usize,
+        lead: bool,
+        sort: Option<SortColumn>,
+    }
+    let mut cells = vec![
+        Cell { label: "", width: icon_width, lead: false, sort: None },
+        Cell { label: "name", width: name_col_width, lead: false, sort: Some(SortColumn::Name) },
+        Cell { label: "", width: 1, lead: false, sort: None },
+        Cell { label: "branch", width: branch_col_width, lead: false, sort: None },
+    ];
+    if columns.ahead_behind {
+        cells.push(Cell { label: "↑↓", width: 9, lead: true, sort: Some(SortColumn::AheadBehind) });
+    }
+    if columns.dirty {
+        cells.push(Cell { label: "Δ", width: dirty_w, lead: true, sort: Some(SortColumn::Dirty) });
+    }
+    if columns.last_commit {
+        cells.push(Cell { label: "age", width: 11, lead: true, sort: Some(SortColumn::LastCommit) });
+    }
+    if columns.worktrees {
+        cells.push(Cell { label: "wt", width: count_w, lead: true, sort: Some(SortColumn::Worktrees) });
+    }
+    if columns.branches {
+        cells.push(Cell { label: "br", width: count_w, lead: true, sort: Some(SortColumn::Branches) });
+    }
+    if columns.stashes {
+        cells.push(Cell { label: "≡", width: count_w, lead: true, sort: Some(SortColumn::Stashes) });
+    }
+
+    let active_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let title_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
+    let mut spans: Vec<Span> = Vec::new();
+    let mut clicks: Vec<(u16, u16, SortColumn)> = Vec::new();
+    let mut col = inner.x;
+    for cell in &cells {
+        if cell.lead {
+            spans.push(Span::raw(" "));
+            col += 1;
+        }
+        let active = cell.sort.is_some() && cell.sort == Some(sort_column);
+        let mut text = cell.label.to_string();
+        if active {
+            text.push_str(sort_dir.arrow());
+        }
+        let text = truncate_str(&text, cell.width.max(1));
+        let style = if active {
+            active_style
+        } else if cell.sort.is_some() {
+            title_style
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(pad_display(&text, cell.width), style));
+        if let Some(sort) = cell.sort {
+            clicks.push((col, col + cell.width as u16, sort));
+        }
+        col += cell.width as u16;
+    }
+
+    let underline = Line::from(Span::styled(
+        "─".repeat(inner.width as usize),
+        Style::default().fg(Color::DarkGray),
+    ));
+    (vec![Line::from(spans), underline], clicks)
 }
 
 /// Human-readable label for a repo's status.
@@ -458,6 +591,7 @@ fn status_label(status: &RepoStatus) -> &'static str {
         RepoStatus::Running { .. } => "running",
         RepoStatus::UpToDate => "up-to-date",
         RepoStatus::Updated => "updated",
+        RepoStatus::NoUpstream => "no upstream",
         RepoStatus::Skipped => "skipped",
         RepoStatus::Failed => "failed",
     }
@@ -757,9 +891,11 @@ fn apply_sgr(style: Style, code_str: &str) -> Style {
 fn build_result_summary(app: &AppState) -> Vec<String> {
     let mut lines = Vec::new();
 
-    let (_, _, updated_count, up_to_date_count, skipped_count, failed_count) = app.counts();
+    let (_, _, updated_count, up_to_date_count, skipped_count, failed_count, no_upstream_count) =
+        app.counts();
 
-    let total = updated_count + up_to_date_count + skipped_count + failed_count;
+    let total =
+        updated_count + up_to_date_count + skipped_count + failed_count + no_upstream_count;
 
     lines.push("Pull completed!".to_string());
     lines.push(String::new());
@@ -778,6 +914,9 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
     }
     if skipped_count > 0 {
         parts.push(format!("{skipped_count} skipped"));
+    }
+    if no_upstream_count > 0 {
+        parts.push(format!("{no_upstream_count} no-upstream"));
     }
     if failed_count > 0 {
         parts.push(format!("{failed_count} failed"));
@@ -821,6 +960,7 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
     let up_to_date_repos =
         collect_by_status(&|status| matches!(status, RepoStatus::UpToDate));
     let skipped_repos = collect_by_status(&|status| matches!(status, RepoStatus::Skipped));
+    let no_upstream_repos = collect_by_status(&|status| matches!(status, RepoStatus::NoUpstream));
     let failed_repos = collect_by_status(&|status| matches!(status, RepoStatus::Failed));
 
     let print_section = |lines: &mut Vec<String>, header: &str, repos: &[(String, String)]| {
@@ -852,6 +992,11 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
         &mut lines,
         &format!("{} Skipped repositories (uncommitted changes):", mark("!", icons.skipped)),
         &skipped_repos,
+    );
+    print_section(
+        &mut lines,
+        &format!("{} No-upstream repositories (nothing to pull):", mark("~", icons.no_upstream)),
+        &no_upstream_repos,
     );
     print_section(
         &mut lines,
@@ -927,8 +1072,78 @@ fn build_status_row(
     Line::from(spans)
 }
 
+/// Clip a string to at most `max` display cells (no ellipsis appended).
+fn clip_to_width(text: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > max {
+            break;
+        }
+        width += char_width;
+        out.push(ch);
+    }
+    out
+}
+
+/// Clip a span list to `max` display cells, truncating the span that straddles the boundary.
+fn clip_spans(spans: Vec<Span<'static>>, max: usize) -> Vec<Span<'static>> {
+    let mut out = Vec::new();
+    let mut used = 0usize;
+    for span in spans {
+        if used >= max {
+            break;
+        }
+        let width = UnicodeWidthStr::width(span.content.as_ref());
+        if used + width <= max {
+            used += width;
+            out.push(span);
+        } else {
+            let style = span.style;
+            out.push(Span::styled(clip_to_width(span.content.as_ref(), max - used), style));
+            break;
+        }
+    }
+    out
+}
+
+/// Build a footer row from clickable left segments plus a right-aligned `right` stat fragment
+/// (justify-between). When the two sides have room, the gap is plain spaces; when they'd touch
+/// or overlap, the left is truncated with `…` and a `·` separator is shown before the stat.
+fn compose_status_row(
+    segments: Vec<(String, Style, Option<Command>)>,
+    right: String,
+    area: Rect,
+    row_y: u16,
+    clickable: &mut Vec<ClickRegion>,
+    hint: Style,
+) -> Line<'static> {
+    let left_width: usize = segments
+        .iter()
+        .map(|(text, _, _)| UnicodeWidthStr::width(text.as_str()))
+        .sum();
+    let mut line = build_status_row(segments, area.x, row_y, clickable);
+    let avail = area.width as usize;
+    let right_width = UnicodeWidthStr::width(right.as_str());
+    if right.is_empty() || avail == 0 {
+        return line;
+    }
+    if left_width + right_width + 3 <= avail {
+        let gap = avail - left_width - right_width;
+        line.spans.push(Span::raw(" ".repeat(gap)));
+        line.spans.push(Span::styled(right, hint));
+    } else {
+        let keep = avail.saturating_sub(right_width + 4);
+        line.spans = clip_spans(std::mem::take(&mut line.spans), keep);
+        line.spans.push(Span::styled("… · ".to_string(), hint));
+        line.spans.push(Span::styled(right, hint));
+    }
+    line
+}
+
 fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
-    let (_, running, _, _, _, _) = app.counts();
+    let (_, running, _, _, _, _, _) = app.counts();
     let done = app.done_count();
     let total = app.repos.len();
     let elapsed = app.finished_elapsed.unwrap_or_else(|| app.start.elapsed()).as_secs_f64();
@@ -947,21 +1162,25 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let leader = app.pending_leader;
     let columns = app.columns;
     let status_filter = app.status_filter;
-    let stats = format!(
-        "  ·  {} jobs · {done}/{total} done · {running} running · {elapsed:.1}s",
-        app.max_jobs
-    );
+    let sort_column = app.sort_column;
+    let sort_dir = app.sort_dir;
+
+    // Per-row right-aligned stat fragments (justify-between: hints left, stat right).
+    let stat_done = format!("{done}/{total} done");
+    let stat_running = format!("{running} running");
+    let stat_elapsed = format!("{elapsed:.1}s");
 
     let mut clickable: Vec<ClickRegion> = Vec::new();
     let mark = |on: bool| if on { "[x]" } else { "[ ]" };
 
-    // Row 1: filter prompt, or the `t`-leader column menu, or the normal move/view hints.
+    // Row 1: the filter prompt, an active leader menu (`t` cols / `f` status / `s` sort), or the
+    // normal navigation/filter/sort/layout hints.
     let row1 = if filtering {
         Line::from(format!("Filter: {filter_text}"))
     } else if leader == Some(Leader::Toggle) {
-        build_status_row(
+        compose_status_row(
             vec![
-                ("toggle: ".to_string(), hint, None),
+                ("cols: ".to_string(), hint, None),
                 (format!("{} a ahead/behind", mark(columns.ahead_behind)), active, Some(Command::ToggleColumn(Column::AheadBehind))),
                 (" · ".to_string(), hint, None),
                 (format!("{} d dirty", mark(columns.dirty)), active, Some(Command::ToggleColumn(Column::Dirty))),
@@ -975,14 +1194,16 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (format!("{} s stashes", mark(columns.stashes)), active, Some(Command::ToggleColumn(Column::Stashes))),
                 (" · esc".to_string(), hint, None),
             ],
-            area.x,
+            stat_done.clone(),
+            area,
             area.y,
             &mut clickable,
+            hint,
         )
     } else if leader == Some(Leader::Filter) {
         let pick = |on: bool| if on { "●" } else { "○" };
         let chosen = |filter: StatusFilter| status_filter == filter;
-        build_status_row(
+        compose_status_row(
             vec![
                 ("filter: ".to_string(), hint, None),
                 (format!("{} a all", pick(chosen(StatusFilter::All))), active, Some(Command::SetFilter(StatusFilter::All))),
@@ -998,9 +1219,46 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (format!("{} i issues", pick(chosen(StatusFilter::Issues))), active, Some(Command::SetFilter(StatusFilter::Issues))),
                 (" · esc".to_string(), hint, None),
             ],
-            area.x,
+            stat_done.clone(),
+            area,
             area.y,
             &mut clickable,
+            hint,
+        )
+    } else if leader == Some(Leader::Sort) {
+        let sort_item = |key: &str, name: &str, column: SortColumn| {
+            let chosen = sort_column == column;
+            let dot = if chosen { "●" } else { "○" };
+            let arrow = if chosen { sort_dir.arrow() } else { "" };
+            (format!("{dot} {key} {name}{arrow}"), active, Some(Command::SetSort(column)))
+        };
+        compose_status_row(
+            vec![
+                ("sort: ".to_string(), hint, None),
+                sort_item("n", "name", SortColumn::Name),
+                (" · ".to_string(), hint, None),
+                sort_item("s", "status", SortColumn::Status),
+                (" · ".to_string(), hint, None),
+                sort_item("a", "ahead/behind", SortColumn::AheadBehind),
+                (" · ".to_string(), hint, None),
+                sort_item("d", "dirty", SortColumn::Dirty),
+                (" · ".to_string(), hint, None),
+                sort_item("l", "last-commit", SortColumn::LastCommit),
+                (" · ".to_string(), hint, None),
+                sort_item("w", "worktrees", SortColumn::Worktrees),
+                (" · ".to_string(), hint, None),
+                sort_item("b", "branches", SortColumn::Branches),
+                (" · ".to_string(), hint, None),
+                sort_item("k", "stashes", SortColumn::Stashes),
+                (" · ".to_string(), hint, None),
+                sort_item("o", "none", SortColumn::Discovery),
+                (" · esc".to_string(), hint, None),
+            ],
+            stat_done.clone(),
+            area,
+            area.y,
+            &mut clickable,
+            hint,
         )
     } else {
         let name_tag = if filter_text.is_empty() {
@@ -1009,51 +1267,71 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             format!("[{filter_text}] ")
         };
         let status_tag = status_filter.tag().map(|tag| format!("{{{tag}}} ")).unwrap_or_default();
-        build_status_row(
+        let sort_tag = if sort_column == SortColumn::Discovery {
+            String::new()
+        } else {
+            format!("⟪{} {}⟫ ", sort_column.label(), sort_dir.arrow())
+        };
+        compose_status_row(
             vec![
-                (format!("{name_tag}{status_tag}j/k ↑/↓ move · space result · "), hint, None),
-                ("i".to_string(), active, Some(Command::Info)),
-                (" info · ".to_string(), hint, None),
+                (format!("{name_tag}{status_tag}{sort_tag}j/k move · space result · / filter · "), hint, None),
+                ("f".to_string(), active, Some(Command::FilterLeader)),
+                (" by-status · ".to_string(), hint, None),
+                ("s".to_string(), active, Some(Command::SortLeader)),
+                (" sort · ".to_string(), hint, None),
                 ("t".to_string(), active, Some(Command::ToggleLeader)),
-                (" cols · ".to_string(), hint, None),
-                ("s".to_string(), active, Some(Command::FilterLeader)),
-                (" filter · ".to_string(), hint, None),
-                ("enter".to_string(), active, Some(Command::OpenPage)),
-                (" page · ".to_string(), hint, None),
-                (",".to_string(), active, Some(Command::Settings)),
-                (" settings · ".to_string(), hint, None),
-                ("?".to_string(), active, Some(Command::Help)),
-                (" help".to_string(), hint, None),
+                (" cols · [ ] resize · tab focus".to_string(), hint, None),
             ],
-            area.x,
+            stat_done.clone(),
+            area,
             area.y,
             &mut clickable,
+            hint,
         )
     };
 
-    // Row 2: actions + layout + live stats. r/R/f/F dim when they'd be a no-op.
-    let row2 = build_status_row(
+    // Row 2: actions. r/R/e/E dim when they'd be a no-op.
+    let row2 = compose_status_row(
         vec![
+            ("i".to_string(), active, Some(Command::Info)),
+            (" info · ".to_string(), hint, None),
             ("r".to_string(), style_retry_one, Some(Command::Retry)),
             ("/".to_string(), hint, None),
             ("R".to_string(), style_retry_all, Some(Command::RetryAll)),
             (" retry · ".to_string(), hint, None),
-            ("f".to_string(), style_refetch_one, Some(Command::Refetch)),
+            ("e".to_string(), style_refetch_one, Some(Command::Refetch)),
             ("/".to_string(), hint, None),
-            ("F".to_string(), style_refetch_all, Some(Command::RefetchAll)),
-            (" refetch · / filter · [ ] or drag resize · tab focus · ".to_string(), hint, None),
+            ("E".to_string(), style_refetch_all, Some(Command::RefetchAll)),
+            (" refetch · ".to_string(), hint, None),
+            ("enter".to_string(), active, Some(Command::OpenPage)),
+            (" page · ".to_string(), hint, None),
+            (",".to_string(), active, Some(Command::Settings)),
+            (" settings · ".to_string(), hint, None),
+            ("?".to_string(), active, Some(Command::Help)),
+            (" help · ".to_string(), hint, None),
             ("q".to_string(), active, Some(Command::Quit)),
             (" quit".to_string(), hint, None),
-            (stats, hint, None),
         ],
-        area.x,
+        stat_running.clone(),
+        area,
         area.y + 1,
         &mut clickable,
+        hint,
+    );
+
+    // Row 3: a small concurrency note, with the elapsed time right-aligned.
+    let row3 = compose_status_row(
+        vec![(format!("{} jobs", app.max_jobs), hint, None)],
+        stat_elapsed.clone(),
+        area,
+        area.y + 2,
+        &mut clickable,
+        hint,
     );
 
     app.clickable = clickable;
 
-    let text = Text::from(vec![row1, row2]);
+    let text = Text::from(vec![row1, row2, row3]);
     let para = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(para, area);
 }
@@ -1073,7 +1351,8 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 /// Render the `?` help modal: clickable links, subcommands, flags/env, grouped hotkeys,
 /// exit codes, and the repo list (each row clickable to open its remote). Records the
 /// screen row of every clickable line into `app.help_links` for mouse hit-testing.
-fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
+/// The content of the help modal's "CLI & Flags" tab (links, subcommands, flags/env, exit codes).
+fn help_items_cli() -> Vec<(Line<'static>, Option<String>)> {
     const GITHUB_URL: &str = "https://github.com/steven-pribilinskiy/pull-all";
     const NOTES_BAKEOFF: &str =
         "https://notes.lvh.me/library/default/devtools/pull-all-tui-bake-off-2026.md";
@@ -1082,15 +1361,10 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
 
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::Gray);
-    let link_style = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::UNDERLINED);
+    let link_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED);
 
-    // Each item is a line plus an optional URL that makes the whole row clickable.
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
-    let subhead_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let subhead = |text: &str| (Line::from(Span::styled(text.to_string(), subhead_style)), None);
     let plain = |text: &str| (Line::from(text.to_string()), None);
     let link = |label: &str, url: &str| {
         let line = Line::from(vec![
@@ -1130,13 +1404,30 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     items.push(plain("  --profile-out FILE             write the profile report to FILE"));
     items.push(plain(""));
 
+    items.push(header("EXIT CODES"));
+    items.push(plain("  0 all ok  ·  1 any failed  ·  2 quit mid-run  ·  130 Ctrl-C"));
+    items
+}
+
+/// The content of the help modal's "Hotkeys" tab (grouped keybindings).
+fn help_items_hotkeys() -> Vec<(Line<'static>, Option<String>)> {
+    let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let subhead_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
+    let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
+    let subhead = |text: &str| (Line::from(Span::styled(text.to_string(), subhead_style)), None);
+    let plain = |text: &str| (Line::from(text.to_string()), None);
+
     items.push(header("HOTKEYS — repo list"));
     items.push(subhead("  Navigate"));
     items.push(plain("    j/k ↑/↓ move · g/G top/end · Home/End jump · PgUp/PgDn page · wheel · click a row"));
     items.push(subhead("  Views & panes"));
     items.push(plain("    space Result/Errors overlay · tab list⇄preview focus · i info panel · d diff · End resume autoscroll"));
     items.push(subhead("  Pull / retry"));
-    items.push(plain("    r/R retry selected/all (failed or skipped) · f/F refetch selected/all (re-pull anything; skips in-progress)"));
+    items.push(plain("    r/R retry selected/all (failed or skipped) · e/E refetch selected/all (re-pull anything; skips in-progress)"));
+    items.push(subhead("  Sort / filter"));
+    items.push(plain("    s then n/s/a/d/l/w/b/k/o → sort by name/status/ahead-behind/dirty/last/worktrees/branches/stashes/none (re-press flips ▲▼)"));
+    items.push(plain("    f then a/u/c/s/f/i → filter by all/updated/up-to-date/skipped/failed/issues · / filter by name · click a header to sort"));
     items.push(subhead("  Clipboard & open"));
     items.push(plain("    y copy absolute path · Y copy remote (origin) url · o open remote in browser · x clear this repo's log buffer"));
     items.push(subhead("  Columns"));
@@ -1157,23 +1448,33 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     items.push(plain("    ↑↓/PgUp/PgDn/Home/End scroll · t toggle uncommitted⇄base branch · d discard / remove / drop (confirm) · esc close"));
     items.push(plain(""));
 
-    items.push(header("HOTKEYS — filter & layout"));
-    items.push(plain("    / filter by name · Esc clear filter"));
-    items.push(plain("    s then a/u/c/s/f/i → filter by all / updated / up-to-date / skipped / failed / issues"));
-    items.push(plain("    [ ] resize panes · drag the divider"));
-    items.push(plain(""));
+    items.push(header("HOTKEYS — layout"));
+    items.push(plain("    [ ] resize panes · drag the divider · tab list⇄preview focus"));
+    items
+}
 
-    items.push(header("EXIT CODES"));
-    items.push(plain("  0 all ok  ·  1 any failed  ·  2 quit mid-run  ·  130 Ctrl-C"));
+fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    // Build both tabs so the modal width stays stable when switching; show only the active one.
+    let hotkeys = help_items_hotkeys();
+    let cli = help_items_cli();
+    let items = match app.help_tab {
+        HelpTab::Hotkeys => &hotkeys,
+        HelpTab::CliFlags => &cli,
+    };
 
-    // Size the box to its content (capped to the screen), not a fixed near-fullscreen slab.
-    // Padding eats 2 rows/cols inside the border, so grow the box to keep the same content fit.
+    // Size the box to the widest tab (capped to the screen) so switching doesn't resize it.
     let pad = if app.panel_padding { 2 } else { 0 };
-    let content_width = items.iter().map(|(line, _)| line.width()).max().unwrap_or(0) as u16;
+    let widest = hotkeys
+        .iter()
+        .chain(cli.iter())
+        .map(|(line, _)| line.width())
+        .max()
+        .unwrap_or(0) as u16;
+    let tallest = hotkeys.len().max(cli.len()) as u16 + 1; // +1 for the tab bar row
     let max_width = area.width.saturating_sub(2);
     let max_height = area.height.saturating_sub(2);
-    let modal_width = (content_width + 4 + pad).min(max_width).max(40.min(max_width));
-    let modal_height = (items.len() as u16 + 2 + pad).min(max_height).max(8.min(max_height));
+    let modal_width = (widest + 4 + pad).min(max_width).max(40.min(max_width));
+    let modal_height = (tallest + 2 + pad).min(max_height).max(8.min(max_height));
     let modal_area = centered_rect(modal_width, modal_height, area);
 
     let block = Block::default()
@@ -1181,31 +1482,58 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(" pull-all — help ")
-        .title_bottom(Line::from(" ↑/↓ scroll · click a link · ?/Esc close ").right_aligned());
+        .title_bottom(
+            Line::from(" tab switch · ↑/↓ scroll · click a link · ?/Esc close ").right_aligned(),
+        );
     let inner = block.inner(modal_area);
 
-    // Clamp scroll to the content, then window the visible slice.
-    let inner_height = inner.height as usize;
-    let max_scroll = items.len().saturating_sub(inner_height);
+    // Reserve the top inner row for a fixed (non-scrolling) tab bar; the rest scrolls.
+    let tab_bar_area = Rect { height: 1, ..inner };
+    let content_area = Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+
+    let tab_chip = |label: &str, is_active: bool| {
+        if is_active {
+            Span::styled(
+                format!(" {label} "),
+                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(format!(" {label} "), Style::default().fg(Color::Gray))
+        }
+    };
+    let tab_bar = Line::from(vec![
+        tab_chip("Hotkeys", app.help_tab == HelpTab::Hotkeys),
+        Span::raw(" "),
+        tab_chip("CLI & Flags", app.help_tab == HelpTab::CliFlags),
+    ]);
+
+    // Clamp scroll to the active tab's content, then window the visible slice.
+    let content_height = content_area.height as usize;
+    let max_scroll = items.len().saturating_sub(content_height);
     if app.help_scroll > max_scroll {
         app.help_scroll = max_scroll;
     }
     let start = app.help_scroll;
-    let end = (start + inner_height).min(items.len());
+    let end = (start + content_height).min(items.len());
 
     app.help_links.clear();
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, url)) in items[start..end].iter().enumerate() {
         if let Some(url) = url {
-            app.help_links.push((inner.y + offset as u16, url.clone()));
+            app.help_links.push((content_area.y + offset as u16, url.clone()));
         }
         lines.push(line.clone());
     }
 
     frame.render_widget(Clear, modal_area);
     frame.render_widget(block, modal_area);
-    frame.render_widget(Paragraph::new(lines), inner);
-    render_scrollbar(frame, modal_area, app.help_scroll, items.len(), inner_height);
+    frame.render_widget(Paragraph::new(tab_bar), tab_bar_area);
+    frame.render_widget(Paragraph::new(lines), content_area);
+    render_scrollbar(frame, modal_area, app.help_scroll, items.len(), content_height);
 }
 
 /// The accent color for a file's git status char in the diff-modal file list.

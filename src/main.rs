@@ -30,7 +30,7 @@ use ratatui::Terminal;
 
 use app::{
     AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog, DiffSource, Leader, PageRow,
-    PageRowKind, RepoState, RepoStatus, RightView, SharedRepoState, StatusFilter,
+    PageRowKind, RepoState, RepoStatus, RightView, SharedRepoState, SortColumn, StatusFilter,
 };
 use worker::{
     run_all_details, run_all_pulls, run_checkout, run_delete, run_diff_modal, run_diff_modal_file,
@@ -303,6 +303,17 @@ fn dispatch_command(command: Cmd, app: &mut AppState, retry_queue: &mut Vec<usiz
             app.set_status_filter(filter);
             app.pending_leader = None;
         }
+        Cmd::SortLeader => {
+            app.pending_leader = if app.pending_leader == Some(Leader::Sort) {
+                None
+            } else {
+                Some(Leader::Sort)
+            };
+        }
+        Cmd::SetSort(column) => {
+            app.set_sort(column);
+            app.pending_leader = None;
+        }
         Cmd::Settings => {
             app.show_settings = true;
             app.settings_selected = 0;
@@ -516,6 +527,7 @@ fn build_profile_rows(app_state: &Arc<Mutex<AppState>>) -> Vec<profile::ProfileR
             let status = match &state.status {
                 RepoStatus::Updated => "updated",
                 RepoStatus::UpToDate => "uptodate",
+                RepoStatus::NoUpstream => "noupstream",
                 RepoStatus::Skipped => "skipped",
                 RepoStatus::Failed => "failed",
                 RepoStatus::Running { .. } => "running",
@@ -576,7 +588,8 @@ async fn run_event_loop(
             launch_claude(terminal, &path)?;
         }
 
-        // Update "all done" state and auto-select Result when complete
+        // Update the "all done" edge. Selection is never moved automatically — it stays wherever
+        // the user put it (no follow-the-running-repo, no jump-to-Result-when-complete).
         {
             let mut app = app_state.lock().unwrap();
             let all_done = app.repos.iter().all(|repo| {
@@ -587,25 +600,6 @@ async fn run_event_loop(
             if all_done && !app.all_done {
                 app.all_done = true;
                 app.finished_elapsed = Some(app.start.elapsed());
-                if !app.user_navigated {
-                    app.selected = app.list_len().saturating_sub(1);
-                }
-            }
-
-            // Auto-select first running repo if user hasn't navigated
-            if !app.user_navigated && !app.all_done {
-                let visible = app.visible_indices();
-                let running_list_idx = visible.iter().enumerate().find_map(|(list_idx, &repo_idx)| {
-                    let state = app.repos[repo_idx].lock().unwrap();
-                    if matches!(state.status, RepoStatus::Running { .. }) {
-                        Some(list_idx)
-                    } else {
-                        None
-                    }
-                });
-                if let Some(list_idx) = running_list_idx {
-                    app.selected = list_idx;
-                }
             }
         }
 
@@ -800,6 +794,9 @@ async fn run_event_loop(
                             dragging_scrollbar = true;
                             let scroll = preview_scroll_from_row(&app, mouse.row);
                             set_preview_scroll(&mut app, scroll);
+                        } else if let Some(column) = app.header_sort_at(mouse.column, mouse.row) {
+                            // Click a column header to sort by it (re-click flips direction).
+                            app.set_sort(column);
                         } else {
                             let on_divider = (i32::from(mouse.column)
                                 - i32::from(app.divider_col))
@@ -1238,6 +1235,12 @@ async fn run_event_loop(
                         KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
                             app.show_help = false;
                         }
+                        // Tab switches help tabs; the choice is persisted so it reopens here.
+                        KeyCode::Tab | KeyCode::BackTab => {
+                            app.help_tab = app.help_tab.flip();
+                            app.help_scroll = 0;
+                            app.save_state();
+                        }
                         KeyCode::Char('j') | KeyCode::Down => {
                             app.help_scroll = app.help_scroll.saturating_add(1);
                         }
@@ -1291,7 +1294,7 @@ async fn run_event_loop(
                     }
                 }
 
-                // `s` filter mode: pick one status filter (a/u/c/s/f/i), then exit. Esc cancels;
+                // `f` filter mode: pick one status filter (a/u/c/s/f/i), then exit. Esc cancels;
                 // any other key just exits without changing the filter.
                 if app.pending_leader == Some(Leader::Filter) {
                     let picked = match key.code {
@@ -1305,6 +1308,28 @@ async fn run_event_loop(
                     };
                     if let Some(filter) = picked {
                         app.set_status_filter(filter);
+                    }
+                    app.pending_leader = None;
+                    continue;
+                }
+
+                // `s` sort mode: pick a sort column (re-pick flips direction), then exit. Esc
+                // cancels; any other key exits without changing the sort.
+                if app.pending_leader == Some(Leader::Sort) {
+                    let picked = match key.code {
+                        KeyCode::Char('n') => Some(SortColumn::Name),
+                        KeyCode::Char('s') => Some(SortColumn::Status),
+                        KeyCode::Char('a') => Some(SortColumn::AheadBehind),
+                        KeyCode::Char('d') => Some(SortColumn::Dirty),
+                        KeyCode::Char('l') => Some(SortColumn::LastCommit),
+                        KeyCode::Char('w') => Some(SortColumn::Worktrees),
+                        KeyCode::Char('b') => Some(SortColumn::Branches),
+                        KeyCode::Char('k') => Some(SortColumn::Stashes),
+                        KeyCode::Char('o') => Some(SortColumn::Discovery),
+                        _ => None,
+                    };
+                    if let Some(column) = picked {
+                        app.set_sort(column);
                     }
                     app.pending_leader = None;
                     continue;
@@ -1362,8 +1387,13 @@ async fn run_event_loop(
                         app.pending_leader = Some(Leader::Toggle);
                     }
 
-                    // `s` leader: arm the status-filter chord (next key picks the filter).
+                    // `s` leader: arm the sort chord (next key picks the sort column).
                     (KeyCode::Char('s'), _) => {
+                        app.pending_leader = Some(Leader::Sort);
+                    }
+
+                    // `f` leader: arm the status-filter chord (next key picks the filter).
+                    (KeyCode::Char('f'), _) => {
                         app.pending_leader = Some(Leader::Filter);
                     }
 
@@ -1523,7 +1553,7 @@ async fn run_event_loop(
                         retry_queue.extend(retryable);
                     }
                     // Refetch selected repo: re-run regardless of status, unless it's in progress.
-                    (KeyCode::Char('f'), _) => {
+                    (KeyCode::Char('e'), _) => {
                         if let Some(repo_idx) = app.selected_repo_index() {
                             let refetchable = {
                                 let state = app.repos[repo_idx].lock().unwrap();
@@ -1536,7 +1566,7 @@ async fn run_event_loop(
                         }
                     }
                     // Refetch all repos not currently in progress.
-                    (KeyCode::Char('F'), _) => {
+                    (KeyCode::Char('E'), _) => {
                         let refetchable = app.refetchable_repos();
                         drop(app);
                         retry_queue.extend(refetchable);

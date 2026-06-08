@@ -83,6 +83,14 @@ pub async fn pull_repo(
             state.elapsed = Some(elapsed);
             state.status = RepoStatus::UpToDate;
         }
+        PullOutcome::NoUpstream => {
+            let mut state = repo_state.lock().unwrap();
+            state.elapsed = Some(elapsed);
+            state.status = RepoStatus::NoUpstream;
+            state
+                .log
+                .push(format!("{} {name} has no upstream — nothing to pull", icons.skip_log));
+        }
         PullOutcome::Updated => {
             // Append diff stat to log
             let stat = diff_stat(&path).await.unwrap_or_default();

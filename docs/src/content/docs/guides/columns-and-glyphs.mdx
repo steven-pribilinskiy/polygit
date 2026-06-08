@@ -26,6 +26,26 @@ Press `t` to enter the column-toggle leader, then a column key. The mode stays a
 
 Enabled columns persist across runs.
 
+## Sorting
+
+Press `s` to enter the sort leader, then a column key — or click a column header. The
+2-row header shows a `▲`/`▼` indicator on the active sort column.
+
+| Key | Sort by |
+|-----|---------|
+| `n` | Name |
+| `s` | Status |
+| `a` | Ahead / behind |
+| `d` | Dirty count |
+| `l` | Last-commit time |
+| `w` | Worktree count |
+| `b` | Branch count |
+| `k` | Stash count |
+| `o` | None (discovery order) |
+
+Re-picking the same column (or re-clicking its header) flips the direction. The sort
+persists across runs.
+
 :::note[Worktrees and branches share a glyph]
 Both the worktree (`w`) and branch (`b`) columns render `⑂N`; they're distinguished only
 by color — cyan for worktrees, green for branches.

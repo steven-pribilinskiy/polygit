@@ -1,4 +1,4 @@
-// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.14.0).
+// Single source of truth for the keymap, mirroring src/main.rs + src/render.rs (v0.16.0).
 // Keep this in sync with the event loop when bindings change.
 
 export type Binding = {
@@ -36,12 +36,13 @@ export const keymap: KeymapSection[] = [
       { keys: ['Enter', 'double-click'], action: 'Open the dedicated repo page' },
       { keys: ['r'], action: 'Retry selected repo if it failed or was skipped' },
       { keys: ['R'], action: 'Retry all repos with an issue' },
-      { keys: ['f'], action: 'Refetch selected repo', note: 're-pull regardless of status' },
-      { keys: ['F'], action: 'Refetch all repos not in progress' },
+      { keys: ['e'], action: 'Refetch selected repo', note: 're-pull regardless of status' },
+      { keys: ['E'], action: 'Refetch all repos not in progress' },
       { keys: ['i'], action: 'Toggle the info panel above the log/diff', note: 'additive block; tracks the selection' },
       { keys: ['d'], action: 'Toggle the per-repo diff view' },
       { keys: ['t'], action: 'Column-toggle leader', note: 'then a/d/l/w/b/s; stays active until Esc' },
-      { keys: ['s'], action: 'Status-filter leader', note: 'then a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues', keywords: ['filter', 'status'] },
+      { keys: ['s'], action: 'Sort leader', note: 'then n/s/a/d/l/w/b/k/o → name/status/ahead-behind/dirty/last/worktrees/branches/stashes/none; re-pick flips ▲▼ (or click a header)', keywords: ['sort', 'order', 'ascending', 'descending'] },
+      { keys: ['f'], action: 'Status-filter leader', note: 'then a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues', keywords: ['filter', 'status'] },
       { keys: ['o'], action: "Open the selected repo's remote in the browser" },
       { keys: ['y'], action: "Copy the selected repo's absolute path" },
       { keys: ['Y'], action: "Copy the selected repo's remote (origin) URL" },

@@ -178,6 +178,9 @@ pub async fn run_plain(
                 PullOutcome::AlreadyUpToDate => {
                     (format!("✅ {name}\n"), "uptodate")
                 }
+                PullOutcome::NoUpstream => {
+                    (format!("🔌 {name} (no upstream)\n"), "noupstream")
+                }
                 PullOutcome::Updated => {
                     let stat = diff_stat(&path).await.unwrap_or_default();
                     let stat_indented = if stat.is_empty() {
@@ -217,11 +220,12 @@ pub async fn run_plain(
     }
 
     // Scope the lock so it is released before the later `.await` (no lock held across await).
-    let (updated, up_to_date, skipped, failed) = {
+    let (updated, up_to_date, skipped, no_upstream, failed) = {
         let guard = results.lock().unwrap();
         let mut updated = Vec::new();
         let mut up_to_date = Vec::new();
         let mut skipped = Vec::new();
+        let mut no_upstream = Vec::new();
         let mut failed = Vec::new();
 
         for result in guard.iter().flatten() {
@@ -230,17 +234,19 @@ pub async fn run_plain(
                 "updated" => updated.push((result.name.clone(), result.branch.clone())),
                 "uptodate" => up_to_date.push((result.name.clone(), result.branch.clone())),
                 "skipped" => skipped.push((result.name.clone(), result.branch.clone())),
+                "noupstream" => no_upstream.push((result.name.clone(), result.branch.clone())),
                 "failed" => failed.push((result.name.clone(), result.branch.clone())),
                 _ => {}
             }
         }
-        (updated, up_to_date, skipped, failed)
+        (updated, up_to_date, skipped, no_upstream, failed)
     };
 
     println!();
     println!("🎉 Pull completed!");
 
-    let total = updated.len() + up_to_date.len() + skipped.len() + failed.len();
+    let total =
+        updated.len() + up_to_date.len() + skipped.len() + no_upstream.len() + failed.len();
     let mut parts = Vec::new();
     if !updated.is_empty() {
         parts.push(format!("{} updated", updated.len()));
@@ -250,6 +256,9 @@ pub async fn run_plain(
     }
     if !skipped.is_empty() {
         parts.push(format!("{} skipped", skipped.len()));
+    }
+    if !no_upstream.is_empty() {
+        parts.push(format!("{} no-upstream", no_upstream.len()));
     }
     if !failed.is_empty() {
         parts.push(format!("{} failed", failed.len()));
@@ -289,6 +298,7 @@ pub async fn run_plain(
     print_section("✨ Updated repositories:", &updated);
     print_section("📦 Unchanged repositories:", &up_to_date);
     print_section("⚠️  Skipped repositories (uncommitted changes):", &skipped);
+    print_section("🔌 No-upstream repositories (nothing to pull):", &no_upstream);
     print_section("❌ Failed repositories:", &failed);
 
     if !worktrees.is_empty() {

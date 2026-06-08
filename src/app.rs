@@ -15,6 +15,8 @@ pub enum RepoStatus {
     Running { pid: u32 },
     UpToDate,
     Updated,
+    /// The checked-out branch has no upstream — nothing to pull. Not an error.
+    NoUpstream,
     Skipped,
     Failed,
 }
@@ -25,6 +27,7 @@ impl RepoStatus {
             self,
             RepoStatus::UpToDate
                 | RepoStatus::Updated
+                | RepoStatus::NoUpstream
                 | RepoStatus::Skipped
                 | RepoStatus::Failed
         )
@@ -35,8 +38,22 @@ impl RepoStatus {
     }
 
     /// A repo "has an issue" worth retrying: it failed, or was skipped (dirty).
+    /// No-upstream is intentionally excluded — it's not an error, just unconfigured tracking.
     pub fn is_retryable(&self) -> bool {
         matches!(self, RepoStatus::Failed | RepoStatus::Skipped)
+    }
+
+    /// Rank for status-column sorting (issues first, then idle, then clean).
+    pub fn sort_rank(&self) -> u8 {
+        match self {
+            RepoStatus::Failed => 0,
+            RepoStatus::Skipped => 1,
+            RepoStatus::Running { .. } => 2,
+            RepoStatus::Queued => 3,
+            RepoStatus::NoUpstream => 4,
+            RepoStatus::Updated => 5,
+            RepoStatus::UpToDate => 6,
+        }
     }
 }
 
@@ -63,6 +80,8 @@ pub struct RepoDetails {
     pub commit_subject: String,
     pub commit_author: String,
     pub commit_rel_date: String,
+    /// Committer Unix timestamp of HEAD (for last-commit sorting); 0 when unknown.
+    pub commit_timestamp: i64,
 }
 
 /// One local branch on the repo page.
@@ -222,12 +241,90 @@ impl ColumnFlags {
     }
 }
 
-/// A pending two-key chord: `t` then a column key toggles that column; `s` then a status key
-/// picks a list filter.
+/// A pending two-key chord: `t` then a column key toggles that column; `f` then a status key
+/// picks a status filter; `s` then a column key picks the sort order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Leader {
     Toggle,
     Filter,
+    Sort,
+}
+
+/// Which column the repo list is sorted by. `Discovery` keeps the original scan order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SortColumn {
+    #[default]
+    Discovery,
+    Name,
+    Status,
+    AheadBehind,
+    Dirty,
+    LastCommit,
+    Worktrees,
+    Branches,
+    Stashes,
+}
+
+impl SortColumn {
+    /// Short header/label for this column.
+    pub fn label(self) -> &'static str {
+        match self {
+            SortColumn::Discovery => "discovery",
+            SortColumn::Name => "name",
+            SortColumn::Status => "status",
+            SortColumn::AheadBehind => "ahead/behind",
+            SortColumn::Dirty => "dirty",
+            SortColumn::LastCommit => "last-commit",
+            SortColumn::Worktrees => "worktrees",
+            SortColumn::Branches => "branches",
+            SortColumn::Stashes => "stashes",
+        }
+    }
+}
+
+/// Sort direction for the active sort column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortDir {
+    #[default]
+    Asc,
+    Desc,
+}
+
+impl SortDir {
+    pub fn flip(self) -> Self {
+        match self {
+            SortDir::Asc => SortDir::Desc,
+            SortDir::Desc => SortDir::Asc,
+        }
+    }
+
+    /// The arrow glyph for this direction (used in the column header).
+    pub fn arrow(self) -> &'static str {
+        match self {
+            SortDir::Asc => "▲",
+            SortDir::Desc => "▼",
+        }
+    }
+}
+
+/// Which tab the `?` help modal shows. Persisted so the last tab reopens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HelpTab {
+    #[default]
+    Hotkeys,
+    CliFlags,
+}
+
+impl HelpTab {
+    pub fn flip(self) -> Self {
+        match self {
+            HelpTab::Hotkeys => HelpTab::CliFlags,
+            HelpTab::CliFlags => HelpTab::Hotkeys,
+        }
+    }
 }
 
 /// Filter the repo list by pull outcome. Applied on top of the `/` name filter.
@@ -296,6 +393,7 @@ pub struct IconSet {
     pub queued: &'static str,
     pub up_to_date: &'static str,
     pub updated: &'static str,
+    pub no_upstream: &'static str,
     pub skipped: &'static str,
     pub failed: &'static str,
     /// Success check, distinct from `updated` — used for the all-ok Result row.
@@ -317,6 +415,7 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     queued: "◯",
     up_to_date: "◌",
     updated: "✓",
+    no_upstream: "⊝",
     skipped: "⊘",
     failed: "✗",
     ok: "✓",
@@ -340,6 +439,7 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     // Single-codepoint Emoji_Presentation glyphs only — variation-selector emoji (⏭️, ⚠️) are
     // 2-char sequences that terminals render at inconsistent widths, breaking column alignment
     // and desyncing the cursor (garbled/ghosted UI). 🚫 / 🛑 are reliably 2 cells everywhere.
+    no_upstream: "🔌",
     skipped: "🚫",
     failed: "❌",
     ok: "✅",
@@ -380,6 +480,8 @@ pub enum Command {
     ToggleColumn(Column),
     FilterLeader,
     SetFilter(StatusFilter),
+    SortLeader,
+    SetSort(SortColumn),
     Settings,
     Quit,
 }
@@ -565,8 +667,12 @@ pub struct AppState {
     pub preview_focused: bool,
     /// Filter string (from `/` mode).
     pub filter: Option<String>,
-    /// Status filter picked via the `s` leader (default: show all).
+    /// Status filter picked via the `f` leader (default: show all).
     pub status_filter: StatusFilter,
+    /// Column the list is sorted by (default: discovery order). Persisted.
+    pub sort_column: SortColumn,
+    /// Sort direction for `sort_column`. Persisted.
+    pub sort_dir: SortDir,
     /// Filter input mode active?
     pub filter_input_mode: bool,
     /// Wall-clock start time (reset to now whenever a fresh batch of work is kicked off).
@@ -584,8 +690,15 @@ pub struct AppState {
     pub result_overlay: bool,
     /// Main content area (above the status bar) — captured each render for hit-testing.
     pub main_area: Rect,
-    /// Left list pane rect — captured each render for hit-testing.
+    /// Left list pane rect (outer, with border) — captured each render for hit-testing.
     pub list_area: Rect,
+    /// The exact rect the repo rows render into (inner, below the 2-row header) — used for
+    /// click→row mapping so it's correct regardless of border/padding/header offsets.
+    pub list_rows_area: Rect,
+    /// The column-header rect (the 2 rows above the repo list) — for header click-to-sort.
+    pub header_area: Rect,
+    /// Header sort-cell hit map: (col_start, col_end, column). Rebuilt each render.
+    pub header_click: Vec<(u16, u16, SortColumn)>,
     /// Right preview pane rect — captured each render for hit-testing.
     pub preview_area: Rect,
     /// Total content lines + visible height of the preview, captured each render so wheel/
@@ -605,6 +718,8 @@ pub struct AppState {
     pub info_pinned: bool,
     /// Whether the help modal (`?`) is open.
     pub show_help: bool,
+    /// Which help tab is active (persisted so it reopens where you left it).
+    pub help_tab: HelpTab,
     /// Scroll offset within the help modal.
     pub help_scroll: usize,
     /// Clickable links in the help modal: (absolute screen row, url). Rebuilt each render.
@@ -669,6 +784,8 @@ impl AppState {
             preview_focused: false,
             filter: None,
             status_filter: StatusFilter::default(),
+            sort_column: persisted.sort_column,
+            sort_dir: persisted.sort_dir,
             filter_input_mode: false,
             start: Instant::now(),
             finished_elapsed: None,
@@ -678,6 +795,9 @@ impl AppState {
             result_overlay: false,
             main_area: Rect::default(),
             list_area: Rect::default(),
+            list_rows_area: Rect::default(),
+            header_area: Rect::default(),
+            header_click: Vec::new(),
             preview_area: Rect::default(),
             preview_total: 0,
             preview_viewport: 0,
@@ -687,6 +807,7 @@ impl AppState {
             right_view: RightView::Log,
             info_pinned: persisted.info_pinned,
             show_help: false,
+            help_tab: persisted.help_tab,
             help_scroll: 0,
             help_links: Vec::new(),
             repo_page: None,
@@ -724,6 +845,9 @@ impl AppState {
             split_ratio: self.split_ratio,
             panel_padding: self.panel_padding,
             icon_style: self.icon_style,
+            sort_column: self.sort_column,
+            sort_dir: self.sort_dir,
+            help_tab: self.help_tab,
         });
     }
 
@@ -753,21 +877,19 @@ impl AppState {
         self.split_ratio = rel.clamp(Self::MIN_SPLIT, Self::MAX_SPLIT);
     }
 
-    /// Map mouse coordinates to a list selection index, or None for the
-    /// separator row / outside the list. Result maps to `visible_len`.
+    /// Map mouse coordinates to a list selection index, or None for the separator row / header /
+    /// outside the list. Result maps to `visible_len`. Uses the exact rows rect captured at
+    /// render, so it's correct regardless of border, padding, and the column header.
     pub fn list_selection_at(&self, col: u16, row: u16) -> Option<usize> {
-        let area = self.list_area;
-        if area.width < 2 || area.height < 2 {
+        let area = self.list_rows_area;
+        if area.width == 0 || area.height == 0 {
             return None;
         }
-        let inner_x = area.x + 1;
-        let inner_y = area.y + 1;
-        let inner_right = inner_x + (area.width - 2);
-        let inner_bottom = inner_y + (area.height - 2);
-        if col < inner_x || col >= inner_right || row < inner_y || row >= inner_bottom {
+        if col < area.x || col >= area.x + area.width || row < area.y || row >= area.y + area.height
+        {
             return None;
         }
-        let row_idx = (row - inner_y) as usize + self.list_offset;
+        let row_idx = (row - area.y) as usize + self.list_offset;
         let visible_len = self.visible_indices().len();
         // Physical rows: [repos…][sep][Result]([sep][Errors]). Map back to logical selection.
         if row_idx < visible_len {
@@ -781,10 +903,11 @@ impl AppState {
         }
     }
 
-    /// Returns indices of repos visible given the current filter.
+    /// Returns indices of repos visible given the current filter, in the active sort order.
     pub fn visible_indices(&self) -> Vec<usize> {
         let name_filter = self.filter.as_ref().map(|filter| filter.to_lowercase());
-        self.repos
+        let mut indices: Vec<usize> = self
+            .repos
             .iter()
             .enumerate()
             .filter(|(_, repo)| {
@@ -795,7 +918,92 @@ impl AppState {
                 name_ok && self.status_filter.matches(&state.status)
             })
             .map(|(index, _)| index)
-            .collect()
+            .collect();
+        if self.sort_column != SortColumn::Discovery {
+            // Stable sort keeps discovery order among equal keys.
+            indices.sort_by(|&a, &b| {
+                let ord = self.compare_repos(a, b);
+                match self.sort_dir {
+                    SortDir::Asc => ord,
+                    SortDir::Desc => ord.reverse(),
+                }
+            });
+        }
+        indices
+    }
+
+    /// Compare two repos by the active sort column (ascending). Missing details sort as 0.
+    fn compare_repos(&self, a: usize, b: usize) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let left = self.repos[a].lock().unwrap();
+        let right = self.repos[b].lock().unwrap();
+        let worktrees = |name: &str| self.worktrees.iter().filter(|wt| wt.repo == name).count();
+        match self.sort_column {
+            SortColumn::Discovery => Ordering::Equal,
+            SortColumn::Name => left.name.to_lowercase().cmp(&right.name.to_lowercase()),
+            SortColumn::Status => left.status.sort_rank().cmp(&right.status.sort_rank()),
+            SortColumn::AheadBehind => {
+                let key = |state: &RepoState| {
+                    let details = state.details.as_ref();
+                    (
+                        details.and_then(|d| d.behind).unwrap_or(0),
+                        details.and_then(|d| d.ahead).unwrap_or(0),
+                    )
+                };
+                key(&left).cmp(&key(&right))
+            }
+            SortColumn::Dirty => {
+                let key = |state: &RepoState| state.details.as_ref().map_or(0, |d| d.dirty_count);
+                key(&left).cmp(&key(&right))
+            }
+            SortColumn::LastCommit => {
+                // Newest first under ascending feels wrong; use the raw timestamp ascending
+                // (oldest first), so Desc gives newest first.
+                let key =
+                    |state: &RepoState| state.details.as_ref().map_or(0, |d| d.commit_timestamp);
+                key(&left).cmp(&key(&right))
+            }
+            SortColumn::Worktrees => worktrees(&left.name).cmp(&worktrees(&right.name)),
+            SortColumn::Branches => {
+                let key = |state: &RepoState| state.details.as_ref().map_or(0, |d| d.branch_count);
+                key(&left).cmp(&key(&right))
+            }
+            SortColumn::Stashes => {
+                let key = |state: &RepoState| state.details.as_ref().map_or(0, |d| d.stash_count);
+                key(&left).cmp(&key(&right))
+            }
+        }
+    }
+
+    /// Apply a sort column: re-pressing the active column flips direction; `Discovery` resets.
+    pub fn set_sort(&mut self, column: SortColumn) {
+        if column == SortColumn::Discovery {
+            self.sort_column = SortColumn::Discovery;
+            self.sort_dir = SortDir::default();
+        } else if self.sort_column == column {
+            self.sort_dir = self.sort_dir.flip();
+        } else {
+            self.sort_column = column;
+            self.sort_dir = SortDir::Asc;
+        }
+        self.result_overlay = false;
+        let max = self.list_len().saturating_sub(1);
+        if self.selected > max {
+            self.selected = max;
+        }
+        // Persisted on exit (like the column toggles), not on every keystroke.
+    }
+
+    /// The sort column whose header cell is at `(col,row)`, if any (mouse click-to-sort).
+    pub fn header_sort_at(&self, col: u16, row: u16) -> Option<SortColumn> {
+        let area = self.header_area;
+        if area.height == 0 || row < area.y || row >= area.y + area.height {
+            return None;
+        }
+        self.header_click
+            .iter()
+            .find(|(start, end, _)| col >= *start && col < *end)
+            .map(|(_, _, column)| *column)
     }
 
     /// Apply a status filter and reset the selection (the visible set just changed).
@@ -828,14 +1036,16 @@ impl AppState {
         self.visible_indices().len() + 1 + usize::from(self.has_errors())
     }
 
-    /// Count of repos in each state.
-    pub fn counts(&self) -> (usize, usize, usize, usize, usize, usize) {
+    /// Count of repos in each state. Tuple order:
+    /// (queued, running, updated, up_to_date, skipped, failed, no_upstream).
+    pub fn counts(&self) -> (usize, usize, usize, usize, usize, usize, usize) {
         let mut queued = 0;
         let mut running = 0;
         let mut updated = 0;
         let mut up_to_date = 0;
         let mut skipped = 0;
         let mut failed = 0;
+        let mut no_upstream = 0;
         for repo in &self.repos {
             let state = repo.lock().unwrap();
             match &state.status {
@@ -843,16 +1053,17 @@ impl AppState {
                 RepoStatus::Running { .. } => running += 1,
                 RepoStatus::Updated => updated += 1,
                 RepoStatus::UpToDate => up_to_date += 1,
+                RepoStatus::NoUpstream => no_upstream += 1,
                 RepoStatus::Skipped => skipped += 1,
                 RepoStatus::Failed => failed += 1,
             }
         }
-        (queued, running, updated, up_to_date, skipped, failed)
+        (queued, running, updated, up_to_date, skipped, failed, no_upstream)
     }
 
     pub fn done_count(&self) -> usize {
-        let (_, _, updated, up_to_date, skipped, failed) = self.counts();
-        updated + up_to_date + skipped + failed
+        let (_, _, updated, up_to_date, skipped, failed, no_upstream) = self.counts();
+        updated + up_to_date + skipped + failed + no_upstream
     }
 
     /// Any repo ended in `Failed` — gates the dynamic "Errors" list row.
@@ -1265,6 +1476,41 @@ mod tests {
         state.selected = 4; // Result item (no repo)
         assert!(!state.selected_repo_retryable());
         assert!(!state.selected_repo_refetchable());
+    }
+
+    fn state_named(names: &[&str]) -> AppState {
+        let repos: Vec<SharedRepoState> = names
+            .iter()
+            .map(|name| Arc::new(Mutex::new(RepoState::new(*name, PathBuf::from("/tmp")))))
+            .collect();
+        AppState::new(repos, 4)
+    }
+
+    #[test]
+    fn sort_by_name_orders_visible_indices() {
+        let mut state = state_named(&["charlie", "alpha", "bravo"]);
+        // Discovery order is unchanged (independent of any persisted preference).
+        state.sort_column = SortColumn::Discovery;
+        assert_eq!(state.visible_indices(), vec![0, 1, 2]);
+
+        state.sort_column = SortColumn::Name;
+        state.sort_dir = SortDir::Asc;
+        assert_eq!(state.visible_indices(), vec![1, 2, 0]); // alpha, bravo, charlie
+
+        state.sort_dir = SortDir::Desc;
+        assert_eq!(state.visible_indices(), vec![0, 2, 1]); // charlie, bravo, alpha
+    }
+
+    #[test]
+    fn set_sort_toggles_direction_on_repeat() {
+        let mut state = state_named(&["a", "b"]);
+        state.sort_column = SortColumn::Discovery;
+        state.set_sort(SortColumn::Name);
+        assert_eq!((state.sort_column, state.sort_dir), (SortColumn::Name, SortDir::Asc));
+        state.set_sort(SortColumn::Name);
+        assert_eq!(state.sort_dir, SortDir::Desc);
+        state.set_sort(SortColumn::Discovery);
+        assert_eq!((state.sort_column, state.sort_dir), (SortColumn::Discovery, SortDir::Asc));
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::{ColumnFlags, IconStyle};
+use crate::app::{ColumnFlags, HelpTab, IconStyle, SortColumn, SortDir};
 
 /// UI preferences persisted between runs at `~/.config/pull-all/state.json`.
 /// `#[serde(default)]` keeps older state files (missing newer fields) loadable.
@@ -18,6 +18,12 @@ pub struct PersistedState {
     pub panel_padding: bool,
     /// Glyph set (Unicode vs emoji).
     pub icon_style: IconStyle,
+    /// Repo-list sort column (default: discovery order).
+    pub sort_column: SortColumn,
+    /// Repo-list sort direction.
+    pub sort_dir: SortDir,
+    /// Last-active help-modal tab.
+    pub help_tab: HelpTab,
 }
 
 fn state_path() -> Option<PathBuf> {

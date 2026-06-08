@@ -13,8 +13,13 @@ import KeymapExplorer from '../../../components/KeymapExplorer.astro';
 ## Notes
 
 - **Retry vs refetch** — `r`/`R` only re-run repos that need it (failed or skipped);
-  `f`/`F` re-run any repo even if it was already up to date. In the status bar, `r`/`R`
-  dim when no repo has an issue, and `f`/`F` dim when nothing is eligible.
+  `e`/`E` re-run any repo even if it was already up to date. In the status bar, `r`/`R`
+  dim when no repo has an issue, and `e`/`E` dim when nothing is eligible.
+- **Sort the list** — press `s` then a column key (or click a column header) to sort by
+  name / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes;
+  re-pick or re-click flips `▲`/`▼`. The order persists across runs.
+- **Status filter moved to `f`** — `f` then `a`/`u`/`c`/`s`/`f`/`i` filters the list by
+  status (on top of the `/` name filter); `s` is now the sort leader.
 - **Checkout moved to `Shift`+`Enter`** — on the repo page, plain `Enter` (and a
   double-click) opens the diff for a stash or dirty row. `Shift`+`Enter` checks out the
   selected clean, non-current branch, so the two actions no longer collide.

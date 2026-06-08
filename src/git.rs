@@ -13,6 +13,8 @@ const EXCLUDED_BRANCHES: [&str; 2] = ["main", "dev"];
 pub enum PullOutcome {
     AlreadyUpToDate,
     Updated,
+    /// The current branch has no upstream configured — not an error, nothing to pull.
+    NoUpstream,
     Failed,
 }
 
@@ -20,6 +22,13 @@ pub enum PullOutcome {
 /// `exit_success` — did the process exit with code 0?
 pub fn classify_pull_output(output: &str, exit_success: bool) -> PullOutcome {
     if !exit_success {
+        // A branch with no upstream isn't a failure — surface it as its own state.
+        if output.contains("no tracking information")
+            || output.contains("no upstream")
+            || output.contains("There is no tracking information")
+        {
+            return PullOutcome::NoUpstream;
+        }
         return PullOutcome::Failed;
     }
     if output.contains("Already up to date") {
@@ -168,9 +177,9 @@ pub fn normalize_remote_url(raw: &str) -> Option<String> {
     Some(https.strip_suffix(".git").unwrap_or(&https).to_string())
 }
 
-/// Parse the US (0x1f)-separated `git log -1 --format=%h%x1f%s%x1f%an%x1f%cr` line
-/// into (hash, subject, author, relative-date).
-pub fn parse_commit_line(line: &str) -> (String, String, String, String) {
+/// Parse the US (0x1f)-separated `git log -1 --format=%h%x1f%s%x1f%an%x1f%cr%x1f%ct` line
+/// into (hash, subject, author, relative-date, committer-timestamp).
+pub fn parse_commit_line(line: &str) -> (String, String, String, String, i64) {
     let line = line.trim_end_matches(['\n', '\r']);
     let mut parts = line.split('\u{1f}');
     (
@@ -178,6 +187,7 @@ pub fn parse_commit_line(line: &str) -> (String, String, String, String) {
         parts.next().unwrap_or("").to_string(),
         parts.next().unwrap_or("").to_string(),
         parts.next().unwrap_or("").to_string(),
+        parts.next().and_then(|value| value.trim().parse().ok()).unwrap_or(0),
     )
 }
 
@@ -197,17 +207,18 @@ pub async fn get_repo_details(dir: &Path) -> RepoDetails {
     let mut details = RepoDetails::default();
 
     if let Ok(output) = Command::new("git")
-        .args(["-C", dir_str, "log", "-1", "--format=%h%x1f%s%x1f%an%x1f%cr"])
+        .args(["-C", dir_str, "log", "-1", "--format=%h%x1f%s%x1f%an%x1f%cr%x1f%ct"])
         .output()
         .await
     {
         if output.status.success() {
             let line = String::from_utf8_lossy(&output.stdout);
-            let (hash, subject, author, rel_date) = parse_commit_line(&line);
+            let (hash, subject, author, rel_date, timestamp) = parse_commit_line(&line);
             details.commit_hash = hash;
             details.commit_subject = subject;
             details.commit_author = author;
             details.commit_rel_date = rel_date;
+            details.commit_timestamp = timestamp;
         }
     }
 
@@ -984,6 +995,13 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_no_upstream_is_not_failure() {
+        let output = "There is no tracking information for the current branch.\n\
+            Please specify which branch you want to merge with.\n";
+        assert_eq!(classify_pull_output(output, false), PullOutcome::NoUpstream);
+    }
+
+    #[test]
     fn test_classify_updated_no_already_up_to_date_text() {
         let output = "From github.com:org/repo\n   abc1234..def5678  dev -> origin/dev\n";
         assert_eq!(classify_pull_output(output, true), PullOutcome::Updated);
@@ -1041,21 +1059,24 @@ mod tests {
 
     #[test]
     fn parse_commit_line_splits_us_fields() {
-        let line = "a1b2c3d\u{1f}fix: handle empty input\u{1f}Ada Byron\u{1f}2 hours ago\n";
-        let (hash, subject, author, rel) = parse_commit_line(line);
+        let line =
+            "a1b2c3d\u{1f}fix: handle empty input\u{1f}Ada Byron\u{1f}2 hours ago\u{1f}1700000000\n";
+        let (hash, subject, author, rel, timestamp) = parse_commit_line(line);
         assert_eq!(hash, "a1b2c3d");
         assert_eq!(subject, "fix: handle empty input");
         assert_eq!(author, "Ada Byron");
         assert_eq!(rel, "2 hours ago");
+        assert_eq!(timestamp, 1_700_000_000);
     }
 
     #[test]
     fn parse_commit_line_tolerates_missing_fields() {
-        let (hash, subject, author, rel) = parse_commit_line("deadbee");
+        let (hash, subject, author, rel, timestamp) = parse_commit_line("deadbee");
         assert_eq!(hash, "deadbee");
         assert_eq!(subject, "");
         assert_eq!(author, "");
         assert_eq!(rel, "");
+        assert_eq!(timestamp, 0);
     }
 
     #[test]

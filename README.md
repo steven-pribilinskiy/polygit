@@ -8,14 +8,18 @@ Interactive multi-repo git pull dashboard. Pulls every git repo in a directory i
 
 - Parallel pulls with configurable concurrency (default: nproc)
 - Live log streaming per repo in a scrollable preview pane
-- Status glyphs: queued / running / up-to-date / updated / skipped / failed
+- Status glyphs: queued / running / up-to-date / updated / no-upstream / skipped / failed
+- Branches with no upstream are a distinct **no-upstream** state (`⊝`), not a failure — kept off the Errors page and counted as done
 - Automatic one-shot retry of a failed pull before marking it failed
 - Dynamic `Errors (N)` page (after `Result`) listing each failed repo with its error output
-- Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`f` / `F`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees)
+- Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`e` / `E`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees)
 - Action hints dim when they'd be a no-op
 - Worktree discovery (`.worktrees/*/.git`)
-- Filter repos by name (`/`) or by status (`s` leader: updated / up-to-date / skipped / failed / issues)
+- Sort the list (`s` leader, or click a column header) by name / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes — re-pick or re-click flips `▲`/`▼` (persisted)
+- Filter repos by name (`/`) or by status (`f` leader: updated / up-to-date / skipped / failed / issues)
+- Clickable 2-row column header with the active sort indicator
 - Diff modal with a clickable file list over the selected file's diff (stash, uncommitted, or vs base branch)
+- Tabbed help modal (`?`): **Hotkeys** and **CLI & Flags**, switched with `Tab` (last tab remembered)
 - Settings modal (`,`): toggle 1-cell panel/modal padding and switch between Unicode glyphs and emoji icons (persisted)
 - Non-TUI fallback (same output as bash reference) when not on a TTY or with `--no-tui`
 - Exit codes: 0 (all ok), 1 (any failed), 2 (user quit mid-run), 130 (Ctrl-C)
@@ -80,12 +84,13 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `Enter` / double-click | Open the dedicated repo page for the selected repo (on the repo list) |
 | `r` | Retry selected repo if it has an issue (failed or skipped) |
 | `R` | Retry all repos with an issue (failed or skipped) |
-| `f` | Refetch selected repo (re-pull regardless of status, unless it's in progress) |
-| `F` | Refetch all repos that aren't currently in progress |
+| `e` | Refetch selected repo (re-pull regardless of status, unless it's in progress) |
+| `E` | Refetch all repos that aren't currently in progress |
 | `i` | Toggle the info panel — an additive block above the log/diff (status, branch, ahead/behind, remote, last commit, worktrees, changes, path) |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
 | `t` | Column-toggle leader: press `t` then `a`/`d`/`l`/`w`/`b`/`s` to show/hide a column (mode stays active until `Esc`) |
-| `s` | Status-filter leader: press `s` then `a`/`u`/`c`/`s`/`f`/`i` to filter the list by all / updated / up-to-date / skipped / failed / issues (applies on top of `/`) |
+| `s` | Sort leader: press `s` then `n`/`s`/`a`/`d`/`l`/`w`/`b`/`k`/`o` to sort by name / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes / none — re-pick flips `▲`/`▼` (or click a column header) |
+| `f` | Status-filter leader: press `f` then `a`/`u`/`c`/`s`/`f`/`i` to filter the list by all / updated / up-to-date / skipped / failed / issues (applies on top of `/`) |
 | `o` | Open the selected repo's remote in the browser |
 | `y` | Copy the selected repo's **absolute path** to the clipboard |
 | `Y` | Copy the selected repo's **remote (origin) URL** to the clipboard |
@@ -99,7 +104,7 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `q` | Quit |
 | `Ctrl-C` | Quit (exit 130) |
 
-**Retry vs refetch:** retry only re-runs repos that need it (failed/skipped); refetch re-runs any repo even if it was already up to date. In the status bar, `r`/`R` dim when no repo has an issue, and `f`/`F` dim when there's nothing eligible (the selected repo is still in progress).
+**Retry vs refetch:** retry only re-runs repos that need it (failed/skipped); refetch re-runs any repo even if it was already up to date. In the status bar, `r`/`R` dim when no repo has an issue, and `e`/`E` dim when there's nothing eligible (the selected repo is still in progress).
 
 The repo list, the log/diff preview, the help modal, and the repo page all show a scrollbar when their content overflows. **Clickable commands:** the action hints in the status bar (and the `t` column menu) are mouse-clickable — clicking one runs the same command as the key.
 
@@ -124,9 +129,13 @@ The list always shows the status glyph + name + branch. Press `t` then a column 
 - **Panel padding** — adds a 1-cell inner padding inside every bordered panel and modal.
 - **Icons** — switches the status / column / marker glyphs **everywhere** (list, columns, repo page, Result/Errors pages, log markers) between the default Unicode set (`◌ ✓ ⊘ ✗ ⑂ ≡ •`) and an emoji set (`✅ ✨ 🚫 ❌ 🌿 📦 📝`). Columns stay aligned in either mode — only single-codepoint, reliably-2-cell emoji are used (no variation-selector glyphs), and the tight ahead/behind column keeps compact `↑↓` arrows.
 
+### Sorting (`s` leader / column headers)
+
+The list can be sorted by any column. Press `s` then a column key (`n` name, `s` status, `a` ahead/behind, `d` dirty, `l` last-commit, `w` worktrees, `b` branches, `k` stashes, `o` none) — or click a column header. Re-picking the same column (or re-clicking the header) flips the direction; the header shows `▲`/`▼` on the active column and the footer shows a `⟪column ▲⟫` tag. The order persists across runs.
+
 ### Help modal (`?`)
 
-`?` opens an in-app reference: links to this repo on GitHub and the design notes on `notes.lvh.me`, the `go`/`bun`/`cli` subcommands, every flag and environment variable, the hotkeys grouped by purpose, and exit codes. The links are clickable (open in your browser via `$BROWSER`/`wslview`/`xdg-open`). Scroll with `j`/`k`, `g`/`G`, `PgUp`/`PgDn`, or the wheel; close with `?`/`Esc`/`q`.
+`?` opens an in-app reference with two tabs — **Hotkeys** and **CLI & Flags** — switched with `Tab` (the last tab is remembered across opens). It links to this repo on GitHub and the design notes on `notes.lvh.me`, lists the `go`/`bun`/`cli` subcommands, every flag and environment variable, the hotkeys grouped by purpose, and exit codes. The links are clickable (open in your browser via `$BROWSER`/`wslview`/`xdg-open`). Scroll with `j`/`k`, `g`/`G`, `PgUp`/`PgDn`, or the wheel; close with `?`/`Esc`/`q`.
 
 ### Mouse
 
