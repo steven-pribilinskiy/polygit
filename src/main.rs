@@ -29,8 +29,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use app::{
-    AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog, DiffSource, Leader, PageRow,
-    PageRowKind, RepoState, RepoStatus, RightView, SharedRepoState, SortColumn, StatusFilter,
+    AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog, DiffFocus, DiffSource, Leader,
+    PageRow, PageRowKind, RepoState, RepoStatus, RightView, SharedRepoState, SortColumn,
+    StatusFilter,
 };
 use worker::{
     run_all_details, run_all_pulls, run_checkout, run_delete, run_diff_modal, run_diff_modal_file,
@@ -252,36 +253,6 @@ fn pop_key_enhancement(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
     }
 }
 
-/// True when `(col,row)` lands on the preview's scrollbar track and the preview is scrollable.
-/// The track is the rightmost column of the area the scrollbar was drawn on.
-fn on_preview_scrollbar(app: &AppState, col: u16, row: u16) -> bool {
-    let area = app.preview_scroll_area;
-    area.width > 0
-        && app.preview_total > app.preview_viewport
-        && col == area.x + area.width - 1
-        && row >= area.y
-        && row < area.y + area.height
-}
-
-/// Preview scroll offset that maps the view-top to `row` on the scrollbar track (absolute
-/// jump-to-cursor), clamped to the scrollable range. Row-only so it works mid-drag.
-fn preview_scroll_from_row(app: &AppState, row: u16) -> usize {
-    let area = app.preview_scroll_area;
-    let track_height = f64::from(area.height.max(1));
-    let rel = f64::from(row.saturating_sub(area.y));
-    let fraction = (rel / track_height).clamp(0.0, 1.0);
-    let max_scroll = app.preview_total.saturating_sub(app.preview_viewport);
-    ((fraction * app.preview_total as f64) as usize).min(max_scroll)
-}
-
-/// Set the selected repo's preview scroll (disabling auto-scroll). No-op on Result/Errors.
-fn set_preview_scroll(app: &mut AppState, scroll: usize) {
-    if let Some(repo_idx) = app.selected_repo_index() {
-        let mut state = app.repos[repo_idx].lock().unwrap();
-        state.auto_scroll = false;
-        state.preview_scroll = scroll;
-    }
-}
 
 /// Apply a command triggered by key OR by clicking its status-bar hint. Returns
 /// `Some(exit_code)` when the command should quit the app.
@@ -605,8 +576,8 @@ async fn run_event_loop(
 
     // Whether the divider is currently being dragged with the mouse.
     let mut dragging_divider = false;
-    // Whether the preview scrollbar is currently being dragged with the mouse.
-    let mut dragging_scrollbar = false;
+    // Which scrollbar (if any) is currently being dragged.
+    let mut scroll_drag: Option<app::ScrollKind> = None;
 
     // Set when `c` is pressed; the TUI is suspended to run claude code after event handling.
     let mut pending_claude: Option<std::path::PathBuf> = None;
@@ -707,6 +678,7 @@ async fn run_event_loop(
         {
             let mut app = app_state.lock().unwrap();
             app.divider_dragging = dragging_divider;
+            app.scrollbar_dragging = scroll_drag;
             terminal.draw(|frame| render::render(frame, &mut app, tick))?;
         }
 
@@ -717,20 +689,61 @@ async fn run_event_loop(
             Event::Mouse(mouse) => {
                 let mut app = app_state.lock().unwrap();
 
-                // Confirmation dialog is keyboard-only; ignore mouse while it's open.
-                if app.confirm.is_some() {
+                // Draggable scrollbars (preview, diff panels, help, repo page) are handled here,
+                // before the per-view gates, so a grab works in any modal/view.
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(kind) = app.scrollbar_at(mouse.column, mouse.row) {
+                            scroll_drag = Some(kind);
+                            if let Some(value) = app.scroll_value_for(kind, mouse.row) {
+                                if app.apply_scroll(kind, value) {
+                                    drop(app);
+                                    tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) => {
+                        if let Some(kind) = scroll_drag {
+                            if let Some(value) = app.scroll_value_for(kind, mouse.row) {
+                                if app.apply_scroll(kind, value) {
+                                    drop(app);
+                                    tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        if scroll_drag.take().is_some() {
+                            continue;
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Confirmation dialog and the copy menu are keyboard-only; ignore the mouse.
+                if app.confirm.is_some() || app.copy_menu.is_some() {
                     continue;
                 }
 
                 // Diff modal: the wheel scrolls; clicks are ignored (esc/q closes it).
-                if app.diff_modal.is_some() {
+                // Skipped while help is open so the help overlay handles the mouse instead.
+                if app.diff_modal.is_some() && !app.show_help {
                     let files_area = app.diff_files_area;
+                    // Shift/Alt+wheel scrolls the file-list view (selection unchanged); a plain
+                    // wheel over the file list moves the selection, and over the diff scrolls it.
+                    // (Some terminals don't report Shift on the wheel, so Alt works too.)
+                    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT)
+                        || mouse.modifiers.contains(KeyModifiers::ALT);
                     let over_files = mouse.row >= files_area.y
                         && mouse.row < files_area.y + files_area.height;
                     match mouse.kind {
-                        // Wheel over the file list moves the selection; over the diff it scrolls.
                         MouseEventKind::ScrollDown => {
-                            if over_files {
+                            if shift {
+                                app.diff_files_scroll(3);
+                            } else if over_files {
                                 if app.diff_modal_select(1) {
                                     drop(app);
                                     tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
@@ -741,7 +754,9 @@ async fn run_event_loop(
                             }
                         }
                         MouseEventKind::ScrollUp => {
-                            if over_files {
+                            if shift {
+                                app.diff_files_scroll(-3);
+                            } else if over_files {
                                 if app.diff_modal_select(-1) {
                                     drop(app);
                                     tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
@@ -768,7 +783,7 @@ async fn run_event_loop(
 
                 // Repo page: the wheel scrolls; a click selects a row, a double-click opens a
                 // diff modal on a stash or a dirty branch/worktree.
-                if app.repo_page.is_some() {
+                if app.repo_page.is_some() && !app.show_help {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
                             app.repo_page_scroll = app.repo_page_scroll.saturating_add(3);
@@ -804,11 +819,18 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Help modal: a click opens the link under the cursor; the wheel scrolls.
+                // Help modal: click a tab to switch, the [esc] button to close, or a link to open
+                // it; the wheel scrolls.
                 if app.show_help {
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if let Some(url) = app.help_link_at(mouse.row) {
+                            if let Some(tab) = app.help_tab_at(mouse.column, mouse.row) {
+                                app.help_tab = tab;
+                                app.help_scroll = 0;
+                                app.save_state();
+                            } else if app.help_close_at(mouse.column, mouse.row) {
+                                app.show_help = false;
+                            } else if let Some(url) = app.help_link_at(mouse.row) {
                                 drop(app);
                                 open_url(&url);
                             }
@@ -842,11 +864,6 @@ async fn run_event_loop(
                                 drop(app);
                                 return Ok(code);
                             }
-                        } else if on_preview_scrollbar(&app, mouse.column, mouse.row) {
-                            // Grab the preview scrollbar: jump to the click and start dragging.
-                            dragging_scrollbar = true;
-                            let scroll = preview_scroll_from_row(&app, mouse.row);
-                            set_preview_scroll(&mut app, scroll);
                         } else if let Some(column) = app.header_sort_at(mouse.column, mouse.row) {
                             // Click a column header to sort by it (re-click flips direction).
                             app.set_sort(column);
@@ -883,16 +900,12 @@ async fn run_event_loop(
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
-                        if dragging_scrollbar {
-                            let scroll = preview_scroll_from_row(&app, mouse.row);
-                            set_preview_scroll(&mut app, scroll);
-                        } else if dragging_divider {
+                        if dragging_divider {
                             app.set_split_from_col(mouse.column);
                         }
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
                         dragging_divider = false;
-                        dragging_scrollbar = false;
                     }
                     MouseEventKind::ScrollUp => {
                         if mouse.column < app.divider_col {
@@ -1016,8 +1029,45 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Diff modal: scroll, toggle the dirty-diff mode, or close.
-                if app.diff_modal.is_some() {
+                // Copy menu (`y` on the repo page): pick path / branch / both, then copy.
+                if app.copy_menu.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('y') => {
+                            app.copy_menu = None;
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let next = app.copy_menu.unwrap_or(0) + 1;
+                            if next < AppState::COPY_MENU_ROWS {
+                                app.copy_menu = Some(next);
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.copy_menu = Some(app.copy_menu.unwrap_or(0).saturating_sub(1));
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            let text =
+                                app.repo_page_target().map(|row| app.copy_menu_text(&row));
+                            app.copy_menu = None;
+                            if let Some(text) = text {
+                                drop(app);
+                                copy_to_clipboard(&text);
+                                continue;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // Diff modal: scroll, toggle the dirty-diff mode, or close. Skipped while help is
+                // open so the help overlay (gated below) handles keys instead.
+                if app.diff_modal.is_some() && !app.show_help {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
@@ -1042,53 +1092,68 @@ async fn run_event_loop(
                         .diff_modal
                         .as_ref()
                         .map(|modal| modal.files.len().saturating_sub(1));
+                    let focus = app.diff_modal.as_ref().map(|modal| modal.focus).unwrap_or_default();
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.diff_modal = None,
-                        // j/k/↑/↓ move the file selection (and load that file's diff).
+                        // `?` opens help (the overlay shows the diff-modal hotkeys).
+                        KeyCode::Char('?') => {
+                            app.show_help = true;
+                            app.help_scroll = 0;
+                        }
+                        // Tab switches which panel j/k/g/G drive (file list ⇄ diff).
+                        KeyCode::Tab | KeyCode::BackTab => app.diff_modal_toggle_focus(),
+                        // j/k/↑/↓ drive the focused panel: pick a file, or scroll the diff.
                         KeyCode::Char('j') | KeyCode::Down => {
-                            if app.diff_modal_select(1) {
-                                drop(app);
-                                refetch_file(&app_state);
-                                continue;
-                            }
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            if app.diff_modal_select(-1) {
-                                drop(app);
-                                refetch_file(&app_state);
-                                continue;
-                            }
-                        }
-                        KeyCode::Char('g') => {
-                            if app.diff_modal_select_index(0) {
-                                drop(app);
-                                refetch_file(&app_state);
-                                continue;
-                            }
-                        }
-                        KeyCode::Char('G') => {
-                            if let Some(last) = last_file {
-                                if app.diff_modal_select_index(last) {
+                            if focus == DiffFocus::Files {
+                                if app.diff_modal_select(1) {
                                     drop(app);
                                     refetch_file(&app_state);
                                     continue;
                                 }
+                            } else {
+                                scroll_by(&mut app, 1);
                             }
                         }
-                        // Page keys scroll the diff panel.
-                        KeyCode::PageDown => scroll_by(&mut app, isize::try_from(page).unwrap_or(isize::MAX)),
-                        KeyCode::PageUp => scroll_by(&mut app, -isize::try_from(page).unwrap_or(isize::MAX)),
-                        KeyCode::Home => {
-                            if let Some(modal) = app.diff_modal.as_mut() {
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if focus == DiffFocus::Files {
+                                if app.diff_modal_select(-1) {
+                                    drop(app);
+                                    refetch_file(&app_state);
+                                    continue;
+                                }
+                            } else {
+                                scroll_by(&mut app, -1);
+                            }
+                        }
+                        KeyCode::Char('g') | KeyCode::Home => {
+                            if focus == DiffFocus::Files {
+                                if app.diff_modal_select_index(0) {
+                                    drop(app);
+                                    refetch_file(&app_state);
+                                    continue;
+                                }
+                            } else if let Some(modal) = app.diff_modal.as_mut() {
                                 modal.scroll = 0;
                             }
                         }
-                        KeyCode::End => {
-                            if let Some(modal) = app.diff_modal.as_mut() {
+                        KeyCode::Char('G') | KeyCode::End => {
+                            if focus == DiffFocus::Files {
+                                if let Some(last) = last_file {
+                                    if app.diff_modal_select_index(last) {
+                                        drop(app);
+                                        refetch_file(&app_state);
+                                        continue;
+                                    }
+                                }
+                            } else if let Some(modal) = app.diff_modal.as_mut() {
                                 modal.scroll = usize::MAX;
                             }
                         }
-                        KeyCode::Char('t') | KeyCode::Tab => {
+                        // Page keys always scroll the diff panel.
+                        KeyCode::PageDown => scroll_by(&mut app, isize::try_from(page).unwrap_or(isize::MAX)),
+                        KeyCode::PageUp => scroll_by(&mut app, -isize::try_from(page).unwrap_or(isize::MAX)),
+                        // `t` toggles the dirty-diff mode (uncommitted ⇄ base branch).
+                        KeyCode::Char('t') => {
                             if app.diff_modal_toggle_mode() {
                                 let app_state_clone = Arc::clone(&app_state);
                                 drop(app);
@@ -1100,36 +1165,43 @@ async fn run_event_loop(
                         // confirm dialog over the repo page.
                         KeyCode::Char('d') => {
                             let source = app.diff_modal.as_ref().map(|modal| modal.source.clone());
-                            app.diff_modal = None;
-                            if let (Some(idx), Some(source)) = (app.repo_page, source) {
-                                let repo_path = app.repos[idx].lock().unwrap().path.clone();
-                                match source {
-                                    DiffSource::Stash { index, .. } => {
-                                        let app_state_clone = Arc::clone(&app_state);
-                                        drop(app);
-                                        tokio::spawn(run_prepare_drop_stash(app_state_clone, idx, index));
-                                        continue;
-                                    }
-                                    // The checked-out branch: discard its uncommitted changes.
-                                    DiffSource::Dirty { path, .. } if path == repo_path => {
-                                        let app_state_clone = Arc::clone(&app_state);
-                                        drop(app);
-                                        tokio::spawn(run_prepare_discard(app_state_clone, idx, path));
-                                        continue;
-                                    }
-                                    DiffSource::Dirty { path, .. } => {
-                                        app.confirm = Some(ConfirmDialog::simple(
-                                            format!(
-                                                "Remove worktree {}? Uncommitted changes will be LOST.",
-                                                path.display()
-                                            ),
-                                            ConfirmAction::RemoveWorktree {
-                                                repo_idx: idx,
-                                                path,
-                                                force: true,
-                                            },
-                                            true,
-                                        ));
+                            match source {
+                                // A branch diff is read-only — `d` does nothing (modal stays open).
+                                Some(DiffSource::Branch { .. }) | None => {}
+                                Some(source) => {
+                                    app.diff_modal = None;
+                                    if let Some(idx) = app.repo_page {
+                                        let repo_path = app.repos[idx].lock().unwrap().path.clone();
+                                        match source {
+                                            DiffSource::Stash { index, .. } => {
+                                                let app_state_clone = Arc::clone(&app_state);
+                                                drop(app);
+                                                tokio::spawn(run_prepare_drop_stash(app_state_clone, idx, index));
+                                                continue;
+                                            }
+                                            // The checked-out branch: discard its uncommitted changes.
+                                            DiffSource::Dirty { path, .. } if path == repo_path => {
+                                                let app_state_clone = Arc::clone(&app_state);
+                                                drop(app);
+                                                tokio::spawn(run_prepare_discard(app_state_clone, idx, path));
+                                                continue;
+                                            }
+                                            DiffSource::Dirty { path, .. } => {
+                                                app.confirm = Some(ConfirmDialog::simple(
+                                                    format!(
+                                                        "Remove worktree {}? Uncommitted changes will be LOST.",
+                                                        path.display()
+                                                    ),
+                                                    ConfirmAction::RemoveWorktree {
+                                                        repo_idx: idx,
+                                                        path,
+                                                        force: true,
+                                                    },
+                                                    true,
+                                                ));
+                                            }
+                                            DiffSource::Branch { .. } => {}
+                                        }
                                     }
                                 }
                             }
@@ -1140,7 +1212,7 @@ async fn run_event_loop(
                 }
 
                 // Dedicated repo page: navigate branches/worktrees and act on the selected row.
-                if app.repo_page.is_some() {
+                if app.repo_page.is_some() && !app.show_help {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
@@ -1150,6 +1222,11 @@ async fn run_event_loop(
                     let len = app.repo_page_selectable_len();
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
+                        // `?` opens help (the overlay shows the repo-page hotkeys).
+                        KeyCode::Char('?') => {
+                            app.show_help = true;
+                            app.help_scroll = 0;
+                        }
                         // `,` opens settings (handled by the early gate next iteration).
                         KeyCode::Char(',') => {
                             app.show_settings = true;
@@ -1232,13 +1309,10 @@ async fn run_event_loop(
                                 pending_lazygit = Some(row.path);
                             }
                         }
-                        // Copy the selected row's path.
+                        // Open the copy menu (pick path / branch / both).
                         KeyCode::Char('y') => {
-                            if let Some(row) = app.repo_page_target() {
-                                let path = row.path.display().to_string();
-                                drop(app);
-                                copy_to_clipboard(&path);
-                                continue;
+                            if app.repo_page_target().is_some() {
+                                app.copy_menu = Some(0);
                             }
                         }
                         // Open the selected branch on the remote host.
@@ -1294,9 +1368,14 @@ async fn run_event_loop(
                         KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
                             app.show_help = false;
                         }
-                        // Tab switches help tabs; the choice is persisted so it reopens here.
-                        KeyCode::Tab | KeyCode::BackTab => {
-                            app.help_tab = app.help_tab.flip();
+                        // Tab / Shift+Tab cycle help tabs; the choice is persisted so it reopens here.
+                        KeyCode::Tab => {
+                            app.help_tab = app.help_tab.next();
+                            app.help_scroll = 0;
+                            app.save_state();
+                        }
+                        KeyCode::BackTab => {
+                            app.help_tab = app.help_tab.prev();
                             app.help_scroll = 0;
                             app.save_state();
                         }
@@ -1653,7 +1732,7 @@ async fn run_event_loop(
 
         // Lazily load the repo page (fetch + branches + worktrees) when it's open.
         {
-            let app = app_state.lock().unwrap();
+            let mut app = app_state.lock().unwrap();
             if let Some(idx) = app.repo_page {
                 let repo = Arc::clone(&app.repos[idx]);
                 let mut state = repo.lock().unwrap();
@@ -1661,6 +1740,10 @@ async fn run_event_loop(
                     state.page_loading = true;
                     drop(state);
                     tokio::spawn(run_repo_page(repo));
+                } else if state.page.is_some() {
+                    drop(state);
+                    // Rows exist now — snap the selection to the current branch (once).
+                    app.focus_head_branch_if_pending();
                 }
             }
         }

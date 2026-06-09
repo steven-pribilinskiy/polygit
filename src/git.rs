@@ -57,6 +57,21 @@ pub async fn is_dirty(dir: &Path) -> Result<bool> {
     Ok(!output.stdout.is_empty())
 }
 
+/// Count uncommitted changes (`git status --porcelain` lines). 0 when clean or on error.
+pub async fn dirty_count(dir: &Path) -> u32 {
+    match Command::new("git")
+        .args(["-C", dir.to_str().unwrap_or("."), "status", "--porcelain"])
+        .output()
+        .await
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count() as u32,
+        Err(_) => 0,
+    }
+}
+
 /// Get `git diff --stat --color=always HEAD@{1} HEAD` output.
 pub async fn diff_stat(dir: &Path) -> Result<String> {
     let output = Command::new("git")
@@ -397,6 +412,49 @@ pub async fn base_merge_base(dir: &Path) -> Option<String> {
         return Some(base);
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Merge-base of `branch` and the repo's default base branch (so a branch diff shows only what
+/// the branch added since it diverged). Falls back to the base branch ref itself.
+pub async fn branch_merge_base(dir: &Path, branch: &str) -> Option<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let base = default_base_branch(dir).await?;
+    let output = Command::new("git")
+        .args(["-C", dir_str, "merge-base", &base, branch])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return Some(base);
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Files a branch changed vs its base branch (`git diff --name-status <merge-base> <branch>`).
+/// Works on any local branch without checking it out.
+pub async fn branch_file_list(dir: &Path, branch: &str) -> Vec<DiffFile> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let Some(merge_base) = branch_merge_base(dir, branch).await else {
+        return Vec::new();
+    };
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "diff", "--name-status", &merge_base, branch])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    parse_name_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Colored diff of a single file a branch changed vs its base branch.
+pub async fn branch_file_diff(dir: &Path, branch: &str, path: &str) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let Some(merge_base) = branch_merge_base(dir, branch).await else {
+        return vec!["(diff unavailable)".to_string()];
+    };
+    run_diff(&["-C", dir_str, "diff", "--color=always", &merge_base, branch, "--", path]).await
 }
 
 /// Parse `--name-status` output (`STATUS\tPATH`, or `R100\tOLD\tNEW` for renames) into files.

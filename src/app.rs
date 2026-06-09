@@ -134,6 +134,8 @@ pub enum DiffSource {
     Stash { path: PathBuf, index: usize, label: String },
     /// A dirty branch/worktree at `path` (toggle between uncommitted and base-branch diff).
     Dirty { path: PathBuf, name: String },
+    /// A clean branch — its diff vs the base branch (the changes the branch introduces).
+    Branch { path: PathBuf, name: String },
 }
 
 /// One changed file shown in the diff modal's file-list panel.
@@ -147,11 +149,21 @@ pub struct DiffFile {
     pub untracked: bool,
 }
 
+/// Which diff-modal panel has keyboard focus (`Tab` toggles it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiffFocus {
+    #[default]
+    Files,
+    Diff,
+}
+
 /// The full-screen-ish (90%) diff modal state: a file-list panel over the selected file's diff.
 #[derive(Debug, Clone)]
 pub struct DiffModal {
     pub source: DiffSource,
     pub mode: DiffMode,
+    /// Which panel `j/k/g/G` drive (Tab toggles).
+    pub focus: DiffFocus,
     /// The changed files (top panel). `None` while the list is still loading.
     pub files: Vec<DiffFile>,
     /// Index of the selected file in `files`.
@@ -174,10 +186,10 @@ pub struct RepoPageData {
     pub branches: Vec<BranchInfo>,
     pub worktrees: Vec<WorktreeInfo>,
     pub stashes: Vec<StashInfo>,
-    /// Main worktree has uncommitted changes (marks the HEAD branch row as diff-able).
-    pub head_dirty: bool,
-    /// Worktree paths with uncommitted changes (mark those rows as diff-able).
-    pub dirty_worktrees: Vec<PathBuf>,
+    /// Uncommitted-change count in the main worktree (0 = clean; >0 marks the HEAD row diff-able).
+    pub head_dirty_count: u32,
+    /// Worktree paths with uncommitted changes + their change count.
+    pub dirty_worktrees: Vec<(PathBuf, u32)>,
     /// True once `git fetch` finished (false during the instant pre-fetch phase).
     pub fetched: bool,
     pub fetch_error: Option<String>,
@@ -201,6 +213,8 @@ pub struct PageRow {
     pub is_head: bool,
     /// Has uncommitted changes (a diff modal can be opened on it).
     pub dirty: bool,
+    /// Number of uncommitted changes (for the dirty column); 0 when clean/not applicable.
+    pub dirty_count: u32,
     /// Set for stash rows: the `stash@{index}` number.
     pub stash_index: Option<usize>,
     pub ahead: Option<u32>,
@@ -208,6 +222,19 @@ pub struct PageRow {
     pub upstream: Option<String>,
     pub last_commit_rel: String,
     pub subject: String,
+}
+
+impl PageRow {
+    /// The verb `d` performs on this row (for the dynamic footer hint), or None when `d` does
+    /// nothing (a clean current branch can't be deleted/discarded).
+    pub fn delete_action(&self) -> Option<&'static str> {
+        match self.kind {
+            PageRowKind::Stash => Some("drop"),
+            PageRowKind::Worktree => Some("remove"),
+            PageRowKind::Branch if self.is_head => self.dirty.then_some("discard"),
+            PageRowKind::Branch => Some("delete"),
+        }
+    }
 }
 
 /// An optional list column the user can toggle on via the `t` leader.
@@ -316,13 +343,25 @@ pub enum HelpTab {
     #[default]
     Hotkeys,
     CliFlags,
+    About,
 }
 
 impl HelpTab {
-    pub fn flip(self) -> Self {
+    /// Next tab (Tab key), cycling Hotkeys → CLI & Flags → About → Hotkeys.
+    pub fn next(self) -> Self {
         match self {
             HelpTab::Hotkeys => HelpTab::CliFlags,
+            HelpTab::CliFlags => HelpTab::About,
+            HelpTab::About => HelpTab::Hotkeys,
+        }
+    }
+
+    /// Previous tab (Shift+Tab).
+    pub fn prev(self) -> Self {
+        match self {
+            HelpTab::Hotkeys => HelpTab::About,
             HelpTab::CliFlags => HelpTab::Hotkeys,
+            HelpTab::About => HelpTab::CliFlags,
         }
     }
 }
@@ -385,6 +424,29 @@ impl IconStyle {
     }
 }
 
+/// Color theme. `Auto` inherits the terminal's own colors/background; `Dark`/`Light` paint an
+/// explicit base background + foreground so the app looks consistent regardless of terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+impl Theme {
+    /// Cycle Auto → Dark → Light → Auto.
+    pub fn cycle(self) -> Self {
+        match self {
+            Theme::Auto => Theme::Dark,
+            Theme::Dark => Theme::Light,
+            Theme::Light => Theme::Auto,
+        }
+    }
+
+}
+
 /// The semantic glyphs the UI renders, swappable between Unicode and emoji via `IconStyle`.
 /// Only the recognizable status/column/marker icons live here — git file-status letters,
 /// result-summary symbols, placeholders, and structural chars stay fixed.
@@ -404,7 +466,6 @@ pub struct IconSet {
     pub stashes: &'static str,
     pub ahead: &'static str,
     pub behind: &'static str,
-    pub dirty_marker: &'static str,
     pub warning: &'static str,
     pub skip_log: &'static str,
     pub retry_log: &'static str,
@@ -425,7 +486,6 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     stashes: "≡",
     ahead: "↑",
     behind: "↓",
-    dirty_marker: "●",
     warning: "⚠",
     skip_log: "⊘",
     retry_log: "↻",
@@ -451,7 +511,6 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     // are double-width and misalign it (and terminals disagree on their width).
     ahead: "↑",
     behind: "↓",
-    dirty_marker: "🔴",
     warning: "🛑",
     skip_log: "🚫",
     retry_log: "🔄",
@@ -464,6 +523,26 @@ pub struct ClickRegion {
     pub col_start: u16,
     pub col_end: u16,
     pub command: Command,
+}
+
+/// Which scrollable region a scrollbar drag targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollKind {
+    Preview,
+    DiffFiles,
+    DiffBody,
+    Help,
+    RepoPage,
+}
+
+/// A draggable scrollbar registered at render time: where its track is + how much it scrolls.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollHit {
+    pub kind: ScrollKind,
+    /// The area the scrollbar was drawn on (its track sits on the right column).
+    pub track: Rect,
+    pub total: usize,
+    pub viewport: usize,
 }
 
 /// A command dispatchable by key OR by clicking its status-bar hint.
@@ -726,10 +805,16 @@ pub struct AppState {
     pub help_scroll: usize,
     /// Clickable links in the help modal: (absolute screen row, url). Rebuilt each render.
     pub help_links: Vec<(u16, String)>,
+    /// Clickable help-modal tab chips: (row, col_start, col_end, tab). Rebuilt each render.
+    pub help_tab_click: Vec<(u16, u16, u16, HelpTab)>,
+    /// The clickable `[esc]` close region in the help modal: (row, col_start, col_end).
+    pub help_close_click: Option<(u16, u16, u16)>,
     /// When Some, the dedicated repo page is open for this absolute repo index.
     pub repo_page: Option<usize>,
     /// Selected row within the repo page (index into its selectable branch/worktree rows).
     pub repo_page_selected: usize,
+    /// Pending one-shot: snap the repo-page selection to the HEAD branch once its rows load.
+    pub repo_page_focus_head: bool,
     /// Scroll offset within the repo page.
     pub repo_page_scroll: usize,
     /// Transient banner on the repo page (action result or error).
@@ -744,12 +829,18 @@ pub struct AppState {
     pub details_pass_spawned: bool,
     /// Clickable command regions in the status bar (rebuilt each render).
     pub clickable: Vec<ClickRegion>,
+    /// Draggable scrollbars registered each render (preview, diff panels, help, repo page).
+    pub scroll_hits: Vec<ScrollHit>,
+    /// Which scrollbar is currently being dragged (drives the live drag highlight).
+    pub scrollbar_dragging: Option<ScrollKind>,
     /// Repo-page row hit map: (absolute screen row, selectable index). Rebuilt each render.
     pub repo_page_click: Vec<(u16, usize)>,
     /// The 90% diff modal (stash diff or a dirty branch/worktree diff), if open.
     pub diff_modal: Option<DiffModal>,
     /// Visible line count of the diff modal's diff panel, captured at render for PgUp/PgDn.
     pub diff_modal_viewport: usize,
+    /// Visible row count of the diff modal's file-list panel (to keep the selection in view).
+    pub diff_files_viewport: usize,
     /// Inner rect of the diff modal's file-list panel (mouse hit-testing + wheel routing).
     pub diff_files_area: Rect,
     /// Inner rect of the diff modal's diff panel (wheel routing).
@@ -761,10 +852,16 @@ pub struct AppState {
     pub panel_padding: bool,
     /// Which glyph set to render (Unicode vs emoji).
     pub icon_style: IconStyle,
+    /// Color theme (auto = inherit terminal; dark/light = explicit base).
+    pub theme: Theme,
     /// Whether the settings modal (`,`) is open.
     pub show_settings: bool,
     /// Selected row in the settings modal (0 = padding, 1 = icons).
     pub settings_selected: usize,
+    /// The repo-page `y` copy menu, when open: the selected option (0 = path, 1 = branch, 2 = both).
+    pub copy_menu: Option<usize>,
+    /// A transient toast message + when it was shown (auto-dismisses after `TOAST_DURATION`).
+    pub toast: Option<(String, Instant)>,
 }
 
 impl AppState {
@@ -813,8 +910,11 @@ impl AppState {
             help_tab: persisted.help_tab,
             help_scroll: 0,
             help_links: Vec::new(),
+            help_tab_click: Vec::new(),
+            help_close_click: None,
             repo_page: None,
             repo_page_selected: 0,
+            repo_page_focus_head: false,
             repo_page_scroll: 0,
             repo_page_message: None,
             confirm: None,
@@ -822,16 +922,50 @@ impl AppState {
             pending_leader: None,
             details_pass_spawned: false,
             clickable: Vec::new(),
+            scroll_hits: Vec::new(),
+            scrollbar_dragging: None,
             repo_page_click: Vec::new(),
             diff_modal: None,
             diff_modal_viewport: 0,
+            diff_files_viewport: 0,
             diff_files_area: Rect::default(),
             diff_body_area: Rect::default(),
             root_dir: PathBuf::new(),
             panel_padding: persisted.panel_padding,
             icon_style: persisted.icon_style,
+            theme: persisted.theme,
             show_settings: false,
             settings_selected: 0,
+            copy_menu: None,
+            toast: None,
+        }
+    }
+
+    /// How long a toast stays on screen before auto-dismissing.
+    pub const TOAST_DURATION: Duration = Duration::from_millis(2500);
+
+    /// Show a transient toast message (reusable anywhere — diff "no changes", copy confirmations…).
+    pub fn show_toast(&mut self, message: impl Into<String>) {
+        self.toast = Some((message.into(), Instant::now()));
+    }
+
+    /// The toast text if one is currently visible (un-expired), else None.
+    pub fn active_toast(&self) -> Option<&str> {
+        self.toast
+            .as_ref()
+            .filter(|(_, shown_at)| shown_at.elapsed() < Self::TOAST_DURATION)
+            .map(|(message, _)| message.as_str())
+    }
+
+    /// Number of rows in the `y` copy menu.
+    pub const COPY_MENU_ROWS: usize = 3;
+
+    /// The text to copy for the current `y`-menu selection over `row` (path / branch / both).
+    pub fn copy_menu_text(&self, row: &PageRow) -> String {
+        match self.copy_menu.unwrap_or(0) {
+            1 => row.branch.clone(),
+            2 => format!("{} {}", row.path.display(), row.branch),
+            _ => row.path.display().to_string(),
         }
     }
 
@@ -848,6 +982,7 @@ impl AppState {
             split_ratio: self.split_ratio,
             panel_padding: self.panel_padding,
             icon_style: self.icon_style,
+            theme: self.theme,
             sort_column: self.sort_column,
             sort_dir: self.sort_dir,
             help_tab: self.help_tab,
@@ -860,6 +995,20 @@ impl AppState {
             .iter()
             .find(|(link_row, _)| *link_row == row)
             .map(|(_, url)| url.clone())
+    }
+
+    /// The help-modal tab whose chip is at `(col,row)`, if any (mouse click-to-switch).
+    pub fn help_tab_at(&self, col: u16, row: u16) -> Option<HelpTab> {
+        self.help_tab_click
+            .iter()
+            .find(|(chip_row, start, end, _)| *chip_row == row && col >= *start && col < *end)
+            .map(|(_, _, _, tab)| *tab)
+    }
+
+    /// Whether `(col,row)` lands on the help-modal `[esc]` close button.
+    pub fn help_close_at(&self, col: u16, row: u16) -> bool {
+        self.help_close_click
+            .is_some_and(|(close_row, start, end)| close_row == row && col >= start && col < end)
     }
 
     pub const DEFAULT_SPLIT: f64 = 0.4;
@@ -903,6 +1052,66 @@ impl AppState {
             Some(visible_len + 1)
         } else {
             None
+        }
+    }
+
+    /// The scrollbar whose track is at `(col,row)`, if it's actually scrollable (mouse grab).
+    pub fn scrollbar_at(&self, col: u16, row: u16) -> Option<ScrollKind> {
+        self.scroll_hits
+            .iter()
+            .find(|hit| {
+                hit.total > hit.viewport
+                    && hit.track.width > 0
+                    && col == hit.track.x + hit.track.width - 1
+                    && row >= hit.track.y
+                    && row < hit.track.y + hit.track.height
+            })
+            .map(|hit| hit.kind)
+    }
+
+    /// The scroll offset mapping track row `row` to an absolute position for `kind` (clamped).
+    pub fn scroll_value_for(&self, kind: ScrollKind, row: u16) -> Option<usize> {
+        let hit = self.scroll_hits.iter().find(|hit| hit.kind == kind)?;
+        let track_height = f64::from(hit.track.height.max(1));
+        let rel = f64::from(row.saturating_sub(hit.track.y));
+        let fraction = (rel / track_height).clamp(0.0, 1.0);
+        let max_scroll = hit.total.saturating_sub(hit.viewport);
+        Some(((fraction * hit.total as f64) as usize).min(max_scroll))
+    }
+
+    /// Apply a scroll offset to whatever `kind` controls. Returns true when the diff-modal file
+    /// selection changed (so the caller can reload that file's diff).
+    pub fn apply_scroll(&mut self, kind: ScrollKind, value: usize) -> bool {
+        match kind {
+            ScrollKind::Preview => {
+                if let Some(idx) = self.selected_repo_index() {
+                    let mut state = self.repos[idx].lock().unwrap();
+                    state.auto_scroll = false;
+                    state.preview_scroll = value;
+                }
+                false
+            }
+            ScrollKind::DiffBody => {
+                if let Some(modal) = self.diff_modal.as_mut() {
+                    modal.scroll = value;
+                }
+                false
+            }
+            ScrollKind::DiffFiles => {
+                // Scroll the file-list view independently of the selection (no diff reload).
+                if let Some(modal) = self.diff_modal.as_mut() {
+                    modal.file_scroll = value;
+                }
+                false
+            }
+            ScrollKind::Help => {
+                self.help_scroll = value;
+                false
+            }
+            ScrollKind::RepoPage => {
+                self.repo_page_scroll = value;
+                false
+            }
         }
     }
 
@@ -1017,9 +1226,9 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 2;
+    pub const SETTINGS_ROWS: usize = 3;
 
-    /// Toggle the currently-selected settings row, persisting immediately.
+    /// Toggle/cycle the currently-selected settings row, persisting immediately.
     pub fn toggle_selected_setting(&mut self) {
         match self.settings_selected {
             0 => self.panel_padding = !self.panel_padding,
@@ -1029,6 +1238,7 @@ impl AppState {
                     IconStyle::Emoji => IconStyle::Unicode,
                 };
             }
+            2 => self.theme = self.theme.cycle(),
             _ => {}
         }
         self.save_state();
@@ -1186,14 +1396,29 @@ impl AppState {
         }
     }
 
-    /// Open the dedicated repo page for the selected repo (forces a fresh fetch).
+    /// Open the dedicated repo page for the selected repo (forces a fresh fetch). The selection
+    /// snaps to the current (HEAD) branch once the page loads.
     pub fn open_repo_page(&mut self) {
         if let Some(idx) = self.selected_repo_index() {
             self.repo_page = Some(idx);
             self.repo_page_selected = 0;
             self.repo_page_scroll = 0;
             self.repo_page_message = None;
+            self.repo_page_focus_head = true;
             self.repos[idx].lock().unwrap().page = None;
+        }
+    }
+
+    /// Once the repo page's rows exist, move the selection to the current (HEAD) branch — done
+    /// once per open, and never overriding a manual move.
+    pub fn focus_head_branch_if_pending(&mut self) {
+        if !self.repo_page_focus_head {
+            return;
+        }
+        let head = self.repo_page_rows().iter().position(|row| row.is_head);
+        if let Some(index) = head {
+            self.repo_page_selected = index;
+            self.repo_page_focus_head = false;
         }
     }
 
@@ -1220,7 +1445,8 @@ impl AppState {
                 path: repo_path.clone(),
                 deletable: branch.deletable(),
                 is_head: branch.is_head,
-                dirty: branch.is_head && page.head_dirty,
+                dirty: branch.is_head && page.head_dirty_count > 0,
+                dirty_count: if branch.is_head { page.head_dirty_count } else { 0 },
                 stash_index: None,
                 ahead: branch.ahead,
                 behind: branch.behind,
@@ -1231,13 +1457,19 @@ impl AppState {
         }
         for worktree in &page.worktrees {
             let branch_info = page.branches.iter().find(|info| info.name == worktree.branch);
+            let dirty_count = page
+                .dirty_worktrees
+                .iter()
+                .find(|(path, _)| path == &worktree.path)
+                .map_or(0, |(_, count)| *count);
             rows.push(PageRow {
                 kind: PageRowKind::Worktree,
                 branch: worktree.branch.clone(),
                 path: worktree.path.clone(),
                 deletable: false,
                 is_head: false,
-                dirty: page.dirty_worktrees.contains(&worktree.path),
+                dirty: dirty_count > 0,
+                dirty_count,
                 stash_index: None,
                 ahead: branch_info.and_then(|info| info.ahead),
                 behind: branch_info.and_then(|info| info.behind),
@@ -1256,6 +1488,7 @@ impl AppState {
                 deletable: false,
                 is_head: false,
                 dirty: false,
+                dirty_count: 0,
                 stash_index: Some(stash.index),
                 ahead: None,
                 behind: None,
@@ -1277,11 +1510,16 @@ impl AppState {
                 index: row.stash_index?,
                 label: row.branch,
             }),
+            // A dirty branch/worktree shows its uncommitted (toggle to base) diff; a clean one
+            // shows what the branch added vs its base branch.
             PageRowKind::Branch | PageRowKind::Worktree if row.dirty => Some(DiffSource::Dirty {
                 path: row.path,
                 name: row.branch,
             }),
-            _ => None,
+            PageRowKind::Branch | PageRowKind::Worktree => Some(DiffSource::Branch {
+                path: row.path,
+                name: row.branch,
+            }),
         }
     }
 
@@ -1290,6 +1528,7 @@ impl AppState {
         self.diff_modal = Some(DiffModal {
             source,
             mode: DiffMode::Uncommitted,
+            focus: DiffFocus::Files,
             files: Vec::new(),
             selected: 0,
             file_scroll: 0,
@@ -1298,6 +1537,16 @@ impl AppState {
             loading: true,
             diff_loading: true,
         });
+    }
+
+    /// Toggle which diff-modal panel `j/k/g/G` drive (`Tab`).
+    pub fn diff_modal_toggle_focus(&mut self) {
+        if let Some(modal) = self.diff_modal.as_mut() {
+            modal.focus = match modal.focus {
+                DiffFocus::Files => DiffFocus::Diff,
+                DiffFocus::Diff => DiffFocus::Files,
+            };
+        }
     }
 
     /// Toggle a dirty-row diff between uncommitted and base-branch views, returning true if
@@ -1341,6 +1590,8 @@ impl AppState {
         modal.scroll = 0;
         modal.lines = vec!["(loading…)".to_string()];
         modal.diff_loading = true;
+        let viewport = self.diff_files_viewport;
+        Self::keep_file_selected_visible(self.diff_modal.as_mut().unwrap(), viewport);
         true
     }
 
@@ -1356,7 +1607,32 @@ impl AppState {
         modal.scroll = 0;
         modal.lines = vec!["(loading…)".to_string()];
         modal.diff_loading = true;
+        let viewport = self.diff_files_viewport;
+        Self::keep_file_selected_visible(self.diff_modal.as_mut().unwrap(), viewport);
         true
+    }
+
+    /// Nudge the file-list scroll so the selected file stays visible (used after keyboard moves;
+    /// scrollbar/wheel scrolling leaves the selection alone).
+    fn keep_file_selected_visible(modal: &mut DiffModal, viewport: usize) {
+        if viewport == 0 {
+            return;
+        }
+        if modal.selected < modal.file_scroll {
+            modal.file_scroll = modal.selected;
+        } else if modal.selected >= modal.file_scroll + viewport {
+            modal.file_scroll = modal.selected + 1 - viewport;
+        }
+    }
+
+    /// Scroll the diff modal's file-list view by `delta` rows (Shift+wheel), selection unchanged.
+    pub fn diff_files_scroll(&mut self, delta: isize) {
+        let viewport = self.diff_files_viewport;
+        if let Some(modal) = self.diff_modal.as_mut() {
+            let max = modal.files.len().saturating_sub(viewport);
+            let next = (modal.file_scroll as isize + delta).clamp(0, max as isize);
+            modal.file_scroll = next as usize;
+        }
     }
 
     /// The file index at a screen row inside the diff modal's file-list panel (mouse hit-test).

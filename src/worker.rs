@@ -11,7 +11,8 @@ use crate::app::{
     PageRowKind, RepoDetails, RepoPageData, RepoStatus, SharedRepoState, WorktreeEntry,
 };
 use crate::git::{
-    base_file_list, base_merge_base, checkout_branch, classify_pull_output, delete_branch,
+    base_file_list, base_merge_base, branch_file_diff, branch_file_list, checkout_branch,
+    classify_pull_output, delete_branch, dirty_count,
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_local_branches, list_stashes, list_worktrees, pull_all_branches, pull_ff_only,
@@ -265,11 +266,12 @@ pub async fn run_repo_page(repo: SharedRepoState) {
     let branches = list_local_branches(&path).await;
     let worktrees = list_worktrees(&path).await;
     let stashes = list_stashes(&path).await;
-    let head_dirty = is_dirty(&path).await.unwrap_or(false);
+    let head_dirty_count = dirty_count(&path).await;
     let mut dirty_worktrees = Vec::new();
     for worktree in &worktrees {
-        if is_dirty(&worktree.path).await.unwrap_or(false) {
-            dirty_worktrees.push(worktree.path.clone());
+        let count = dirty_count(&worktree.path).await;
+        if count > 0 {
+            dirty_worktrees.push((worktree.path.clone(), count));
         }
     }
     {
@@ -278,7 +280,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
             branches,
             worktrees: worktrees.clone(),
             stashes: stashes.clone(),
-            head_dirty,
+            head_dirty_count,
             dirty_worktrees: dirty_worktrees.clone(),
             fetched: false,
             fetch_error: None,
@@ -292,7 +294,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
         branches,
         worktrees,
         stashes,
-        head_dirty,
+        head_dirty_count,
         dirty_worktrees,
         fetched: true,
         fetch_error: fetch.err(),
@@ -311,6 +313,9 @@ fn same_diff_source(a: &DiffSource, b: &DiffSource) -> bool {
     ) || matches!(
         (a, b),
         (DiffSource::Dirty { path: x, .. }, DiffSource::Dirty { path: y, .. }) if x == y
+    ) || matches!(
+        (a, b),
+        (DiffSource::Branch { name: x, .. }, DiffSource::Branch { name: y, .. }) if x == y
     )
 }
 
@@ -330,21 +335,29 @@ pub async fn run_diff_modal(app_state: Arc<Mutex<AppState>>) {
             DiffMode::Uncommitted => uncommitted_file_list(path).await,
             DiffMode::BaseBranch => base_file_list(path).await,
         },
+        DiffSource::Branch { path, name } => branch_file_list(path, name).await,
     };
 
     {
         let mut app = app_state.lock().unwrap();
+        // Ignore a result the modal no longer wants (it changed/closed while we fetched).
+        let still_current = app.diff_modal.as_ref().is_some_and(|modal| {
+            same_diff_source(&modal.source, &source) && modal.mode == mode
+        });
+        if !still_current {
+            return;
+        }
+        if files.is_empty() {
+            // Nothing changed — close the (loading) modal and pop a toast instead of an empty diff.
+            app.diff_modal = None;
+            app.show_toast("no changes");
+            return;
+        }
         if let Some(modal) = app.diff_modal.as_mut() {
-            if same_diff_source(&modal.source, &source) && modal.mode == mode {
-                modal.files = files;
-                modal.selected = 0;
-                modal.file_scroll = 0;
-                modal.loading = false;
-                if modal.files.is_empty() {
-                    modal.lines = vec!["(no changes)".to_string()];
-                    modal.diff_loading = false;
-                }
-            }
+            modal.files = files;
+            modal.selected = 0;
+            modal.file_scroll = 0;
+            modal.loading = false;
         }
     }
 
@@ -377,6 +390,7 @@ pub async fn run_diff_modal_file(app_state: Arc<Mutex<AppState>>) {
                 file_diff_vs(path, merge_base.as_deref(), &file.path, false).await
             }
         },
+        DiffSource::Branch { path, name } => branch_file_diff(path, name, &file.path).await,
     };
 
     let mut app = app_state.lock().unwrap();

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::{ColumnFlags, HelpTab, IconStyle, SortColumn, SortDir};
+use crate::app::{ColumnFlags, HelpTab, IconStyle, SortColumn, SortDir, Theme};
 
 /// UI preferences persisted between runs at `~/.config/pull-all/state.json`.
 /// `#[serde(default)]` keeps older state files (missing newer fields) loadable.
@@ -18,6 +18,8 @@ pub struct PersistedState {
     pub panel_padding: bool,
     /// Glyph set (Unicode vs emoji).
     pub icon_style: IconStyle,
+    /// Color theme (auto / dark / light).
+    pub theme: Theme,
     /// Repo-list sort column (default: discovery order).
     pub sort_column: SortColumn,
     /// Repo-list sort direction.
