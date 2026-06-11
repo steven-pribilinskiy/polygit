@@ -18,6 +18,10 @@ use crate::app::{
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
 pub const DOCS_URL: &str = "https://steven-pribilinskiy.github.io/pull-all/";
 
+/// A repo-page list entry: the rendered line, an optional selectable-row index, and the optional
+/// `base` cell column range (start, end relative to the line start) for click hit-testing.
+type PageItem = (Line<'static>, Option<usize>, Option<(u16, u16)>);
+
 /// The spinner frame for the current render tick (advances every 2 ticks). Shared by the
 /// list status glyph and the repo-page loading indicator so they animate identically.
 fn spinner_frame(tick: u64, icons: &IconSet) -> &'static str {
@@ -190,6 +194,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         }
         if app.copy_menu.is_some() {
             render_copy_menu(frame, app, area);
+        }
+        if app.base_picker.is_some() {
+            render_base_picker(frame, app, area);
         }
         // Help overlays the page / diff modal, showing that view's contextual hotkeys.
         if app.show_help {
@@ -3387,6 +3394,9 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let value = Style::default().fg(Color::Gray);
     let cyan = Style::default().fg(Color::Cyan);
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    // The detected fork-parent shows blue; a user override shows magenta + bold with a `*` marker.
+    let base_style = Style::default().fg(Color::Blue);
+    let base_override_style = Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD);
 
     let branch_count = rows.iter().filter(|row| row.kind == PageRowKind::Branch).count();
     let worktree_count = rows.iter().filter(|row| row.kind == PageRowKind::Worktree).count();
@@ -3407,15 +3417,20 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     // The optional columns after the name, in a fixed order. The header row and every data row
     // are built from the same widths so they stay aligned. Count cells render a dim zero.
     let count_w = 5usize;
+    // Returns the row's optional-column spans plus the index of the `base` span within them (so
+    // the caller can compute that cell's screen-column range for click hit-testing).
     let data_cells = |ahead: Option<u32>,
                       behind: Option<u32>,
                       stats: Option<crate::app::BranchStats>,
                       dirty_count: u32,
                       upstream: &str,
+                      base: &str,
+                      base_override: bool,
                       age: &str,
                       subject: &str|
-     -> Vec<Span<'static>> {
+     -> (Vec<Span<'static>>, Option<usize>) {
         let mut spans: Vec<Span> = Vec::new();
+        let mut base_index = None;
         if columns.ahead_behind {
             spans.push(Span::raw("  "));
             spans.extend(ahead_behind_spans(ahead, behind, 10, icons));
@@ -3438,13 +3453,31 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         if columns.upstream {
             spans.push(Span::styled(format!("  {}", truncate_str(upstream, 28)), label));
         }
+        if columns.base {
+            base_index = Some(spans.len());
+            let text = if base.is_empty() {
+                "  …".to_string()
+            } else if base_override {
+                format!("  {}*", truncate_str(base, 27))
+            } else {
+                format!("  {}", truncate_str(base, 28))
+            };
+            let style = if base.is_empty() {
+                label
+            } else if base_override {
+                base_override_style
+            } else {
+                base_style
+            };
+            spans.push(Span::styled(text, style));
+        }
         if columns.age {
             spans.push(Span::styled(format!("  {:<14}", truncate_str(age, 14)), label));
         }
         if columns.subject {
             spans.push(Span::styled(format!("  {}", truncate_str(subject, 50)), label));
         }
-        spans
+        (spans, base_index)
     };
 
     // The column-header line, aligned to the data columns. `count_cell` prefixes a single space,
@@ -3475,6 +3508,9 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         if columns.upstream {
             spans.push(Span::styled(format!("  {:<28}", "upstream"), label));
         }
+        if columns.base {
+            spans.push(Span::styled(format!("  {:<28}", "base"), label));
+        }
         if columns.age {
             spans.push(Span::styled(format!("  {:<14}", "age"), label));
         }
@@ -3492,15 +3528,17 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
                 Span::styled(text, header_style),
             ]),
             None,
+            None,
         )
     };
 
-    // (Line, Option<selectable index>) — None for headers/blanks. The action banner / fetch
-    // error render in a fixed row at the bottom (below), not at the top of the list.
-    let mut items: Vec<(Line<'static>, Option<usize>)> = Vec::new();
+    // `PageItem` = (Line, Option<selectable index>, Option<(base_start, base_end)>) — the trailing
+    // pair is the `base` cell's column range (relative to the line start) for click hit-testing;
+    // None for headers/blanks/stash rows. The banner / fetch error render in a fixed bottom row.
+    let mut items: Vec<PageItem> = Vec::new();
 
     items.push(section_header(icons.branches, Color::Green, format!("BRANCHES ({branch_count})")));
-    items.push((column_header(), None));
+    items.push((column_header(), None, None));
     for (sel_index, row) in rows.iter().enumerate() {
         if row.kind != PageRowKind::Branch {
             continue;
@@ -3515,21 +3553,29 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             if row.is_head { head_style } else { value },
         );
         let mut line_spans = vec![marker, name_span];
-        line_spans.extend(data_cells(
+        let prefix_width: usize = line_spans.iter().map(|span| span.width()).sum();
+        let (cells, base_index) = data_cells(
             row.ahead,
             row.behind,
             row.stats,
             row.dirty_count,
             &row.upstream.clone().unwrap_or_default(),
+            &row.base.clone().unwrap_or_default(),
+            row.base_is_override,
             &row.last_commit_rel,
             &row.subject,
-        ));
-        items.push((Line::from(line_spans), Some(sel_index)));
+        );
+        let base_range = base_index.map(|index| {
+            let start = prefix_width + cells[..index].iter().map(|span| span.width()).sum::<usize>();
+            (start as u16, (start + cells[index].width()) as u16)
+        });
+        line_spans.extend(cells);
+        items.push((Line::from(line_spans), Some(sel_index), base_range));
     }
 
     // Worktrees / stashes sections only appear when there's something to show.
     if worktree_count > 0 {
-        items.push((Line::from(String::new()), None));
+        items.push((Line::from(String::new()), None, None));
         items.push(section_header(icons.worktrees, Color::Cyan, format!("WORKTREES ({worktree_count})")));
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Worktree {
@@ -3538,21 +3584,30 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             let name_span =
                 Span::styled(format!("  {:<name_pad$}", truncate_str(&row.branch, name_pad)), cyan);
             let mut line_spans = vec![name_span];
-            line_spans.extend(data_cells(
+            let prefix_width: usize = line_spans.iter().map(|span| span.width()).sum();
+            let (cells, base_index) = data_cells(
                 row.ahead,
                 row.behind,
                 row.stats,
                 row.dirty_count,
                 &row.upstream.clone().unwrap_or_default(),
+                &row.base.clone().unwrap_or_default(),
+                row.base_is_override,
                 &row.last_commit_rel,
                 &row.path.display().to_string(),
-            ));
-            items.push((Line::from(line_spans), Some(sel_index)));
+            );
+            let base_range = base_index.map(|index| {
+                let start =
+                    prefix_width + cells[..index].iter().map(|span| span.width()).sum::<usize>();
+                (start as u16, (start + cells[index].width()) as u16)
+            });
+            line_spans.extend(cells);
+            items.push((Line::from(line_spans), Some(sel_index), base_range));
         }
     }
 
     if stash_count > 0 {
-        items.push((Line::from(String::new()), None));
+        items.push((Line::from(String::new()), None, None));
         items.push(section_header(icons.stashes, Color::Magenta, format!("STASHES ({stash_count})")));
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Stash {
@@ -3565,6 +3620,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
                     Span::styled(format!("  {}", truncate_str(&row.branch, 70)), value),
                 ]),
                 Some(sel_index),
+                None,
             ));
         }
     }
@@ -3609,11 +3665,21 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let end = (start + inner_height).min(items.len());
 
     app.repo_page_click.clear();
+    app.base_cell_click.clear();
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
-    for (offset, (line, sel)) in items[start..end].iter().enumerate() {
+    for (offset, (line, sel, base_range)) in items[start..end].iter().enumerate() {
         let mut line = line.clone();
         if let Some(sel_index) = sel {
-            app.repo_page_click.push((inner.y + offset as u16, *sel_index));
+            let screen_row = inner.y + offset as u16;
+            app.repo_page_click.push((screen_row, *sel_index));
+            if let Some((start_col, end_col)) = base_range {
+                app.base_cell_click.push((
+                    screen_row,
+                    inner.x + *start_col,
+                    inner.x + *end_col,
+                    *sel_index,
+                ));
+            }
             if *sel_index == selected {
                 line.style = Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD);
             }
@@ -4235,6 +4301,82 @@ fn render_copy_menu(frame: &mut Frame, app: &mut AppState, area: Rect) {
     lines.push(Line::from(String::new()));
     lines.push(Line::from(Span::styled(
         "  ↑↓ move · enter/click copy · esc close",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The base-branch picker modal: row 0 is "auto-detect" (clears any override), then every
+/// candidate branch. The current override is checked; the detected fork parent is tagged. Scrolls
+/// to keep the highlighted row in view when there are more candidates than fit.
+fn render_base_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let Some(picker) = app.base_picker.clone() else {
+        return;
+    };
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = 56u16.min(area.width.saturating_sub(2)).max(32) + pad;
+    let height = (16u16 + pad).min(area.height.saturating_sub(2).max(8));
+    let modal = centered_rect(width, height, area);
+    let (close_line, close_click) = modal_close_button(modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Magenta))
+        .title(format!(" base for {} ", truncate_str(&picker.branch, 30)))
+        .title_top(close_line);
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.base_picker_area = modal;
+    app.base_picker_close_click = close_click;
+    app.base_picker_click.clear();
+
+    // Reserve the last two inner rows for a blank + hint line; the rest scrolls the option list.
+    let list_height = inner.height.saturating_sub(2) as usize;
+    let total = picker.row_count();
+    let view_start = if picker.selected >= list_height {
+        picker.selected - list_height + 1
+    } else {
+        0
+    };
+    let view_end = (view_start + list_height).min(total);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for index in view_start..view_end {
+        let row_y = inner.y + lines.len() as u16;
+        if row_y < inner.y + inner.height {
+            app.base_picker_click.push((row_y, index));
+        }
+        let cursor = if index == picker.selected { "> " } else { "  " };
+        let (text, is_current) = if index == 0 {
+            let label = match &picker.detected {
+                Some(detected) => format!("auto-detect ({detected})"),
+                None => "auto-detect".to_string(),
+            };
+            (label, picker.current.is_none())
+        } else {
+            let candidate = &picker.candidates[index - 1];
+            let mut label = candidate.clone();
+            if picker.detected.as_deref() == Some(candidate.as_str()) {
+                label.push_str("  (detected)");
+            }
+            (label, picker.current.as_deref() == Some(candidate.as_str()))
+        };
+        let check = if is_current { "✓ " } else { "  " };
+        let style = if index == picker.selected {
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
+        } else if is_current {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        lines.push(Line::from(Span::styled(format!("  {cursor}{check}{}", truncate_str(&text, 44)), style)));
+    }
+    lines.push(Line::from(String::new()));
+    lines.push(Line::from(Span::styled(
+        "  ↑↓ move · enter/click set · esc close",
         Style::default().fg(Color::DarkGray),
     )));
     frame.render_widget(Paragraph::new(lines), inner);

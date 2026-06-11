@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -124,6 +124,11 @@ pub struct BranchInfo {
     pub stats: Option<BranchStats>,
     /// Short sha of the merge-base with the base branch (info panel).
     pub merge_base_short: Option<String>,
+    /// The resolved base branch this branch's stats diff against — `None` until the stats worker
+    /// resolves it (detected fork parent, or the user's override).
+    pub base: Option<String>,
+    /// The resolved `base` came from a user override rather than auto-detection.
+    pub base_is_override: bool,
 }
 
 impl BranchInfo {
@@ -335,6 +340,11 @@ pub struct PageRow {
     pub author: String,
     /// Short merge-base sha vs the base branch (info panel).
     pub merge_base_short: Option<String>,
+    /// The resolved base branch (detected fork parent or override); `None` while loading or for
+    /// stash rows. Shown in the `base` column and clickable to override.
+    pub base: Option<String>,
+    /// The resolved `base` came from a user override rather than auto-detection.
+    pub base_is_override: bool,
 }
 
 impl PageRow {
@@ -391,6 +401,7 @@ pub enum RepoPageColumn {
     Deleted,
     Total,
     Upstream,
+    Base,
     Age,
     Subject,
 }
@@ -406,6 +417,7 @@ pub struct RepoPageColumns {
     pub deleted: bool,
     pub total: bool,
     pub upstream: bool,
+    pub base: bool,
     pub age: bool,
     pub subject: bool,
 }
@@ -420,8 +432,44 @@ impl Default for RepoPageColumns {
             deleted: true,
             total: true,
             upstream: true,
+            base: true,
             age: true,
             subject: true,
+        }
+    }
+}
+
+/// The open base-branch picker: choose which branch a target branch's stats diff against.
+/// The chosen value becomes a persisted per-repo+branch override; the "detected" entry clears it.
+#[derive(Debug, Clone)]
+pub struct BasePicker {
+    /// Repo this picker targets (index into `AppState::repos`).
+    pub repo_index: usize,
+    /// The branch whose base is being overridden.
+    pub branch: String,
+    /// The auto-detected base (shown first, marked) — selecting it clears any override.
+    pub detected: Option<String>,
+    /// The override currently in effect for this branch, if any.
+    pub current: Option<String>,
+    /// Candidate branch refs to choose from (local heads + remote-tracking branches).
+    pub candidates: Vec<String>,
+    /// Highlighted row: 0 = the "detected" entry, then `candidates` by index + 1.
+    pub selected: usize,
+}
+
+impl BasePicker {
+    /// Total rows: the "detected (auto)" entry plus every candidate.
+    pub fn row_count(&self) -> usize {
+        self.candidates.len() + 1
+    }
+
+    /// The base ref a given row selects: row 0 → `None` (clear override → auto-detect), otherwise
+    /// the candidate at `row - 1`.
+    pub fn ref_at(&self, row: usize) -> Option<String> {
+        if row == 0 {
+            None
+        } else {
+            self.candidates.get(row - 1).cloned()
         }
     }
 }
@@ -924,6 +972,9 @@ pub struct RepoState {
     pub flash: CellFlash,
     /// When the current flash expires; None when not flashing.
     pub flash_until: Option<Instant>,
+    /// Per-branch base-branch overrides for this repo (branch name → base ref). Seeded from the
+    /// persisted global map when the page opens; the stats worker reads it to resolve each base.
+    pub base_overrides: HashMap<String, String>,
 }
 
 /// Per-column "value just changed in the last refetch" flags. Cells with a flag set pulse
@@ -976,6 +1027,7 @@ impl RepoState {
             pull_loading: false,
             flash: CellFlash::default(),
             flash_until: None,
+            base_overrides: HashMap::new(),
         }
     }
 
@@ -1116,6 +1168,11 @@ pub fn format_ago(secs: u64) -> String {
 /// Whether `(col,row)` lands inside a `(row, col_start, col_end)` click region.
 pub fn region_hit(region: Option<(u16, u16, u16)>, col: u16, row: u16) -> bool {
     region.is_some_and(|(region_row, start, end)| region_row == row && col >= start && col < end)
+}
+
+/// State.json key for a per-repo+branch base override: absolute repo path + US separator + branch.
+pub fn base_override_key(repo_path: &std::path::Path, branch: &str) -> String {
+    format!("{}\u{1f}{}", repo_path.display(), branch)
 }
 
 /// Whether `(col,row)` is inside `rect` (mouse hit-testing against captured modal areas).
@@ -1450,6 +1507,16 @@ pub struct AppState {
     pub repo_page_toggle_click: Vec<(u16, u16, u16, RepoPageColumn)>,
     /// Show the bottom info panel on the repo page (persisted, default on).
     pub repo_page_info: bool,
+    /// The open base-branch picker (clicking a `base` cell or pressing `b`), if any.
+    pub base_picker: Option<BasePicker>,
+    pub base_picker_area: Rect,
+    pub base_picker_close_click: Option<(u16, u16, u16)>,
+    /// Base-picker option rows: (screen row, option index — 0 = detected, then candidates).
+    pub base_picker_click: Vec<(u16, usize)>,
+    /// Clickable `base` cells on the repo page: `(row, col_start, col_end, selectable index)`.
+    pub base_cell_click: Vec<(u16, u16, u16, usize)>,
+    /// Persisted base-branch overrides, keyed `"{repo_abs_path}\u{1f}{branch}"` → base ref.
+    pub base_overrides: HashMap<String, String>,
     // New-build notice (a newer binary landed at this executable's path while running):
     pub update_available: bool,
     pub update_dismissed: bool,
@@ -1587,6 +1654,12 @@ impl AppState {
             repo_page_toggle: false,
             repo_page_toggle_click: Vec::new(),
             repo_page_info: persisted.repo_page_info,
+            base_picker: None,
+            base_picker_area: Rect::default(),
+            base_picker_close_click: None,
+            base_picker_click: Vec::new(),
+            base_cell_click: Vec::new(),
+            base_overrides: persisted.base_overrides,
             update_available: false,
             update_dismissed: false,
             update_reload_click: None,
@@ -1857,6 +1930,7 @@ impl AppState {
             collapsed_folders,
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
+            base_overrides: self.base_overrides.clone(),
         });
     }
 
@@ -1912,6 +1986,139 @@ impl AppState {
             .iter()
             .find(|(click_row, _)| *click_row == row)
             .map(|(_, index)| *index)
+    }
+
+    /// The selectable repo-page row whose `base` cell is at `(col,row)`, if any (mouse hit-test).
+    pub fn base_cell_at(&self, col: u16, row: u16) -> Option<usize> {
+        self.base_cell_click
+            .iter()
+            .find(|(click_row, start, end, _)| *click_row == row && col >= *start && col < *end)
+            .map(|(_, _, _, index)| *index)
+    }
+
+    /// The base-picker option (0 = detected, then candidate index + 1) at a screen row, if any.
+    pub fn base_picker_option_at(&self, row: u16) -> Option<usize> {
+        self.base_picker_click
+            .iter()
+            .find(|(click_row, _)| *click_row == row)
+            .map(|(_, index)| *index)
+    }
+
+    /// Open the base-branch picker for the branch on selectable row `index` of the open page.
+    /// No-op unless that row is a branch with a resolved base. Candidates are gathered from the
+    /// page (local branches, their upstreams, and every detected base) so the menu is synchronous.
+    pub fn open_base_picker(&mut self, index: usize) {
+        let Some(repo_index) = self.repo_page else {
+            return;
+        };
+        let rows = self.repo_page_rows();
+        let Some(row) = rows.get(index) else {
+            return;
+        };
+        if row.kind != PageRowKind::Branch {
+            return;
+        }
+        let branch = row.branch.clone();
+        let (repo_path, mut candidates) = {
+            let state = self.repos[repo_index].lock().unwrap();
+            let path = state.path.clone();
+            let mut refs: Vec<String> = Vec::new();
+            if let Some(page) = state.page.as_ref() {
+                for info in &page.branches {
+                    if info.name != branch {
+                        refs.push(info.name.clone());
+                    }
+                    if let Some(upstream) = &info.upstream {
+                        refs.push(upstream.clone());
+                    }
+                    if let Some(base) = &info.base {
+                        refs.push(base.clone());
+                    }
+                }
+            }
+            (path, refs)
+        };
+        candidates.sort();
+        candidates.dedup();
+        let current = self.base_overrides.get(&base_override_key(&repo_path, &branch)).cloned();
+        // The displayed base is the detected one only when no override is in effect.
+        let detected = if row.base_is_override { None } else { row.base.clone() };
+        // Start the highlight on the current override (if any), else the detected entry (row 0).
+        let selected = current
+            .as_ref()
+            .and_then(|over| candidates.iter().position(|cand| cand == over))
+            .map_or(0, |pos| pos + 1);
+        self.base_picker = Some(BasePicker {
+            repo_index,
+            branch,
+            detected,
+            current,
+            candidates,
+            selected,
+        });
+    }
+
+    /// Apply the base-picker's highlighted option as the override and close the picker. Returns
+    /// `(repo_index, branch)` so the caller can respawn the stats worker, or `None` if not open.
+    pub fn confirm_base_picker(&mut self) -> Option<(usize, String)> {
+        let picker = self.base_picker.take()?;
+        let chosen = picker.ref_at(picker.selected);
+        self.set_base_override(picker.repo_index, &picker.branch, chosen);
+        Some((picker.repo_index, picker.branch))
+    }
+
+    /// Move the base-picker highlight by `delta`, clamped to its rows. `isize::MIN`/`MAX` jump to
+    /// the first/last row (saturating, so they can't overflow).
+    pub fn move_base_picker(&mut self, delta: isize) {
+        if let Some(picker) = self.base_picker.as_mut() {
+            let last = picker.row_count().saturating_sub(1);
+            let next = (picker.selected as isize).saturating_add(delta).clamp(0, last as isize);
+            picker.selected = next as usize;
+        }
+    }
+
+    /// Set (or clear, with `None`) the base override for a repo+branch, persist it, and reset that
+    /// branch's stats so the worker recomputes against the new base. Mirrors the override into the
+    /// repo's own map (the stats worker reads it without the global `AppState`).
+    pub fn set_base_override(&mut self, repo_index: usize, branch: &str, base_ref: Option<String>) {
+        let mut state = self.repos[repo_index].lock().unwrap();
+        let key = base_override_key(&state.path, branch);
+        match &base_ref {
+            Some(value) if !value.is_empty() => {
+                self.base_overrides.insert(key, value.clone());
+                state.base_overrides.insert(branch.to_string(), value.clone());
+            }
+            _ => {
+                self.base_overrides.remove(&key);
+                state.base_overrides.remove(branch);
+            }
+        }
+        // Reset the branch's resolved base + stats so the worker re-resolves and re-diffs it.
+        if let Some(page) = state.page.as_mut() {
+            if let Some(info) = page.branches.iter_mut().find(|info| info.name == branch) {
+                info.stats = None;
+                info.merge_base_short = None;
+                info.base = None;
+                info.base_is_override = false;
+            }
+        }
+        drop(state);
+        self.save_state();
+    }
+
+    /// Seed a repo's per-branch override map from the persisted global map (call before opening the
+    /// page so the stats worker sees the user's prior choices).
+    pub fn seed_repo_base_overrides(&self, repo_index: usize) {
+        let mut state = self.repos[repo_index].lock().unwrap();
+        let path = state.path.clone();
+        let prefix = format!("{}\u{1f}", path.display());
+        state.base_overrides = self
+            .base_overrides
+            .iter()
+            .filter_map(|(key, value)| {
+                key.strip_prefix(&prefix).map(|branch| (branch.to_string(), value.clone()))
+            })
+            .collect();
     }
 
     /// Set a settings row to a specific option (mouse click on a radio chip) — unlike
@@ -2877,6 +3084,8 @@ impl AppState {
                 commit_sha: branch.commit_sha.clone(),
                 author: branch.author.clone(),
                 merge_base_short: branch.merge_base_short.clone(),
+                base: branch.base.clone(),
+                base_is_override: branch.base_is_override,
             });
         }
         for worktree in &page.worktrees {
@@ -2906,6 +3115,8 @@ impl AppState {
                 commit_sha: branch_info.map(|info| info.commit_sha.clone()).unwrap_or_default(),
                 author: branch_info.map(|info| info.author.clone()).unwrap_or_default(),
                 merge_base_short: branch_info.and_then(|info| info.merge_base_short.clone()),
+                base: branch_info.and_then(|info| info.base.clone()),
+                base_is_override: branch_info.is_some_and(|info| info.base_is_override),
             });
         }
         for stash in &page.stashes {
@@ -2927,6 +3138,8 @@ impl AppState {
                 commit_sha: String::new(),
                 author: String::new(),
                 merge_base_short: None,
+                base: None,
+                base_is_override: false,
             });
         }
         rows
@@ -2943,6 +3156,7 @@ impl AppState {
             RepoPageColumn::Deleted => columns.deleted = !columns.deleted,
             RepoPageColumn::Total => columns.total = !columns.total,
             RepoPageColumn::Upstream => columns.upstream = !columns.upstream,
+            RepoPageColumn::Base => columns.base = !columns.base,
             RepoPageColumn::Age => columns.age = !columns.age,
             RepoPageColumn::Subject => columns.subject = !columns.subject,
         }
@@ -2959,7 +3173,7 @@ impl AppState {
             return true;
         };
         match column {
-            RepoPageColumn::Age | RepoPageColumn::Subject => true,
+            RepoPageColumn::Age | RepoPageColumn::Subject | RepoPageColumn::Base => true,
             RepoPageColumn::AheadBehind | RepoPageColumn::Upstream => {
                 page.branches.iter().any(|branch| branch.upstream.is_some())
             }
@@ -2994,6 +3208,7 @@ impl AppState {
             deleted: on(columns.deleted, RepoPageColumn::Deleted),
             total: on(columns.total, RepoPageColumn::Total),
             upstream: on(columns.upstream, RepoPageColumn::Upstream),
+            base: on(columns.base, RepoPageColumn::Base),
             age: columns.age,
             subject: columns.subject,
         }
@@ -3523,6 +3738,8 @@ mod tests {
             author: "Ada".into(),
             stats,
             merge_base_short: Some("def5678".into()),
+            base: Some("origin/main".into()),
+            base_is_override: false,
         }
     }
 

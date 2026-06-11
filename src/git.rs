@@ -537,7 +537,7 @@ pub async fn base_merge_base(dir: &Path) -> Option<String> {
 /// the branch added since it diverged). Falls back to the base branch ref itself.
 pub async fn branch_merge_base(dir: &Path, branch: &str) -> Option<String> {
     let dir_str = dir.to_str().unwrap_or(".");
-    let base = default_base_branch(dir).await?;
+    let base = detect_base_branch(dir, branch).await?;
     let output = Command::new("git")
         .args(["-C", dir_str, "merge-base", &base, branch])
         .output()
@@ -622,6 +622,173 @@ pub async fn merge_base_with(dir: &Path, base: &str, branch: &str) -> Option<Str
         return Some(base.to_string());
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// A candidate base branch with its divergence from the target branch.
+/// `ahead`  = commits on the target branch but not on this candidate.
+/// `behind` = commits on this candidate but not on the target branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseCandidate {
+    pub name: String,
+    pub ahead: u32,
+    pub behind: u32,
+    /// A remote-tracking ref (`origin/…`) rather than a local head — preferred on ties since
+    /// integration branches usually live on the remote.
+    pub is_remote: bool,
+}
+
+/// The most-recent branches to weigh as base candidates. The base is realistically a recent
+/// integration branch, so this caps the per-branch `git rev-list` calls on branch-heavy repos.
+const BASE_CANDIDATE_CAP: usize = 50;
+
+/// Rank conventional integration-branch names so ties resolve toward the usual base. Lower wins.
+/// The remote prefix (`origin/`) is ignored — only the final path segment is matched.
+fn base_name_rank(name: &str) -> u8 {
+    match name.rsplit('/').next().unwrap_or(name) {
+        "main" => 0,
+        "master" => 1,
+        "develop" => 2,
+        "dev" => 3,
+        _ => 4,
+    }
+}
+
+/// Pick the branch a feature branch most directly forked from, given each candidate's divergence.
+/// Returns the index of the chosen candidate, or `None` for an empty slice. Pure (no git) so the
+/// selection rule is unit-tested directly.
+///
+/// The base is the candidate sharing the most of the target's history — smallest `ahead` (fewest
+/// commits unique to the target). Candidates with `ahead == 0` already contain the whole target
+/// (the branch's own remote mirror, or a descendant of it), so they're dropped unless *every*
+/// candidate is `ahead == 0`. Ties break by smallest `behind`, then conventional-name rank, then
+/// remote-before-local, then name — fully deterministic.
+pub fn choose_base(candidates: &[BaseCandidate]) -> Option<usize> {
+    let any_real = candidates.iter().any(|candidate| candidate.ahead >= 1);
+    let mut best: Option<usize> = None;
+    for (index, candidate) in candidates.iter().enumerate() {
+        if any_real && candidate.ahead == 0 {
+            continue;
+        }
+        let key = |cand: &BaseCandidate| {
+            (
+                cand.ahead,
+                cand.behind,
+                base_name_rank(&cand.name),
+                u8::from(!cand.is_remote),
+                cand.name.clone(),
+            )
+        };
+        let better = best.is_none_or(|chosen| key(candidate) < key(&candidates[chosen]));
+        if better {
+            best = Some(index);
+        }
+    }
+    best
+}
+
+/// Parse `git rev-list --left-right --count A...B` output (`<left>\t<right>`) into `(left, right)`.
+/// With `A = candidate`, `B = target`: left = candidate-only (behind), right = target-only (ahead).
+fn parse_left_right_count(stdout: &str) -> Option<(u32, u32)> {
+    let mut fields = stdout.split_whitespace();
+    let left = fields.next()?.parse().ok()?;
+    let right = fields.next()?.parse().ok()?;
+    Some((left, right))
+}
+
+/// Filter raw `for-each-ref` lines (`<full-ref>\t<short>`, most-recent first) into base candidates
+/// for `branch`, capped. Drops the target branch itself, the symbolic `*/HEAD` pointer, and the
+/// branch's own remote mirror (`<remote>/<branch>`). Returns `(short_name, is_remote)`. Pure.
+fn collect_base_candidate_refs(stdout: &str, branch: &str, cap: usize) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let mut fields = line.split('\t');
+        let Some(full) = fields.next() else { continue };
+        let Some(short) = fields.next() else { continue };
+        if short.is_empty() {
+            continue;
+        }
+        let is_remote = full.starts_with("refs/remotes/");
+        // Skip the remote's symbolic HEAD pointer (e.g. `refs/remotes/origin/HEAD`, whose short
+        // name git collapses to just `origin` — so match on the full ref, not the short name).
+        if full.ends_with("/HEAD") {
+            continue;
+        }
+        // Skip the target branch itself and its remote mirror (`<remote>/<branch>`).
+        if short == branch {
+            continue;
+        }
+        if is_remote && short.split_once('/').map(|(_, rest)| rest) == Some(branch) {
+            continue;
+        }
+        out.push((short.to_string(), is_remote));
+        if out.len() >= cap {
+            break;
+        }
+    }
+    out
+}
+
+/// `(ahead, behind)` of `branch` relative to `base_ref` via one `rev-list --left-right --count`.
+/// `None` on command failure or unparsable output.
+async fn branch_divergence(dir: &Path, base_ref: &str, branch: &str) -> Option<(u32, u32)> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let range = format!("{base_ref}...{branch}");
+    let output = Command::new("git")
+        .args(["-C", dir_str, "rev-list", "--left-right", "--count", &range])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let (behind, ahead) = parse_left_right_count(&String::from_utf8_lossy(&output.stdout))?;
+    Some((ahead, behind))
+}
+
+/// Detect the branch `branch` most directly forked from, weighing local heads and remote-tracking
+/// branches. Falls back to [`default_base_branch`] when nothing qualifies. See [`choose_base`].
+pub async fn detect_base_branch(dir: &Path, branch: &str) -> Option<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git")
+        .args([
+            "-C",
+            dir_str,
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname)\t%(refname:short)",
+            "refs/heads",
+            "refs/remotes",
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return default_base_branch(dir).await;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let refs = collect_base_candidate_refs(&stdout, branch, BASE_CANDIDATE_CAP);
+    let mut candidates = Vec::with_capacity(refs.len());
+    for (name, is_remote) in refs {
+        let Some((ahead, behind)) = branch_divergence(dir, &name, branch).await else {
+            continue;
+        };
+        candidates.push(BaseCandidate { name, ahead, behind, is_remote });
+    }
+    match choose_base(&candidates) {
+        Some(index) => Some(candidates[index].name.clone()),
+        None => default_base_branch(dir).await,
+    }
+}
+
+/// Resolve the base branch for `branch`: an explicit user override wins (no git calls), then
+/// auto-detection ([`detect_base_branch`]), then the conventional default ([`default_base_branch`]).
+pub async fn resolve_base(dir: &Path, branch: &str, override_ref: Option<&str>) -> Option<String> {
+    if let Some(over) = override_ref {
+        if !over.is_empty() {
+            return Some(over.to_string());
+        }
+    }
+    detect_base_branch(dir, branch).await
 }
 
 /// Parse `--name-status` output (`STATUS\tPATH`, or `R100\tOLD\tNEW` for renames) into files.
@@ -855,6 +1022,8 @@ fn parse_branch_line(line: &str) -> Option<BranchInfo> {
         author: fields.get(7).map(|author| author.to_string()).unwrap_or_default(),
         stats: None,
         merge_base_short: None,
+        base: None,
+        base_is_override: false,
     })
 }
 
@@ -1371,6 +1540,92 @@ mod tests {
         assert_eq!(count_name_status(stdout), (2, 3, 1));
     }
 
+    fn candidate(name: &str, ahead: u32, behind: u32) -> BaseCandidate {
+        BaseCandidate { name: name.to_string(), ahead, behind, is_remote: name.contains('/') }
+    }
+
+    #[test]
+    fn choose_base_picks_closest_fork_parent() {
+        // A feature branch one commit ahead of a non-conventional `stage` base, far ahead of main.
+        let candidates = [
+            candidate("origin/stage", 1, 20),
+            candidate("origin/main", 89, 19),
+            candidate("origin/dev", 89, 23),
+        ];
+        assert_eq!(choose_base(&candidates), Some(0));
+    }
+
+    #[test]
+    fn choose_base_skips_zero_ahead_mirror() {
+        // `origin/feature` (ahead 0) already contains the whole branch — its own mirror, not a base.
+        let candidates = [candidate("origin/feature", 0, 0), candidate("dev", 3, 5)];
+        assert_eq!(choose_base(&candidates), Some(1));
+    }
+
+    #[test]
+    fn choose_base_falls_back_to_zero_ahead_when_all_zero() {
+        let candidates = [candidate("main", 0, 0)];
+        assert_eq!(choose_base(&candidates), Some(0));
+    }
+
+    #[test]
+    fn choose_base_tie_breaks_deterministically() {
+        // Identical divergence + rank → remote-before-local then alphabetical.
+        let identical = [candidate("origin/stage-b", 2, 4), candidate("origin/stage-a", 2, 4)];
+        assert_eq!(choose_base(&identical), Some(1));
+        // Conventional name wins over an equally-diverged feature branch.
+        let named = [candidate("feature-x", 2, 1), candidate("main", 2, 1)];
+        assert_eq!(choose_base(&named), Some(1));
+        // Remote preferred over a local of equal divergence and rank.
+        let remote_vs_local = [candidate("stage", 2, 4), candidate("origin/stage", 2, 4)];
+        assert_eq!(choose_base(&remote_vs_local), Some(1));
+    }
+
+    #[test]
+    fn choose_base_empty_is_none() {
+        assert_eq!(choose_base(&[]), None);
+    }
+
+    #[test]
+    fn parse_left_right_count_reads_behind_then_ahead() {
+        assert_eq!(parse_left_right_count("20\t1\n"), Some((20, 1)));
+        assert_eq!(parse_left_right_count("0 0"), Some((0, 0)));
+        assert_eq!(parse_left_right_count(""), None);
+        assert_eq!(parse_left_right_count("garbage"), None);
+    }
+
+    #[test]
+    fn collect_base_candidate_refs_excludes_self_mirror_and_head() {
+        // git collapses `refs/remotes/origin/HEAD`'s short name to `origin` — the filter must
+        // match on the full ref, not the short name.
+        let stdout = "\
+refs/heads/feature/x\tfeature/x
+refs/heads/main\tmain
+refs/remotes/origin/HEAD\torigin
+refs/remotes/origin/feature/x\torigin/feature/x
+refs/remotes/origin/main\torigin/main
+refs/remotes/origin/stage\torigin/stage
+";
+        let refs = collect_base_candidate_refs(stdout, "feature/x", 50);
+        let names: Vec<&str> = refs.iter().map(|(name, _)| name.as_str()).collect();
+        // Excluded: feature/x (self), origin/feature/x (own mirror), origin/HEAD pointer (short `origin`).
+        assert_eq!(names, vec!["main", "origin/main", "origin/stage"]);
+        // Remote flag tracks the ref namespace.
+        assert!(!refs[0].1, "main is a local head");
+        assert!(refs[1].1, "origin/main is remote");
+    }
+
+    #[test]
+    fn collect_base_candidate_refs_honors_cap() {
+        let stdout = "\
+refs/heads/a\ta
+refs/heads/b\tb
+refs/heads/c\tc
+";
+        let refs = collect_base_candidate_refs(stdout, "feature", 2);
+        assert_eq!(refs.len(), 2);
+    }
+
     #[test]
     fn classify_detects_throttling_distinct_from_failure() {
         for output in [
@@ -1493,5 +1748,51 @@ detached
         assert_eq!(worktrees.len(), 1);
         assert_eq!(worktrees[0].branch, "feature");
         assert_eq!(worktrees[0].path, std::path::PathBuf::from("/repo.worktrees/feature"));
+    }
+
+    /// Run a git command in `dir`, asserting success — test plumbing for the detection test.
+    fn git_in(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "T")
+            .env("GIT_AUTHOR_EMAIL", "t@e.x")
+            .env("GIT_COMMITTER_NAME", "T")
+            .env("GIT_COMMITTER_EMAIL", "t@e.x")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn commit_empty(dir: &Path, message: &str) {
+        git_in(dir, &["commit", "--allow-empty", "-q", "-m", message]);
+    }
+
+    #[tokio::test]
+    async fn detect_base_branch_finds_nonconventional_base() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("pull-all-base-{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // main ← stage (one ahead) ← feature (one ahead). feature forked from stage, not main.
+        git_in(&dir, &["init", "-q", "-b", "main"]);
+        commit_empty(&dir, "m1");
+        git_in(&dir, &["checkout", "-q", "-b", "stage"]);
+        commit_empty(&dir, "s1");
+        git_in(&dir, &["checkout", "-q", "-b", "feature"]);
+        commit_empty(&dir, "f1");
+
+        // feature is ahead of stage by 1 (f1) and ahead of main by 2 (s1, f1) → base is stage.
+        assert_eq!(detect_base_branch(&dir, "feature").await.as_deref(), Some("stage"));
+        // stage itself forked from main.
+        assert_eq!(detect_base_branch(&dir, "stage").await.as_deref(), Some("main"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

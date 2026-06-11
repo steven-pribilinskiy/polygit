@@ -17,7 +17,7 @@ use crate::git::{
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
-    pull_ff_only, remove_worktree, stash_file_diff, stash_file_list, stash_files,
+    pull_ff_only, remove_worktree, resolve_base, stash_file_diff, stash_file_list, stash_files,
     uncommitted_file_list, PullOutcome,
 };
 
@@ -422,6 +422,8 @@ pub async fn run_repo_page(repo: SharedRepoState) {
                 if let Some(old) = page.branches.iter().find(|info| info.name == branch.name) {
                     branch.stats = old.stats;
                     branch.merge_base_short = old.merge_base_short.clone();
+                    branch.base = old.base.clone();
+                    branch.base_is_override = old.base_is_override;
                 }
             }
         }
@@ -444,35 +446,40 @@ pub async fn run_repo_page(repo: SharedRepoState) {
     run_branch_stats(repo).await;
 }
 
-/// Per-branch change stats vs the base branch — one `git diff --name-status` per branch lacking
-/// stats, semaphore-bounded. Each result is written back individually (matched by branch name)
-/// so cells fill in as they land. Never holds the `AppState` lock.
+/// Per-branch change stats vs each branch's own resolved base — its override if set, else the
+/// auto-detected fork parent. One detection + `git diff --name-status` per branch lacking stats,
+/// semaphore-bounded. Each result (base + merge-base sha + counts) is written back individually
+/// (matched by branch name) so cells fill in as they land. Never holds the `AppState` lock.
 pub async fn run_branch_stats(repo: SharedRepoState) {
-    let (path, base, names) = {
+    let (path, jobs) = {
         let state = repo.lock().unwrap();
         let Some(page) = state.page.as_ref() else {
             return;
         };
-        let names: Vec<String> = page
+        // Each job carries the branch name + its override (if any) — resolved off-lock below.
+        let jobs: Vec<(String, Option<String>)> = page
             .branches
             .iter()
             .filter(|branch| branch.stats.is_none())
-            .map(|branch| branch.name.clone())
+            .map(|branch| (branch.name.clone(), state.base_overrides.get(&branch.name).cloned()))
             .collect();
-        (state.path.clone(), page.base_branch.clone(), names)
+        (state.path.clone(), jobs)
     };
-    let Some(base) = base else {
+    if jobs.is_empty() {
         return;
-    };
+    }
     let semaphore = Arc::new(Semaphore::new(4));
     let mut handles = Vec::new();
-    for name in names {
+    for (name, override_ref) in jobs {
         let repo = Arc::clone(&repo);
         let path = path.clone();
-        let base = base.clone();
         let semaphore = Arc::clone(&semaphore);
         handles.push(tokio::spawn(async move {
             let _permit = semaphore.acquire_owned().await.ok();
+            let is_override = override_ref.as_deref().is_some_and(|over| !over.is_empty());
+            let Some(base) = resolve_base(&path, &name, override_ref.as_deref()).await else {
+                return;
+            };
             let merge_base = merge_base_with(&path, &base, &name).await;
             let stats = match &merge_base {
                 Some(point) => branch_diff_stats(&path, point, &name).await,
@@ -490,6 +497,8 @@ pub async fn run_branch_stats(repo: SharedRepoState) {
                 if let Some(branch) = page.branches.iter_mut().find(|info| info.name == name) {
                     branch.stats = Some(stats.unwrap_or_default());
                     branch.merge_base_short = short;
+                    branch.base = Some(base);
+                    branch.base_is_override = is_override;
                 }
             }
         }));

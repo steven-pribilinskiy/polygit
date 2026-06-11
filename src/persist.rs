@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,10 @@ pub struct PersistedState {
     /// Repo-page bottom info panel shown (default on).
     #[serde(default = "default_true")]
     pub repo_page_info: bool,
+    /// Per-repo+branch base-branch overrides, keyed `"{repo_abs_path}\u{1f}{branch}"` → base ref.
+    /// When set, the repo page diffs that branch's stats against the chosen base instead of the
+    /// auto-detected fork parent.
+    pub base_overrides: HashMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -148,6 +153,20 @@ mod tests {
         assert_eq!(state.sort_column, SortColumn::Name);
         assert!(state.panel_padding);
         assert!(state.grouping_enabled);
+    }
+
+    #[test]
+    fn base_overrides_default_empty_and_round_trip() {
+        // An old file without the key loads with an empty override map (no panic, no reset).
+        let old: PersistedState = serde_json::from_str(r#"{"panel_padding":true}"#).unwrap();
+        assert!(old.base_overrides.is_empty());
+        assert!(old.panel_padding);
+        // A set override round-trips through serialize → deserialize.
+        let mut state = PersistedState::default();
+        state.base_overrides.insert("/repo\u{1f}feature".to_string(), "origin/stage".to_string());
+        let json = serde_json::to_string(&state).unwrap();
+        let back: PersistedState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.base_overrides.get("/repo\u{1f}feature").map(String::as_str), Some("origin/stage"));
     }
 
     #[test]

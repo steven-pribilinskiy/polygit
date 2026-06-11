@@ -36,8 +36,8 @@ use app::{
     RightView, SharedRepoState, SortColumn, StatusFilter,
 };
 use worker::{
-    run_all_details, run_checkout, run_delete, run_diff_modal, run_diff_modal_file,
-    run_discard_changes, run_discovery, run_drop_stash, run_prepare_discard,
+    run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
+    run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
     run_remove_worktree, run_repo_details, run_repo_diff, run_repo_page,
 };
@@ -974,6 +974,28 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Base-branch picker: click an option to set the override, [x] or outside closes.
+                if app.base_picker.is_some() {
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        if region_hit(app.base_picker_close_click, mouse.column, mouse.row)
+                            || !point_in(app.base_picker_area, mouse.column, mouse.row)
+                        {
+                            app.base_picker = None;
+                        } else if let Some(index) = app.base_picker_option_at(mouse.row) {
+                            if let Some(picker) = app.base_picker.as_mut() {
+                                picker.selected = index;
+                            }
+                            if let Some((repo_index, _)) = app.confirm_base_picker() {
+                                let repo = Arc::clone(&app.repos[repo_index]);
+                                drop(app);
+                                tokio::spawn(run_branch_stats(repo));
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // Diff modal: the wheel scrolls; clicks are ignored (esc/q closes it).
                 // Skipped while help is open so the help overlay handles the mouse instead.
                 if app.diff_modal.is_some() && !app.show_help {
@@ -1056,6 +1078,11 @@ async fn run_event_loop(
                             {
                                 app.toggle_repo_page_column(column);
                                 app.save_state();
+                            } else if let Some(selection) =
+                                app.base_cell_at(mouse.column, mouse.row)
+                            {
+                                app.repo_page_selected = selection;
+                                app.open_base_picker(selection);
                             } else if let Some(selection) = app.repo_page_row_at(mouse.row) {
                                 app.repo_page_selected = selection;
                                 let double = last_click
@@ -1347,6 +1374,34 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Base-branch picker (`b` on the repo page): choose a base / auto-detect, then
+                // recompute that branch's stats against it.
+                if app.base_picker.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.base_picker = None,
+                        KeyCode::Char('j') | KeyCode::Down => app.move_base_picker(1),
+                        KeyCode::Char('k') | KeyCode::Up => app.move_base_picker(-1),
+                        KeyCode::Char('g') | KeyCode::Home => app.move_base_picker(isize::MIN),
+                        KeyCode::Char('G') | KeyCode::End => app.move_base_picker(isize::MAX),
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            if let Some((repo_index, _)) = app.confirm_base_picker() {
+                                let repo = Arc::clone(&app.repos[repo_index]);
+                                drop(app);
+                                tokio::spawn(run_branch_stats(repo));
+                                continue;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Diff modal: scroll, toggle the dirty-diff mode, or close. Skipped while help is
                 // open so the help overlay (gated below) handles keys instead.
                 if app.diff_modal.is_some() && !app.show_help {
@@ -1532,6 +1587,7 @@ async fn run_event_loop(
                             KeyCode::Char('d') => Some(RepoPageColumn::Deleted),
                             KeyCode::Char('c') => Some(RepoPageColumn::Total),
                             KeyCode::Char('u') => Some(RepoPageColumn::Upstream),
+                            KeyCode::Char('f') => Some(RepoPageColumn::Base),
                             KeyCode::Char('g') => Some(RepoPageColumn::Age),
                             KeyCode::Char('s') => Some(RepoPageColumn::Subject),
                             _ => None,
@@ -1652,6 +1708,12 @@ async fn run_event_loop(
                             if app.repo_page_target().is_some() {
                                 app.copy_menu = Some(0);
                             }
+                        }
+                        // Open the base-branch picker for the selected branch (override which base
+                        // its diff stats compare against; no-op on non-branch rows).
+                        KeyCode::Char('b') => {
+                            let selection = app.repo_page_selected;
+                            app.open_base_picker(selection);
                         }
                         // Open the selected branch on the remote host.
                         KeyCode::Char('o') => {
@@ -2145,6 +2207,9 @@ async fn run_event_loop(
                 if state.page.is_none() && !state.page_loading {
                     state.page_loading = true;
                     drop(state);
+                    // Seed this repo's per-branch overrides from the persisted map so the stats
+                    // worker resolves each base correctly on first paint.
+                    app.seed_repo_base_overrides(idx);
                     tokio::spawn(run_repo_page(repo));
                 } else if state.page.is_some() {
                     drop(state);
