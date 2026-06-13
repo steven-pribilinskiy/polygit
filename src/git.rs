@@ -351,7 +351,7 @@ pub fn should_descend(name: &str) -> bool {
     !PRUNE_DIRS.contains(&name)
 }
 
-/// `path` rendered relative to `root` with `/` separators (e.g. "personal/pull-all").
+/// `path` rendered relative to `root` with `/` separators (e.g. "personal/polygit").
 /// Falls back to the full path when `path` isn't under `root`.
 pub fn relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
@@ -1909,8 +1909,8 @@ refs/heads/c\tc
         let root = std::path::Path::new("/home/me/projects");
         assert_eq!(relative_path(root, std::path::Path::new("/home/me/projects/a")), "a");
         assert_eq!(
-            relative_path(root, std::path::Path::new("/home/me/projects/personal/pull-all")),
-            "personal/pull-all"
+            relative_path(root, std::path::Path::new("/home/me/projects/personal/polygit")),
+            "personal/polygit"
         );
         // Not under root → full path is kept.
         assert_eq!(relative_path(root, std::path::Path::new("/elsewhere/x")), "/elsewhere/x");
@@ -1921,7 +1921,7 @@ refs/heads/c\tc
         use std::sync::atomic::{AtomicU32, Ordering};
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("pull-all-walk-{}-{id}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("polygit-walk-{}-{id}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for dir in plain_dirs {
             std::fs::create_dir_all(root.join(dir)).unwrap();
@@ -2010,7 +2010,7 @@ detached
         use std::sync::atomic::{AtomicU32, Ordering};
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("pull-all-base-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("polygit-base-{}-{id}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 

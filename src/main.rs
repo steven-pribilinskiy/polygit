@@ -1,4 +1,5 @@
 mod app;
+mod cache;
 mod git;
 mod groups;
 mod persist;
@@ -42,16 +43,25 @@ use worker::{
     run_remove_worktree, run_repo_details, run_repo_diff, run_repo_page,
 };
 
-/// Interactive multi-repo git pull dashboard.
+/// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
+/// before the epoch (never, in practice).
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Interactive polyrepo git dashboard — discover, status, and pull many repos.
 #[derive(Parser, Debug)]
 #[command(
-    name = "pull-all",
+    name = "polygit",
     version,
     about,
     after_help = "Sibling implementations (forwarded verbatim):\n  \
-        pull-all go  [args]   Go / bubbletea build\n  \
-        pull-all bun [args]   Bun / ink build (JIT)\n  \
-        pull-all cli [args]   bash streaming version\n\n\
+        polygit go  [args]   Go / bubbletea build\n  \
+        polygit bun [args]   Bun / ink build (JIT)\n  \
+        polygit cli [args]   bash streaming version\n\n\
         A directory literally named go/bun/cli is still reachable as ./go etc."
 )]
 struct Cli {
@@ -173,7 +183,7 @@ async fn watch_theme(app_state: Arc<Mutex<AppState>>) {
     }
 }
 
-/// If invoked as `pull-all go|bun|cli [args]`, replace this process with the matching
+/// If invoked as `polygit go|bun|cli [args]`, replace this process with the matching
 /// sibling implementation and forward the remaining args. Returns for every other
 /// invocation so the default Rust TUI runs.
 fn maybe_dispatch_sibling() {
@@ -182,9 +192,9 @@ fn maybe_dispatch_sibling() {
         return;
     };
     let target = match subcommand.as_str() {
-        "go" => "pull-all-tui-go",
-        "bun" => "pull-all-tui-bun-jit",
-        "cli" => "pull-all-repos",
+        "go" => "polygit-tui-go",
+        "bun" => "polygit-tui-bun-jit",
+        "cli" => "polygit-repos",
         _ => return,
     };
     let program = sibling_program(target);
@@ -194,12 +204,12 @@ fn maybe_dispatch_sibling() {
     std::process::exit(127);
 }
 
-/// Resolve a sibling backend: prefer `<dir-of-this-exe>/pull-all-siblings/<target>` (kept off
+/// Resolve a sibling backend: prefer `<dir-of-this-exe>/polygit-siblings/<target>` (kept off
 /// `$PATH` so the backends aren't top-level commands), falling back to the bare name on `$PATH`.
 fn sibling_program(target: &str) -> std::ffi::OsString {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join("pull-all-siblings").join(target);
+            let candidate = dir.join("polygit-siblings").join(target);
             if candidate.exists() {
                 return candidate.into_os_string();
             }
@@ -273,7 +283,7 @@ fn launch_claude(
     // `-i` sources ~/.bashrc so the `cc` alias resolves; the path is passed as $1 to avoid quoting.
     let script = format!("cd \"$1\" && {command}");
     let _ = Command::new("bash")
-        .args(["-ic", &script, "pull-all"])
+        .args(["-ic", &script, "polygit"])
         .arg(path)
         .status();
 
@@ -667,8 +677,12 @@ async fn run_tui(
 
     let exit_code = run_event_loop(&mut terminal, Arc::clone(&app_state)).await?;
 
-    // Persist UI preferences (columns, info state, splitter) for the next run.
-    app_state.lock().unwrap().save_state();
+    // Persist UI preferences (columns, info state, splitter) and the status cache for next run.
+    {
+        let mut app = app_state.lock().unwrap();
+        app.save_state();
+        app.flush_cache(now_unix());
+    }
 
     // Restore terminal
     pop_key_enhancement(&mut terminal);
@@ -681,7 +695,7 @@ async fn run_tui(
     if exit_code == RELOAD_EXIT {
         // After a rename-over install, /proc/self/exe reads "<path> (deleted)" — strip the
         // suffix so we exec the NEW file now living at the original path.
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("pull-all"));
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("polygit"));
         let exe_str = exe.to_string_lossy();
         let exe = PathBuf::from(exe_str.strip_suffix(" (deleted)").unwrap_or(&exe_str));
         let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
@@ -799,16 +813,26 @@ async fn run_event_loop(
             let mut app = app_state.lock().unwrap();
             // Don't settle until the walker has finished AND found at least one repo — an empty
             // `all(...)` is vacuously true, which would otherwise freeze the timer at 0 repos.
+            // When auto-pull was suppressed, idle/cached repos that were never pulled count as
+            // settled (we wait only for any *manual* pull in flight), so the timer freezes and
+            // the Result row renders instead of hanging on Queued repos.
+            let suppressed = app.auto_pull_suppressed;
             let all_done = app.discovery_done
                 && !app.repos.is_empty()
                 && app.repos.iter().all(|repo| {
-                    let state = repo.lock().unwrap();
-                    state.status.is_terminal()
+                    let status = &repo.lock().unwrap().status;
+                    if suppressed {
+                        !status.is_running()
+                    } else {
+                        status.is_terminal()
+                    }
                 });
 
             if all_done && !app.all_done {
                 app.all_done = true;
                 app.finished_elapsed = Some(app.start.elapsed());
+                // Persist each repo's fresh terminal status so the next launch shows it instantly.
+                app.flush_cache(now_unix());
             }
         }
 

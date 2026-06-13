@@ -1,9 +1,9 @@
 ---
 title: Exit codes
-description: How pull-all reports the run outcome through its process exit code.
+description: How polygit reports the run outcome through its process exit code.
 ---
 
-`pull-all` sets its process exit code from the run outcome, so scripts and CI can branch
+`polygit` sets its process exit code from the run outcome, so scripts and CI can branch
 on it.
 
 | Code | Meaning |
@@ -16,7 +16,7 @@ on it.
 ## Example
 
 ```bash
-if pull-all --no-tui ~/projects; then
+if polygit --no-tui ~/projects; then
   echo "all clean"
 else
   echo "something failed or was interrupted (exit $?)"

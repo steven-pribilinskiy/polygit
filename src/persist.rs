@@ -8,7 +8,7 @@ use crate::app::{
     Theme,
 };
 
-/// UI preferences persisted between runs at `~/.config/pull-all/state.json`.
+/// UI preferences persisted between runs at `~/.config/polygit/state.json`.
 /// `#[serde(default)]` keeps older state files (missing newer fields) loadable.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -54,10 +54,24 @@ pub struct PersistedState {
     /// When set, the repo page diffs that branch's stats against the chosen base instead of the
     /// auto-detected fork parent.
     pub base_overrides: HashMap<String, String>,
+    /// Pull every repo automatically on launch (default on). When off, repos load from the
+    /// status cache and pulling is a manual action (`e`/`E`).
+    #[serde(default = "default_true")]
+    pub auto_pull_on_launch: bool,
+    /// Skip the launch auto-pull when more than this many repos are discovered. `0` = no limit.
+    #[serde(default = "default_auto_pull_max")]
+    pub auto_pull_max_repos: u32,
+    /// Allow the launch auto-pull while the directory-tree view is active (default off — tree
+    /// view suppresses auto-pull).
+    pub auto_pull_in_tree: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_auto_pull_max() -> u32 {
+    100
 }
 
 /// Deserialize `sort_column` tolerantly: the removed `"discovery"` value and any unknown
@@ -90,8 +104,25 @@ pub fn resolve_background(background: Option<Background>, contrast: Contrast) ->
     })
 }
 
+/// The app's config directory (`~/.config/polygit`). On first call this migrates a legacy
+/// `~/.config/pull-all` directory (renaming it) so existing state/groups/cache carry over the
+/// rename. Shared by `persist`, `groups`, and `cache` so the migration happens exactly once.
+pub fn config_dir() -> Option<PathBuf> {
+    use std::sync::Once;
+    static MIGRATE: Once = Once::new();
+    let base = dirs::config_dir()?;
+    let new_dir = base.join("polygit");
+    MIGRATE.call_once(|| {
+        let legacy = base.join("pull-all");
+        if legacy.is_dir() && !new_dir.exists() {
+            let _ = std::fs::rename(&legacy, &new_dir);
+        }
+    });
+    Some(new_dir)
+}
+
 fn state_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("pull-all").join("state.json"))
+    Some(config_dir()?.join("state.json"))
 }
 
 /// Load persisted UI state. A missing/corrupt file deserializes from `{}` so every field's

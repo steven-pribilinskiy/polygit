@@ -40,6 +40,8 @@ pub async fn pull_repo(
         state.elapsed = None;
         state.status_note = None;
         state.pull_result = None;
+        state.stale = false; // pulling this session → no longer a cached/stale entry
+        state.cached_at = None;
         (state.path.clone(), state.name.clone())
     };
 
@@ -315,6 +317,11 @@ pub async fn run_discovery(
                 let mut state = RepoState::new(name, path.clone());
                 state.rel_path = crate::git::relative_path(&root, path);
                 state.index = app.repos.len();
+                // Seed last-known status/details from the cache so the list is useful instantly
+                // (rendered dimmed with an age until pulled/refreshed this session).
+                if let Some(cached) = app.status_cache.get(path) {
+                    state.seed_from_cache(cached);
+                }
                 let shared: SharedRepoState = Arc::new(Mutex::new(state));
                 app.repos.push(Arc::clone(&shared));
                 new_repos.push(shared);
@@ -328,17 +335,23 @@ pub async fn run_discovery(
             new_repos
         };
 
-        for repo in &new_repos {
-            let control = Arc::clone(&control);
-            tokio::spawn(pull_repo(Arc::clone(repo), control, timeout_secs, icon_style));
-        }
-        // Discover origin URLs for this batch (best-effort, for the clickable links).
+        // Discover origin URLs for this batch (best-effort, for the clickable links). Pulls are
+        // NOT started per-batch — the auto-pull decision is made once below, after the full
+        // repo count is known (so the >N-repos threshold can apply).
         tokio::spawn(run_remote_url_discovery(new_repos, max_jobs));
     }
 
-    {
+    // The walk is complete; the total repo count is now known. Decide whether to auto-pull.
+    let (should_pull, all_repos) = {
         let mut app = app_state.lock().unwrap();
         app.discovery_done = true;
+        let should = app.should_auto_pull(app.repos.len());
+        app.auto_pull_suppressed = !should;
+        (should, app.repos.clone())
+    };
+    if should_pull {
+        let control = Arc::clone(&control);
+        tokio::spawn(run_all_pulls(all_repos, control, timeout_secs, icon_style));
     }
 
     if no_worktrees {
@@ -400,6 +413,8 @@ pub async fn run_repo_details(repo: SharedRepoState) {
     state.details = Some(details);
     state.details_loading = false;
     state.details_stale = false;
+    // A lazy details load refreshes local facts only — the cached pull STATUS (and its `stale`
+    // age) stays until an actual pull, so opening the info panel never fakes a fresh result.
 }
 
 /// Fetch the diff for one repo (working-tree changes if dirty, else the last pull's diff)

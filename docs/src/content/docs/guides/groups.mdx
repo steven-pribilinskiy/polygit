@@ -11,7 +11,7 @@ also lives in the settings modal (`,`).
 Grouping is independent of the [directory-tree view](../tree-view/) (`v t`) — turn both on for
 **tree + groups**, where groups subdivide the repos *inside each folder*.
 
-Groups are defined in `~/.config/pull-all/groups.json` — a hand-edited file that is never
+Groups are defined in `~/.config/polygit/groups.json` — a hand-edited file that is never
 written by the app. No file means no groups: `v g` just shows a hint toast.
 
 ## groups.json
@@ -22,7 +22,7 @@ written by the app. No file means no groups: `v g` just shows a hint toast.
   "cache_ttl_minutes": 1440,
   "groups": [
     { "name": "frontend", "pattern": "mfe-*" },
-    { "name": "tooling", "repos": ["pull-all", "dotfiles"] },
+    { "name": "tooling", "repos": ["polygit", "dotfiles"] },
     { "name": "team", "command": "curl -fsSL https://example.com/repos.txt" },
     {
       "name": "platform",
@@ -63,7 +63,7 @@ A `command` source is the escape hatch for anything else — pipe through `jq` y
 ## Caching & refresh
 
 `command`/`url` sources never block startup. Resolved membership is cached at
-`~/.config/pull-all/groups-cache.json` and reused immediately on launch; sources are re-resolved
+`~/.config/polygit/groups-cache.json` and reused immediately on launch; sources are re-resolved
 in the background only when the cache is older than `cache_ttl_minutes` (default: 1440, i.e.
 daily) or missing. Press `Z` to force a re-resolve at any time. Editing a group's command/url in
 the config invalidates its cache entry automatically.

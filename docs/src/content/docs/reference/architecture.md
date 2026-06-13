@@ -1,9 +1,9 @@
 ---
 title: Architecture
-description: How the pull-all Rust crate is organized.
+description: How the polygit Rust crate is organized.
 ---
 
-`pull-all` is a small Rust crate built on [ratatui](https://ratatui.rs) (TUI), [crossterm](https://github.com/crossterm-rs/crossterm)
+`polygit` is a small Rust crate built on [ratatui](https://ratatui.rs) (TUI), [crossterm](https://github.com/crossterm-rs/crossterm)
 (terminal/input), and [tokio](https://tokio.rs) (async pulls).
 
 ## Modules
@@ -17,7 +17,7 @@ description: How the pull-all Rust crate is organized.
 | `src/render.rs` | Ratatui rendering — list pane (flat/grouped/tree), preview pane, status bar, repo page (with its column system + info panel), diff modal, confirm/settings/help modals, the throttle banner, and ANSI color support. |
 | `src/plain.rs` | Non-TUI streaming output, byte-compatible with the bash reference for a single-level scan. |
 | `src/groups.rs` | Repo grouping — `groups.json` config (pattern/repos/command/url sources), the wildcard matcher, JSON extraction, the dynamic-membership cache, and the async resolution task. |
-| `src/persist.rs` | UI preferences saved to `~/.config/pull-all/state.json` (columns, sort, icon style, padding, theme, background, contrast, help tab, splitter, grouping, collapsed groups, tree toggle, collapsed folders, repo-page columns, repo-page info panel). Per-field tolerant deserializers absorb removed enum values (old `sort_column: "discovery"` → `Name`) and a missing/corrupt file loads from `{}` so field defaults apply. |
+| `src/persist.rs` | UI preferences saved to `~/.config/polygit/state.json` (columns, sort, icon style, padding, theme, background, contrast, help tab, splitter, grouping, collapsed groups, tree toggle, collapsed folders, repo-page columns, repo-page info panel). Per-field tolerant deserializers absorb removed enum values (old `sort_column: "discovery"` → `Name`) and a missing/corrupt file loads from `{}` so field defaults apply. |
 | `src/theme.rs` | Color palettes composed from two independent axes — **background** (surface tones) × **contrast** (text/accent saturation), each dark/light — the per-frame ANSI→RGB remap, and terminal background detection for the auto theme. |
 | `src/profile.rs` | The optional `--profile` per-repo timing report. |
 

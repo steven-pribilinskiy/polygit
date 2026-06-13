@@ -5,12 +5,12 @@ import starlight from '@astrojs/starlight';
 // Project site served from a subpath on GitHub Pages.
 export default defineConfig({
   site: 'https://steven-pribilinskiy.github.io',
-  base: '/pull-all',
+  base: '/polygit',
   integrations: [
     starlight({
-      title: 'pull-all',
+      title: 'polygit',
       description:
-        'Interactive multi-repo git pull dashboard — a Rust/ratatui TUI that pulls every repo in a directory in parallel.',
+        'Interactive polyrepo git dashboard — a Rust/ratatui TUI that discovers every repo in a directory and pulls them in parallel.',
       // Show each page's git last-modified date in the footer — a visible staleness signal when
       // a page lags behind code churn. Needs full git history (fetch-depth: 0) in the deploy.
       lastUpdated: true,
@@ -18,7 +18,7 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/steven-pribilinskiy/pull-all',
+          href: 'https://github.com/steven-pribilinskiy/polygit',
         },
       ],
       customCss: ['./src/styles/custom.css'],
@@ -26,7 +26,7 @@ export default defineConfig({
         {
           label: 'Start here',
           items: [
-            { label: 'What is pull-all?', slug: 'index' },
+            { label: 'What is polygit?', slug: 'index' },
             { label: 'Installation', slug: 'start/installation' },
             { label: 'Usage', slug: 'start/usage' },
           ],
