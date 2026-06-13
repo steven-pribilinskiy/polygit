@@ -1,5 +1,5 @@
 ---
-title: pull-all
+title: polygit
 description: Interactive multi-repo git pull dashboard — a Rust/ratatui TUI that pulls every git repo in a directory in parallel.
 template: splash
 hero:
@@ -10,7 +10,7 @@ hero:
       icon: right-arrow
       variant: primary
     - text: View on GitHub
-      link: https://github.com/steven-pribilinskiy/pull-all
+      link: https://github.com/steven-pribilinskiy/polygit
       icon: external
       variant: minimal
 ---
@@ -19,7 +19,7 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 ## What it does
 
-`pull-all` walks a directory, finds every git repo, and fast-forwards them all in
+`polygit` walks a directory, finds every git repo, and fast-forwards them all in
 parallel — streaming each repo's output into a two-pane TUI while you watch. Drill
 into any repo to manage its branches, worktrees, and stashes, and read diffs inline
 without leaving the terminal.
@@ -52,7 +52,7 @@ without leaving the terminal.
 make install
 
 # Run in any directory of repos
-pull-all ~/projects
+polygit ~/projects
 ```
 
 <CardGrid>
@@ -64,5 +64,5 @@ pull-all ~/projects
 
 :::note[Canonical Rust build]
 This is the canonical Rust/ratatui implementation. It also fronts Go, Bun, and
-bash builds via `pull-all go|bun|cli` — see [Sibling builds](reference/siblings/).
+bash builds via `polygit go|bun|cli` — see [Sibling builds](reference/siblings/).
 :::

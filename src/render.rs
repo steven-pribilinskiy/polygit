@@ -16,7 +16,7 @@ use crate::app::{
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
-pub const DOCS_URL: &str = "https://steven-pribilinskiy.github.io/pull-all/";
+pub const DOCS_URL: &str = "https://steven-pribilinskiy.github.io/polygit/";
 
 /// A repo-page list entry: the rendered line, an optional selectable-row index, and the optional
 /// `base` cell column range (start, end relative to the line start) for click hit-testing.
@@ -442,9 +442,9 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     let title = if !app.discovery_done {
         // Still crawling the tree — show a spinner and the running tally instead of done/total.
         let spin = spinner_frame(tick, app.icons());
-        format!(" [1] pull-all · {spin} scanning… {total_repos} found{concurrency} · {elapsed:.1}s ")
+        format!(" [1] polygit · {spin} scanning… {total_repos} found{concurrency} · {elapsed:.1}s ")
     } else {
-        format!(" [1] pull-all · {done}/{total_repos}{concurrency} · {elapsed:.1}s ")
+        format!(" [1] polygit · {done}/{total_repos}{concurrency} · {elapsed:.1}s ")
     };
 
     let block = Block::default()
@@ -513,6 +513,10 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             if flash_on && flash.status {
                 glyph.style = glyph.style.add_modifier(Modifier::REVERSED);
             }
+            // Cached-but-not-pulled repos read dim: the status is last-known, not from this run.
+            if state.stale {
+                glyph.style = glyph.style.add_modifier(Modifier::DIM);
+            }
             // Pad the glyph to `icon_width` display cells so the name column lines up
             // regardless of whether the glyph is a 1-cell Unicode char or a 2-cell emoji.
             let glyph_pad = icon_width.saturating_sub(glyph.width()).max(1);
@@ -524,7 +528,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
                 .to_string();
             let branch_truncated = truncate_str(&branch_str, branch_col_width.max(1));
 
-            let name_style = match &state.status {
+            let mut name_style = match &state.status {
                 RepoStatus::Failed => Style::default().fg(Color::Red),
                 RepoStatus::Updated => Style::default().fg(Color::Green),
                 RepoStatus::Throttled => Style::default().fg(Color::Magenta),
@@ -532,6 +536,9 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
                 RepoStatus::Running { .. } => Style::default().fg(Color::Yellow),
                 _ => Style::default(),
             };
+            if state.stale {
+                name_style = name_style.add_modifier(Modifier::DIM);
+            }
 
             // In the tree view, show the indented basename (the folder hierarchy carries the
             // path); otherwise the full relative path. Truncate so deep indents never overflow
@@ -558,10 +565,19 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             ));
 
             if columns.status {
-                let text = status_short(&state);
+                // Cached repos show "<last status> <age>" dim; live repos show the bright label.
+                let (text, mut style) = if state.stale {
+                    let age = state.cached_at.map(crate::app::format_cache_age).unwrap_or_default();
+                    let label = status_short(&state);
+                    let text = if age.is_empty() { label.to_string() } else { format!("{label} {age}") };
+                    (text, Style::default().fg(status_color(&state.status)).add_modifier(Modifier::DIM))
+                } else {
+                    (status_short(&state).to_string(), Style::default().fg(status_color(&state.status)))
+                };
+                style = flash_style(style, flash.status);
                 spans.push(Span::styled(
-                    format!(" {}", pad_display(text, STATUS_COL_W)),
-                    flash_style(Style::default().fg(status_color(&state.status)), flash.status),
+                    format!(" {}", pad_display(&truncate_str(&text, STATUS_COL_W), STATUS_COL_W)),
+                    style,
                 ));
             }
 
@@ -1033,7 +1049,8 @@ fn finish_header_line(head: Vec<Span<'static>>, tail: Vec<Span<'static>>, inner_
 }
 
 /// Width of the optional status text column — fits the longest label ("no upstream").
-const STATUS_COL_W: usize = 11;
+// Wide enough for the longest label plus a compact cache age (e.g. "no upstream 2d" = 14).
+const STATUS_COL_W: usize = 14;
 
 /// Short status-column text: the recorded failure/skip qualifier when known ("not found",
 /// "auth", "diverged", "ref gone", …), else the plain status label.
@@ -1395,12 +1412,22 @@ fn build_info_lines(
         }
     };
 
-    // Status — spell out what the duration means (how long the pull/fetch took).
-    let status_value = match state.elapsed {
-        Some(elapsed) => {
-            format!("{} · pull took {:.2}s", status_label(&state.status), elapsed.as_secs_f64())
+    // Status — the live result + how long the pull took, or the cached last-known status + age.
+    let status_value = if state.stale {
+        let age = state.cached_at.map(crate::app::format_cache_age).unwrap_or_default();
+        let when = if age == "now" || age.is_empty() {
+            "just now".to_string()
+        } else {
+            format!("{age} ago")
+        };
+        format!("cached · {} · {when}", status_label(&state.status))
+    } else {
+        match state.elapsed {
+            Some(elapsed) => {
+                format!("{} · pull took {:.2}s", status_label(&state.status), elapsed.as_secs_f64())
+            }
+            None => status_label(&state.status).to_string(),
         }
-        None => status_label(&state.status).to_string(),
     };
     lines.push(plain("Status", status_value));
 
@@ -1728,7 +1755,7 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
     let mut lines = Vec::new();
 
     let (
-        _,
+        idle_count,
         _,
         updated_count,
         up_to_date_count,
@@ -1738,14 +1765,20 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
         throttled_count,
     ) = app.counts();
 
-    let total = updated_count
+    let total = idle_count
+        + updated_count
         + up_to_date_count
         + skipped_count
         + failed_count
         + no_upstream_count
         + throttled_count;
 
-    lines.push("Pull completed!".to_string());
+    // When the launch skipped auto-pull, the run "completes" without pulling — say so.
+    lines.push(if app.auto_pull_suppressed {
+        "Ready — auto-pull off.".to_string()
+    } else {
+        "Pull completed!".to_string()
+    });
     lines.push(String::new());
 
     if total == 0 {
@@ -1769,11 +1802,18 @@ fn build_result_summary(app: &AppState) -> Vec<String> {
     if throttled_count > 0 {
         parts.push(format!("{throttled_count} throttled"));
     }
+    if idle_count > 0 {
+        parts.push(format!("{idle_count} idle"));
+    }
     if failed_count > 0 {
         parts.push(format!("{failed_count} failed"));
     }
 
     lines.push(format!("   {total} total: {}", parts.join(", ")));
+    if app.auto_pull_suppressed {
+        lines.push(String::new());
+        lines.push("   showing last-known (cached) status — press E to pull all, e for the selected repo".to_string());
+    }
 
     // Compute padding width — include worktree repo names too
     let mut pad = 0;
@@ -2589,9 +2629,9 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 /// Render the `?` help modal: clickable links, subcommands, flags/env, grouped hotkeys,
 /// exit codes, and the repo list (each row clickable to open its remote). Records the
 /// screen row of every clickable line into `app.help_links` for mouse hit-testing.
-/// The content of the help modal's "About" tab — what pull-all is, plus clickable links.
+/// The content of the help modal's "About" tab — what polygit is, plus clickable links.
 fn help_items_about() -> Vec<(Line<'static>, Option<String>)> {
-    const GITHUB_URL: &str = "https://github.com/steven-pribilinskiy/pull-all";
+    const GITHUB_URL: &str = "https://github.com/steven-pribilinskiy/polygit";
     const LAZYGIT_URL: &str = "https://github.com/jesseduffield/lazygit";
     const NOTES_BAKEOFF: &str =
         "https://notes.lvh.me/library/default/devtools/pull-all-tui-bake-off-2026.md";
@@ -2614,7 +2654,7 @@ fn help_items_about() -> Vec<(Line<'static>, Option<String>)> {
 
     items.push((
         Line::from(Span::styled(
-            "pull-all — interactive multi-repo git pull dashboard".to_string(),
+            "polygit — interactive polyrepo git dashboard".to_string(),
             header_style,
         )),
         None,
@@ -2657,9 +2697,9 @@ fn help_items_cli() -> Vec<(Line<'static>, Option<String>)> {
     };
 
     items.push(header("SUBCOMMANDS  (forward to sibling builds; args passed through)"));
-    items.push(entry("pull-all go", " [args]", "Go / bubbletea build", ""));
-    items.push(entry("pull-all bun", " [args]", "Bun / ink build (JIT)", ""));
-    items.push(entry("pull-all cli", " [args]", "bash streaming version", ""));
+    items.push(entry("polygit go", " [args]", "Go / bubbletea build", ""));
+    items.push(entry("polygit bun", " [args]", "Bun / ink build (JIT)", ""));
+    items.push(entry("polygit cli", " [args]", "bash streaming version", ""));
     items.push(plain(""));
 
     items.push(header("FLAGS & ENVIRONMENT"));
@@ -3050,7 +3090,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
-        .title(format!(" pull-all — help · {} ", view.label()))
+        .title(format!(" polygit — help · {} ", view.label()))
         .title_bottom(
             Line::from(" tab switch · ↑/↓ scroll · click a link · ?/Esc close ").right_aligned(),
         );
@@ -3996,7 +4036,7 @@ fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rect) {
         Line::from(String::new()),
         Line::from(Span::styled("Watching this file for new builds", label)),
         Line::from(Span::styled(
-            "pull-all polls this executable's size + mtime every few seconds. When a newer",
+            "polygit polls this executable's size + mtime every few seconds. When a newer",
             dim,
         )),
         Line::from(Span::styled(
@@ -4178,7 +4218,8 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     // Sections of (label, option chips). Global row indices run across sections and must
     // match `set_setting_option` / `toggle_selected_setting`:
-    // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast (Theming).
+    // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast
+    // (Theming), 7 auto-pull · 8 auto-pull limit · 9 auto-pull-in-tree (Sync).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -4215,6 +4256,28 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                         ("normal", app.contrast == Contrast::Normal),
                         ("soft", app.contrast == Contrast::Soft),
                     ],
+                ),
+            ],
+        ),
+        (
+            "Sync",
+            vec![
+                (
+                    "Auto-pull on launch",
+                    vec![("on", app.auto_pull_on_launch), ("off", !app.auto_pull_on_launch)],
+                ),
+                (
+                    "Auto-pull limit",
+                    vec![
+                        ("50", app.auto_pull_max_repos == 50),
+                        ("100", app.auto_pull_max_repos == 100),
+                        ("250", app.auto_pull_max_repos == 250),
+                        ("\u{221e}", app.auto_pull_max_repos == 0),
+                    ],
+                ),
+                (
+                    "Auto-pull in tree",
+                    vec![("on", app.auto_pull_in_tree), ("off", !app.auto_pull_in_tree)],
                 ),
             ],
         ),
@@ -4305,7 +4368,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             lines.push(Line::from(spans));
             if *label == "Grouping" && app.groups.is_empty() {
                 lines.push(Line::from(Span::styled(
-                    "      no groups defined — ~/.config/pull-all/groups.json",
+                    "      no groups defined — ~/.config/polygit/groups.json",
                     Style::default().fg(Color::DarkGray),
                 )));
             }

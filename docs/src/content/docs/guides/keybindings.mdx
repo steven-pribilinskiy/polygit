@@ -1,11 +1,11 @@
 ---
 title: Keybindings
-description: Every pull-all keybinding across the repo list, the repo page, and the diff modal — searchable.
+description: Every polygit keybinding across the repo list, the repo page, and the diff modal — searchable.
 ---
 
 import KeymapExplorer from '../../../components/KeymapExplorer.astro';
 
-`pull-all` is keyboard-first. Type to filter the list below by key or action — search
+`polygit` is keyboard-first. Type to filter the list below by key or action — search
 `checkout`, `shift`, `pull`, `discard`, or any glyph you're chasing.
 
 <KeymapExplorer />
@@ -35,7 +35,7 @@ import KeymapExplorer from '../../../components/KeymapExplorer.astro';
   label; the divider shows a grip and highlights while you drag it.
 - **`l` opens [lazygit](https://github.com/jesseduffield/lazygit)** — lazygit is a fast,
   full-featured terminal UI for git (stage hunks, commit, branch, merge, rebase, cherry-pick,
-  resolve conflicts, browse the log, and more). `l` suspends `pull-all` and opens lazygit in the
+  resolve conflicts, browse the log, and more). `l` suspends `polygit` and opens lazygit in the
   selected repo (or the selected row's path on the repo page), returning you here when you quit it
   (`q`). If lazygit isn't [installed](https://github.com/jesseduffield/lazygit#installation), a
   note appears instead of launching.
@@ -45,7 +45,7 @@ import KeymapExplorer from '../../../components/KeymapExplorer.astro';
 
   :::caution[Terminal support]
   `Shift`+`Enter` relies on the Kitty keyboard protocol to be reported distinctly.
-  `pull-all` enables it when the terminal supports it (recent Windows Terminal, WezTerm,
+  `polygit` enables it when the terminal supports it (recent Windows Terminal, WezTerm,
   kitty, foot). On terminals without support, `Shift`+`Enter` falls back to plain `Enter`.
   :::
 - **Web-like mouse support** — whole status-bar hints are clickable (not just the key), the

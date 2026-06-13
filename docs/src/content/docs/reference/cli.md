@@ -1,10 +1,10 @@
 ---
 title: CLI flags & env
-description: Every pull-all command-line flag, positional argument, and environment variable.
+description: Every polygit command-line flag, positional argument, and environment variable.
 ---
 
 ```
-pull-all [OPTIONS] [DIR]
+polygit [OPTIONS] [DIR]
 ```
 
 ## Positional argument
@@ -16,7 +16,7 @@ pull-all [OPTIONS] [DIR]
 The scan is recursive by default — it crawls the tree in parallel, pruning hidden dirs,
 `node_modules`/`vendor`/`target`/`dist`/… and `*.worktrees`, and never descending into a
 found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level scan. A
-directory literally named `go`, `bun`, or `cli` is reachable as `pull-all ./go` —
+directory literally named `go`, `bun`, or `cli` is reachable as `polygit ./go` —
 see [Sibling builds](../siblings/).
 
 ## Flags
@@ -46,12 +46,12 @@ see [Sibling builds](../siblings/).
 ## Examples
 
 ```bash
-pull-all                              # pull the current directory tree, TUI
-pull-all ~/projects -j 16             # recursive scan, 16 parallel pulls
-pull-all ~ --depth 4                  # crawl home, capped at 4 levels deep
-pull-all --no-recursive ~/projects    # legacy single-level scan
-PULL_JOBS=8 pull-all ~/projects       # concurrency via env
-pull-all --no-tui ~/projects          # plain output for scripts/CI
-pull-all --timeout 60 ~/work          # allow slow remotes 60s each
-pull-all --profile --profile-out /tmp/pull.prof ~/projects
+polygit                              # pull the current directory tree, TUI
+polygit ~/projects -j 16             # recursive scan, 16 parallel pulls
+polygit ~ --depth 4                  # crawl home, capped at 4 levels deep
+polygit --no-recursive ~/projects    # legacy single-level scan
+PULL_JOBS=8 polygit ~/projects       # concurrency via env
+polygit --no-tui ~/projects          # plain output for scripts/CI
+polygit --timeout 60 ~/work          # allow slow remotes 60s each
+polygit --profile --profile-out /tmp/pull.prof ~/projects
 ```

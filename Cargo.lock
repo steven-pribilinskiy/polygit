@@ -876,6 +876,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "polygit"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm",
+ "dirs",
+ "futures",
+ "num_cpus",
+ "ratatui",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "strip-ansi-escapes",
+ "terminal-colorsaurus",
+ "tokio",
+ "tokio-stream",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -900,27 +921,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "pull-all"
-version = "1.9.0"
-dependencies = [
- "anyhow",
- "clap",
- "crossterm",
- "dirs",
- "futures",
- "num_cpus",
- "ratatui",
- "reqwest",
- "serde",
- "serde_json",
- "strip-ansi-escapes",
- "terminal-colorsaurus",
- "tokio",
- "tokio-stream",
- "unicode-width 0.2.0",
 ]
 
 [[package]]

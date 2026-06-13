@@ -5,7 +5,7 @@
 # Output is printed in alphabetical order (pulls run in parallel; output is buffered
 # per repo and flushed as each one becomes the next alphabetical entry to complete).
 
-source ~/bin/bash-profile.sh pull-all-repos
+source ~/bin/bash-profile.sh polygit-repos
 
 echo "🔄 Pulling all repositories in $(basename "$PWD")..."
 

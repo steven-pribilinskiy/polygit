@@ -14,7 +14,7 @@ pub const DEFAULT_CACHE_TTL_MINUTES: u64 = 1440;
 /// Per-source resolution timeout.
 const RESOLVE_TIMEOUT_SECS: u64 = 10;
 
-/// User-edited group definitions at `~/.config/pull-all/groups.json`. Optional — when the file
+/// User-edited group definitions at `~/.config/polygit/groups.json`. Optional — when the file
 /// is missing, grouping is inert. Never written by the app (unlike `state.json`).
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -216,7 +216,7 @@ pub fn extract_members(
     }
 }
 
-/// Resolved dynamic-source membership cached at `~/.config/pull-all/groups-cache.json`
+/// Resolved dynamic-source membership cached at `~/.config/polygit/groups-cache.json`
 /// (auto-written, like `state.json`) so grouped startups don't wait on commands/fetches.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -246,11 +246,11 @@ pub fn now_unix() -> u64 {
 }
 
 fn config_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("pull-all").join("groups.json"))
+    Some(crate::persist::config_dir()?.join("groups.json"))
 }
 
 fn cache_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("pull-all").join("groups-cache.json"))
+    Some(crate::persist::config_dir()?.join("groups-cache.json"))
 }
 
 /// Load the group config. A missing file is normal (no groups); a malformed file degrades to
@@ -430,9 +430,9 @@ mod tests {
 
     #[test]
     fn wildcard_matches_literals_exactly() {
-        assert!(wildcard_match("pull-all", "pull-all"));
-        assert!(!wildcard_match("pull-all", "pull-all-extra"));
-        assert!(!wildcard_match("pull-all-extra", "pull-all"));
+        assert!(wildcard_match("polygit", "polygit"));
+        assert!(!wildcard_match("polygit", "polygit-extra"));
+        assert!(!wildcard_match("polygit-extra", "polygit"));
     }
 
     #[test]

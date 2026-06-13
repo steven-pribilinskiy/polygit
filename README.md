@@ -1,12 +1,12 @@
-# pull-all
+# polygit
 
-Interactive multi-repo git pull dashboard. Pulls every git repo in a directory in parallel with live per-repo logs, retry/refetch support, and a two-pane TUI layout. This is the canonical Rust implementation; it also fronts the Go, Bun, and bash alternatives via subcommands.
+Interactive polyrepo git dashboard. Discovers every git repo under a directory and shows their status in a two-pane TUI — pulling them in parallel with live per-repo logs, with retry/refetch support, a persisted status cache, and configurable auto-pull. This is the canonical Rust implementation; it also fronts the Go, Bun, and bash alternatives via subcommands.
 
-📖 **Documentation: https://steven-pribilinskiy.github.io/pull-all**
+📖 **Documentation: https://steven-pribilinskiy.github.io/polygit**
 
 ## Features
 
-- **Recursive discovery** (default): crawls the directory tree in parallel for git repos, pruning hidden / `node_modules` / `vendor` / `target` / `*.worktrees` dirs and never descending into a found repo — so `pull-all ~/projects` (or even `~`) just works. Repos stream in and start pulling as they're found; `--depth N` caps it, `--no-recursive` restores a single-level scan
+- **Recursive discovery** (default): crawls the directory tree in parallel for git repos, pruning hidden / `node_modules` / `vendor` / `target` / `*.worktrees` dirs and never descending into a found repo — so `polygit ~/projects` (or even `~`) just works. Repos stream in and start pulling as they're found; `--depth N` caps it, `--no-recursive` restores a single-level scan
 - **Directory-tree view** (`v t`): render the repos as a collapsible folder tree, with per-folder status rollups; orthogonal to grouping, so you can have flat, grouped, tree, or **tree + groups** (groups subdivide repos inside each folder)
 - Parallel pulls with configurable concurrency (default: nproc); the list title shows live concurrency (`⇄ active/cap`)
 - Live log streaming per repo in a scrollable preview pane
@@ -16,19 +16,20 @@ Interactive multi-repo git pull dashboard. Pulls every git repo in a directory i
 - Automatic one-shot retry of a failed pull before marking it failed — skipped for permanent errors (repository not found, auth failure, diverged branch) where retrying can't change the result
 - Dynamic `Errors (N)` page (after `Result`) listing each failed repo with its error output
 - **What the pull delivered**: optional **pulled** (`t p`, `⇣N` commits) and **changed** (`t c`, `±N` files) columns showing what each repo's pull landed this run; the info panel's **Pulled** row spells out the full delta — `oldsha → newsha · N commits · M files (+ins −del) · N new tags · N new branches` — and the panel re-fetches after a pull so its numbers reflect the new HEAD
+- **Optional auto-pull + status cache**: launches are useful instantly — the list is seeded from a persisted per-repo status cache (last-known status shown **dim with an age**, e.g. `up-to-date 2d`, until pulled). Auto-pull-on-launch is configurable in Settings (master on/off · a max-repos limit `50/100/250/∞` · suppress in tree view); by default it pulls small flat sets and **skips** large sets (>100) and the tree view. When auto-pull is suppressed, `E` pulls everything / `e` pulls the selected repo on demand
 - Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`e` / `E`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees)
 - Action hints dim when they'd be a no-op
 - Worktree discovery (`.worktrees/*/.git`)
 - Sort the list (`s` leader, or click a column header) by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes / pulled / changed — re-pick or re-click flips `▲`/`▼` (persisted; the list is always sorted, Name asc by default). The sort menu lists only the columns currently visible
 - Filter repos by name (`/`) or by status (`f` leader: updated / up-to-date / skipped / failed / issues)
-- **Repo groups** (`z`): named list sections from `~/.config/pull-all/groups.json` — membership by `*`-pattern, static list, shell command, or a fetched JSON document; sort/filter apply within each group, big groups collapse (`Enter`/`Space`/click on the header), dynamic memberships are cached and refreshed with `Z`
+- **Repo groups** (`z`): named list sections from `~/.config/polygit/groups.json` — membership by `*`-pattern, static list, shell command, or a fetched JSON document; sort/filter apply within each group, big groups collapse (`Enter`/`Space`/click on the header), dynamic memberships are cached and refreshed with `Z`
 - Clickable 2-row column header with the active sort indicator; an always-on dirty marker (`•`) with the count (`•N`) when the dirty column is toggled. Count columns render a **dim zero** (not a blank), and a column every repo lacks (no worktrees/stashes, ≤1 branch) auto-hides — its `t`-menu chip goes dim and inert
 - Lazygit-style panes: rounded borders, a bright border on the focused pane (`Tab` / `1` / `2`), and a draggable divider with a grip
 - Open [lazygit](https://github.com/jesseduffield/lazygit) on the selected repo with `l`
 - Diff modal with a clickable file list over the selected file's diff (stash, uncommitted, vs base branch, or **a branch's changes vs its base**); `Tab` switches focus between the file list and diff, with a footer that adapts to the focused pane; **status-filter chips** (`f` / click) with count badges when a change set has >10 files across ≥2 statuses; `Shift`/`Alt`+`PgUp`/`PgDn` page the file list; "no changes" shows a toast instead of an empty modal
 - Draggable scrollbars everywhere (preview, diff panels, help, repo page), highlighted while dragged
 - Tabbed, **context-aware** help modal (`?`): **Hotkeys** (for the current view) · **CLI & Flags** · **Legend** (every glyph, both icon sets) · **About**, switched with `Tab`/click (last tab remembered)
-- Settings modal (`,`): panel padding, Unicode ⇄ emoji icons, a **theme** (auto-detected / dark / light), independent **background** (normal / soft / **terminal** — use the terminal's own background) and **contrast** (normal / soft) levels — all persisted; rows and radio chips are mouse-clickable. The `auto` theme **re-detects** dark/light at runtime, so an OS light↔dark switch re-themes live (no restart)
+- Settings modal (`,`), three sections: **General** (panel padding · grouping · tree view), **Theming** (Unicode ⇄ emoji icons · **theme** auto/dark/light · independent **background** normal/soft/**terminal** · **contrast** normal/soft), and **Sync** (auto-pull on launch · auto-pull limit `50/100/250/∞` · auto-pull in tree view) — all persisted; rows and radio chips are mouse-clickable. The `auto` theme **re-detects** dark/light at runtime, so an OS light↔dark switch re-themes live (no restart)
 - Web-like mouse support everywhere: full status-bar hints + active `⟪sort⟫`/`[filter]` tags clickable, every modal gets an `[x]` and closes on outside click, repo page has an `[esc back]` button
 - **New-build reload notice**: detects a newer binary installed over the running one and offers a one-click `[reload]` (exec-restart in the same terminal)
 - Non-TUI fallback (same output as bash reference) when not on a TTY or with `--no-tui`
@@ -38,52 +39,52 @@ Interactive multi-repo git pull dashboard. Pulls every git repo in a directory i
 
 ```bash
 # Requires Rust stable (cargo)
-make build              # binary at: bin/pull-all
-make install            # also copies to ~/bin/pull-all
+make build              # binary at: bin/polygit
+make install            # also copies to ~/bin/polygit
 ```
 
 ## Running
 
 ```bash
 # TUI mode (auto-detected when stderr is a TTY)
-pull-all [DIR]
+polygit [DIR]
 
 # Recursive by default — scan a whole tree of projects
-pull-all ~/projects
+polygit ~/projects
 
 # Plain streaming output (matches bash reference for a flat dir; lists nested repos too)
-pull-all --no-tui [DIR]
+polygit --no-tui [DIR]
 
 # Custom concurrency
-pull-all -j 8 [DIR]
-PULL_JOBS=8 pull-all [DIR]
+polygit -j 8 [DIR]
+PULL_JOBS=8 polygit [DIR]
 
 # Cap scan depth (1 = immediate subdirs only — the legacy single-level scan)
-pull-all --depth 3 [DIR]
-pull-all --no-recursive [DIR]
+polygit --depth 3 [DIR]
+polygit --no-recursive [DIR]
 
 # Custom timeout per pull (default: 30s)
-pull-all --timeout 60 [DIR]
+polygit --timeout 60 [DIR]
 
 # Skip worktree discovery
-pull-all --no-worktrees [DIR]
+polygit --no-worktrees [DIR]
 ```
 
 ## Sibling implementations
 
-`pull-all` forwards to the other builds when the first argument is `go`, `bun`, or `cli`; all remaining arguments are passed through verbatim:
+`polygit` forwards to the other builds when the first argument is `go`, `bun`, or `cli`; all remaining arguments are passed through verbatim:
 
 ```bash
-pull-all go  [args]   # Go / bubbletea build (pull-all-tui-go)
-pull-all bun [args]   # Bun / ink build, JIT (pull-all-tui-bun-jit)
-pull-all cli [args]   # bash streaming version (pull-all-repos)
+polygit go  [args]   # Go / bubbletea build (polygit-tui-go)
+polygit bun [args]   # Bun / ink build, JIT (polygit-tui-bun-jit)
+polygit cli [args]   # bash streaming version (polygit-repos)
 ```
 
-A directory literally named `go`/`bun`/`cli` is still reachable as `pull-all ./go`.
+A directory literally named `go`/`bun`/`cli` is still reachable as `polygit ./go`.
 
-The backends live in `pull-all-siblings/` next to the `pull-all` binary (e.g. `~/bin/pull-all-siblings/`), deliberately **off `$PATH`** so they aren't top-level commands — they're reachable only through `pull-all go|bun|cli`. The dispatcher resolves them relative to its own location and falls back to `$PATH` if that directory is absent.
+The backends live in `polygit-siblings/` next to the `polygit` binary (e.g. `~/bin/polygit-siblings/`), deliberately **off `$PATH`** so they aren't top-level commands — they're reachable only through `polygit go|bun|cli`. The dispatcher resolves them relative to its own location and falls back to `$PATH` if that directory is absent.
 
-The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that `src/plain.rs` was ported from) is tracked in this repo under [`pull-all-siblings/`](pull-all-siblings/) and deployed by `make install`. The `go` and `bun` backends are built from their own source trees.
+The `cli` backend (`polygit-repos`, the original parallel-pull bash script that `src/plain.rs` was ported from) is tracked in this repo under [`polygit-siblings/`](polygit-siblings/) and deployed by `make install`. The `go` and `bun` backends are built from their own source trees.
 
 ## Keybindings
 
@@ -94,7 +95,7 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `g` | Jump to top |
 | `G` | Jump to bottom (Result item) |
 | `Space` | Toggle the Result summary in the preview without moving selection (any navigation clears it); on a folder/group header: collapse/expand |
-| `v` `g` | Toggle the **grouped list view** (groups from `~/.config/pull-all/groups.json`; persisted) |
+| `v` `g` | Toggle the **grouped list view** (groups from `~/.config/polygit/groups.json`; persisted) |
 | `v` `t` | Toggle the **directory-tree view** (folders from recursive discovery; persisted) |
 | `z` `…` | **Fold leader** (vim-style): `za` toggle · `zo`/`zc` open/close · `zO` expand subtree · `zM` collapse all · `zR` expand all (on the selected folder/group) |
 | `-` / `+` `=` / `*` | Collapse all / expand all / expand the selected subtree |
@@ -121,7 +122,7 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `c` | Start claude code in the selected repo (suspends the TUI, returns on exit) |
 | `l` | Open **lazygit** in the selected repo (suspends the TUI, returns on exit) |
 | `x` | Clear **this repo's log buffer** (empties the streamed pull output) |
-| `D` | Open the [documentation website](https://steven-pribilinskiy.github.io/pull-all/) in the browser |
+| `D` | Open the [documentation website](https://steven-pribilinskiy.github.io/polygit/) in the browser |
 | `,` | Open the settings modal (panel padding, grouping, tree view, icon style, theme, background, contrast) |
 | `?` | Open the help modal (docs/GitHub/notes links, all keys, flags & env) |
 | `/` | Filter repos by name |
@@ -158,7 +159,7 @@ The panel is interactive (it's a web app in a terminal):
 
 ### Settings modal (`,`)
 
-`,` opens a small settings modal (from the list or the repo page), organized into **General** (panel padding, grouping, tree view) and **Theming** (icons, theme, background, contrast) sections. Move between rows with `j`/`k` (or `↑`/`↓`), toggle/cycle the selected setting with `Space`/`Enter`, and close with `Esc`/`q`/`,`/`[x]`/a click outside. With the mouse, click a row label to select it or a radio chip to set that value directly. All settings persist across runs (in `~/.config/pull-all/state.json`):
+`,` opens a small settings modal (from the list or the repo page), organized into **General** (panel padding, grouping, tree view) and **Theming** (icons, theme, background, contrast) sections. Move between rows with `j`/`k` (or `↑`/`↓`), toggle/cycle the selected setting with `Space`/`Enter`, and close with `Esc`/`q`/`,`/`[x]`/a click outside. With the mouse, click a row label to select it or a radio chip to set that value directly. All settings persist across runs (in `~/.config/polygit/state.json`):
 
 - **Panel padding** — adds a 1-cell inner padding inside every bordered panel and modal.
 - **Icons** — switches the status / column / marker glyphs **everywhere** (list, columns, repo page, Result/Errors pages, log markers) between the default Unicode set (`◌ ✓ ⊘ ✗ ⑂ ≡ •`) and an emoji set (`✅ ✨ 🚫 ❌ 🌿 📦 📝`). Columns stay aligned in either mode — only single-codepoint, reliably-2-cell emoji are used (no variation-selector glyphs), and the tight ahead/behind column keeps compact `↑↓` arrows.
@@ -169,7 +170,7 @@ The panel is interactive (it's a web app in a terminal):
 
 ### Repo groups (`v g`)
 
-`v g` renders the list as named **group sections** defined in `~/.config/pull-all/groups.json` (hand-edited, optional — never written by the app). When groups are configured, a clickable `vg groups` hint appears in the status bar (its label brightens while the grouped view is active). Each group header shows per-status counts and the member total; repos inside a group keep the global sort and filters; repos matching no group land in a dim `ungrouped` section at the bottom. Groups with more members than `collapse_threshold` (default: 5) get a collapsible header — selectable, with `▾`/`▸`, toggled by `Enter`/`Space`/click; smaller groups get static headers navigation skips. The grouping toggle and collapsed groups persist across runs.
+`v g` renders the list as named **group sections** defined in `~/.config/polygit/groups.json` (hand-edited, optional — never written by the app). When groups are configured, a clickable `vg groups` hint appears in the status bar (its label brightens while the grouped view is active). Each group header shows per-status counts and the member total; repos inside a group keep the global sort and filters; repos matching no group land in a dim `ungrouped` section at the bottom. Groups with more members than `collapse_threshold` (default: 5) get a collapsible header — selectable, with `▾`/`▸`, toggled by `Enter`/`Space`/click; smaller groups get static headers navigation skips. The grouping toggle and collapsed groups persist across runs.
 
 Each group has a `name` and exactly one membership source:
 
@@ -179,7 +180,7 @@ Each group has a `name` and exactly one membership source:
   "cache_ttl_minutes": 1440,
   "groups": [
     { "name": "frontend", "pattern": "mfe-*" },
-    { "name": "tooling", "repos": ["pull-all", "dotfiles"] },
+    { "name": "tooling", "repos": ["polygit", "dotfiles"] },
     { "name": "team", "command": "curl -fsSL https://example.com/repos.txt" },
     { "name": "platform", "url": "https://example.com/remote-entries.json",
       "extract": { "pointer": "/entries", "kind": "keys" } }
@@ -187,11 +188,11 @@ Each group has a `name` and exactly one membership source:
 }
 ```
 
-`pattern` is a case-insensitive `*`-wildcard on repo names — **or, when it contains a `/`, on the repo's path relative to the scan root** (e.g. `work/*`); `repos` is a static list; `command` runs a shell command whose stdout lines are repo names; `url` fetches a JSON document and extracts names per `extract` (a JSON pointer + `keys`/`values`). Dynamic (`command`/`url`) sources resolve in the background — never blocking startup — and are cached in `~/.config/pull-all/groups-cache.json` for `cache_ttl_minutes` (default: daily). `Z` forces a refresh; a failed resolve keeps the cached membership and marks the header with `⚠`. Selecting a group header shows a group summary (source, counts, cache age, errors) in the preview pane. Full reference: [Repo groups guide](https://steven-pribilinskiy.github.io/pull-all/guides/groups/).
+`pattern` is a case-insensitive `*`-wildcard on repo names — **or, when it contains a `/`, on the repo's path relative to the scan root** (e.g. `work/*`); `repos` is a static list; `command` runs a shell command whose stdout lines are repo names; `url` fetches a JSON document and extracts names per `extract` (a JSON pointer + `keys`/`values`). Dynamic (`command`/`url`) sources resolve in the background — never blocking startup — and are cached in `~/.config/polygit/groups-cache.json` for `cache_ttl_minutes` (default: daily). `Z` forces a refresh; a failed resolve keeps the cached membership and marks the header with `⚠`. Selecting a group header shows a group summary (source, counts, cache age, errors) in the preview pane. Full reference: [Repo groups guide](https://steven-pribilinskiy.github.io/polygit/guides/groups/).
 
 ### Directory tree (`v t`)
 
-Recursive discovery is the default: `pull-all` crawls the target directory in parallel for git repos (pruning hidden dirs, `node_modules`/`vendor`/`target`/`dist`/… and `*.worktrees`, and never descending into a found repo), streaming each repo in and starting its pull as soon as it's found. `--depth N` caps the descent (`--depth 1` / `--no-recursive` is the legacy single-level scan). In flat and grouped views, each repo shows its path relative to the scan root (e.g. `personal/pull-all`).
+Recursive discovery is the default: `polygit` crawls the target directory in parallel for git repos (pruning hidden dirs, `node_modules`/`vendor`/`target`/`dist`/… and `*.worktrees`, and never descending into a found repo), streaming each repo in and starting its pull as soon as it's found. `--depth N` caps the descent (`--depth 1` / `--no-recursive` is the legacy single-level scan). In flat and grouped views, each repo shows its path relative to the scan root (e.g. `personal/polygit`).
 
 `v t` renders that result as a **collapsible directory tree**: folders become headers (`▾`/`▸`) with their subtree's status rollup and repo count, repos nest beneath by basename. Tree and grouping are **two independent toggles**, so four views are reachable:
 
@@ -200,7 +201,7 @@ Recursive discovery is the default: `pull-all` crawls the target directory in pa
 - **tree** (`v t`) — the folder hierarchy
 - **tree + groups** (both on) — groups subdivide the repos *inside each folder*; a group collapses independently per folder
 
-Fold the tree with the mouse (click a folder header), `←`/`→` (collapse/expand or jump to the parent), `Enter`/`Space` (toggle the selected header), the direct keys `-` (collapse all) / `+` (expand all) / `*` (expand the selected subtree), or the vim-style `z` chord (`za`/`zo`/`zc`/`zO`/`zM`/`zR`). The tree toggle and collapsed-folder set persist across runs. Full reference: [Tree view guide](https://steven-pribilinskiy.github.io/pull-all/guides/tree-view/).
+Fold the tree with the mouse (click a folder header), `←`/`→` (collapse/expand or jump to the parent), `Enter`/`Space` (toggle the selected header), the direct keys `-` (collapse all) / `+` (expand all) / `*` (expand the selected subtree), or the vim-style `z` chord (`za`/`zo`/`zc`/`zO`/`zM`/`zR`). The tree toggle and collapsed-folder set persist across runs. Full reference: [Tree view guide](https://steven-pribilinskiy.github.io/polygit/guides/tree-view/).
 
 ### Sorting (`s` leader / column headers)
 
@@ -229,7 +230,7 @@ Everything actionable is clickable like a web page:
 
 ### New-build reload
 
-While running, pull-all watches its own binary on disk. When a newer build is installed (e.g. `make install`'s atomic rename), a persistent notice appears in the top-right (inset with the panel-padding setting, with a glint sweeping its border): `↺ new build installed · [reload] [x]`. It rides on top of every screen — the repo list, the full-screen repo page, and any open modal — so it's never hidden. `[reload]` restores the terminal and `exec`s the new binary with the same arguments — the fresh process re-scans and re-pulls (instant when everything is already up to date). `[x]` dismisses the notice; it re-arms if the binary changes again.
+While running, polygit watches its own binary on disk. When a newer build is installed (e.g. `make install`'s atomic rename), a persistent notice appears in the top-right (inset with the panel-padding setting, with a glint sweeping its border): `↺ new build installed · [reload] [x]`. It rides on top of every screen — the repo list, the full-screen repo page, and any open modal — so it's never hidden. `[reload]` restores the terminal and `exec`s the new binary with the same arguments — the fresh process re-scans and re-pulls (instant when everything is already up to date). `[x]` dismisses the notice; it re-arms if the binary changes again.
 
 Clicking the **`built … ago`** tag in the status bar opens a **Build info** modal: the running version, the watched executable path, when it was built, how the new-build watch works, and whether a newer build is currently waiting. A `[restart]` button (or `r`) exec-restarts into the latest build; any other key or click closes it.
 

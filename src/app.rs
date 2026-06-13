@@ -43,6 +43,11 @@ impl RepoStatus {
         matches!(self, RepoStatus::Failed)
     }
 
+    /// A pull is in flight for this repo.
+    pub fn is_running(&self) -> bool {
+        matches!(self, RepoStatus::Running { .. })
+    }
+
     /// A repo "has an issue" worth retrying: it failed, was skipped (dirty), or was throttled.
     /// No-upstream is intentionally excluded — it's not an error, just unconfigured tracking.
     pub fn is_retryable(&self) -> bool {
@@ -74,7 +79,9 @@ pub enum RightView {
 }
 
 /// Extra per-repo facts fetched lazily for the info panel (one git call each).
-#[derive(Debug, Clone, Default)]
+/// Serde-able so the status cache can persist them between runs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RepoDetails {
     /// Commits ahead/behind upstream; None when there's no upstream.
     pub ahead: Option<u32>,
@@ -91,9 +98,10 @@ pub struct RepoDetails {
     pub commit_timestamp: i64,
 }
 
-/// What the most recent pull (this session) delivered. `None` until a pull *updates* the repo;
-/// cleared at the start of every pull, so up-to-date repos carry no result. Runtime-only.
-#[derive(Debug, Clone, Default)]
+/// What the most recent pull delivered. `None` until a pull *updates* the repo; cleared at the
+/// start of every pull, so up-to-date repos carry no result. Serde-able for the status cache.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PullResult {
     /// Short sha before the pull (`HEAD@{1}`); empty when unavailable (shallow / first pull).
     pub prev_head: String,
@@ -984,7 +992,7 @@ impl LogBuffer {
 #[derive(Debug)]
 pub struct RepoState {
     pub name: String,
-    /// Path relative to the scan root, with `/` separators (e.g. "personal/pull-all").
+    /// Path relative to the scan root, with `/` separators (e.g. "personal/polygit").
     /// Equals `name` for depth-1 repos. Drives display, name-filter, name-sort, and the tree.
     pub rel_path: String,
     /// Absolute index into `AppState::repos` (set at discovery). Lets a worker schedule its own
@@ -1007,6 +1015,12 @@ pub struct RepoState {
     /// Set when a pull updates the repo so the info panel re-fetches `details` (fresh sha,
     /// ahead/behind, …) the next time it's viewed. Cleared once details are refreshed.
     pub details_stale: bool,
+    /// This repo's status/details were seeded from the persisted cache and it has NOT been
+    /// pulled or refreshed this session — render it dimmed with an age. Cleared on any pull or
+    /// fresh detail load.
+    pub stale: bool,
+    /// Unix seconds the cached entry was written (for the staleness age); `None` when not cached.
+    pub cached_at: Option<i64>,
     /// Log ring buffer (stdout + stderr from git pull).
     pub log: LogBuffer,
     /// Whether the preview pane should auto-scroll to bottom.
@@ -1078,6 +1092,8 @@ impl RepoState {
             status_note: None,
             pull_result: None,
             details_stale: false,
+            stale: false,
+            cached_at: None,
             log: LogBuffer::default(),
             auto_scroll: true,
             preview_scroll: 0,
@@ -1105,6 +1121,19 @@ impl RepoState {
             }
             None => false,
         }
+    }
+
+    /// Seed this repo's display from a cached entry (last-known status/branch/details). Marks it
+    /// `stale` so it renders dimmed with an age until pulled or its details are freshly loaded.
+    pub fn seed_from_cache(&mut self, cached: &crate::cache::CachedRepo) {
+        self.status = cached.status.to_status();
+        if let Some(branch) = &cached.branch {
+            self.branch = Some(branch.clone());
+        }
+        self.details = cached.details.clone();
+        self.pull_result = cached.pull_result.clone();
+        self.stale = true;
+        self.cached_at = Some(cached.updated_at);
     }
 }
 
@@ -1226,6 +1255,32 @@ pub fn format_ago(secs: u64) -> String {
         60..=3_599 => format!("{}m ago", secs / 60),
         3_600..=86_399 => format!("{}h ago", secs / 3_600),
         _ => format!("{}d ago", secs / 86_400),
+    }
+}
+
+/// Compact staleness age ("now"/"3m"/"5h"/"2d") for a status-cache entry stamped at `cached_at`
+/// (Unix seconds). Reads the wall clock — display-only, never used in pure logic.
+pub fn format_cache_age(cached_at: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(cached_at);
+    let secs = (now - cached_at).max(0);
+    match secs {
+        0..=59 => "now".to_string(),
+        60..=3_599 => format!("{}m", secs / 60),
+        3_600..=86_399 => format!("{}h", secs / 3_600),
+        _ => format!("{}d", secs / 86_400),
+    }
+}
+
+/// Cycle the auto-pull repo limit through its settings choices: 50 → 100 → 250 → ∞ (0) → 50.
+pub fn next_auto_pull_limit(current: u32) -> u32 {
+    match current {
+        50 => 100,
+        100 => 250,
+        250 => 0,
+        _ => 50,
     }
 }
 
@@ -1620,7 +1675,7 @@ pub struct AppState {
     pub build_info_close_click: Option<(u16, u16, u16)>,
     /// The build-info modal's `[restart]` button region (exec-restarts the binary).
     pub build_info_reload_click: Option<(u16, u16, u16)>,
-    // Grouping (`z`, groups from ~/.config/pull-all/groups.json):
+    // Grouping (`z`, groups from ~/.config/polygit/groups.json):
     /// Render the list grouped (`z` toggles; persisted). Inert while `groups` is empty.
     pub grouping_enabled: bool,
     /// Configured groups in config order (empty when groups.json is missing/empty).
@@ -1643,6 +1698,19 @@ pub struct AppState {
     pub collapsed_folders: HashSet<String>,
     /// Shared concurrency gate + throttle adaptation, used by every pull path.
     pub throttle: Arc<ThrottleControl>,
+    // Auto-pull-on-launch policy (Settings → Sync; persisted):
+    /// Pull every repo automatically on launch (default on).
+    pub auto_pull_on_launch: bool,
+    /// Skip the launch auto-pull above this repo count. `0` = no limit.
+    pub auto_pull_max_repos: u32,
+    /// Allow the launch auto-pull while the tree view is active (default off).
+    pub auto_pull_in_tree: bool,
+    /// Set once discovery completes and the launch decision skipped pulling — the run is then
+    /// "settled" without any repo being pulled, and the footer offers a manual pull-everything.
+    pub auto_pull_suppressed: bool,
+    /// Persisted per-repo last-known state, loaded at startup to seed the list instantly and
+    /// upserted as repos are pulled/refreshed. Flushed to disk on settle + quit.
+    pub status_cache: crate::cache::StatusCache,
 }
 
 impl AppState {
@@ -1760,7 +1828,7 @@ impl AppState {
                 .and_then(|meta| meta.modified().ok()),
             exe_path: std::env::current_exe()
                 .map(|exe| exe.display().to_string())
-                .unwrap_or_else(|_| "pull-all".to_string()),
+                .unwrap_or_else(|_| "polygit".to_string()),
             show_build_info: false,
             build_info_close_click: None,
             build_info_reload_click: None,
@@ -1774,6 +1842,11 @@ impl AppState {
             tree_nodes: Vec::new(),
             collapsed_folders: persisted.collapsed_folders.into_iter().collect(),
             throttle: ThrottleControl::new(max_jobs),
+            auto_pull_on_launch: persisted.auto_pull_on_launch,
+            auto_pull_max_repos: persisted.auto_pull_max_repos,
+            auto_pull_in_tree: persisted.auto_pull_in_tree,
+            auto_pull_suppressed: false,
+            status_cache: crate::cache::load(),
         }
     }
 
@@ -1949,7 +2022,7 @@ impl AppState {
     /// `z` key and the status-bar hint). Toasts a pointer at the config when no groups exist.
     pub fn toggle_grouping_view(&mut self) {
         if self.groups.is_empty() {
-            self.show_toast("no groups configured — see ~/.config/pull-all/groups.json");
+            self.show_toast("no groups configured — see ~/.config/polygit/groups.json");
             return;
         }
         let prev = self.selected_repo_index();
@@ -2037,7 +2110,40 @@ impl AppState {
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
             base_overrides: self.base_overrides.clone(),
+            auto_pull_on_launch: self.auto_pull_on_launch,
+            auto_pull_max_repos: self.auto_pull_max_repos,
+            auto_pull_in_tree: self.auto_pull_in_tree,
         });
+    }
+
+    /// Rebuild the status cache from the live repos and persist it. Repos pulled/refreshed this
+    /// session (terminal + not `stale`) get a fresh entry stamped `now`; repos still showing
+    /// cached data keep their existing entry (untouched age); transient (queued/running) repos
+    /// are left as whatever was previously cached. `now` is Unix seconds (passed in — not read
+    /// in pure code). No-op under test.
+    #[cfg_attr(test, allow(unused_variables))]
+    pub fn flush_cache(&mut self, now: i64) {
+        for repo in &self.repos {
+            let state = repo.lock().unwrap();
+            let Some(status) = crate::cache::CacheStatus::from_status(&state.status) else {
+                continue; // queued/running — keep any prior entry
+            };
+            if state.stale {
+                continue; // not touched this session — preserve its cached age + data
+            }
+            self.status_cache.insert(
+                state.path.clone(),
+                crate::cache::CachedRepo {
+                    status,
+                    branch: state.branch.clone(),
+                    details: state.details.clone(),
+                    pull_result: state.pull_result.clone(),
+                    updated_at: now,
+                },
+            );
+        }
+        #[cfg(not(test))]
+        crate::cache::save(&self.status_cache);
     }
 
     /// The info-block action at `(col,row)`, if any (mouse hit-test).
@@ -2259,6 +2365,14 @@ impl AppState {
             (5, 2) => self.background = Background::Terminal,
             (6, 0) => self.contrast = Contrast::Normal,
             (6, 1) => self.contrast = Contrast::Soft,
+            (7, 0) => self.auto_pull_on_launch = true,
+            (7, 1) => self.auto_pull_on_launch = false,
+            (8, 0) => self.auto_pull_max_repos = 50,
+            (8, 1) => self.auto_pull_max_repos = 100,
+            (8, 2) => self.auto_pull_max_repos = 250,
+            (8, 3) => self.auto_pull_max_repos = 0,
+            (9, 0) => self.auto_pull_in_tree = true,
+            (9, 1) => self.auto_pull_in_tree = false,
             _ => return,
         }
         self.save_state();
@@ -2924,11 +3038,12 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 7;
+    pub const SETTINGS_ROWS: usize = 10;
 
     /// Toggle/cycle the currently-selected settings row, persisting immediately.
     /// Row order (matches `render_settings` sections): 0 padding · 1 grouping · 2 tree (General),
-    /// 3 icons · 4 theme · 5 background · 6 contrast (Theming).
+    /// 3 icons · 4 theme · 5 background · 6 contrast (Theming), 7 auto-pull · 8 auto-pull limit ·
+    /// 9 auto-pull-in-tree (Sync).
     pub fn toggle_selected_setting(&mut self) {
         match self.settings_selected {
             0 => self.panel_padding = !self.panel_padding,
@@ -2951,6 +3066,9 @@ impl AppState {
             4 => self.theme = self.theme.cycle(),
             5 => self.background = self.background.cycle(),
             6 => self.contrast = self.contrast.cycle(),
+            7 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            8 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            9 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
             _ => {}
         }
         self.save_state();
@@ -3024,14 +3142,23 @@ impl AppState {
             .collect()
     }
 
-    /// Repos not currently in progress — the targets of "refetch" (re-run regardless of status).
+    /// Repos not currently in progress — the targets of "refetch" (re-pull regardless of status).
+    /// Includes idle/cached repos (Queued) so a suppressed-auto-pull launch can pull them all.
     pub fn refetchable_repos(&self) -> Vec<usize> {
         self.repos
             .iter()
             .enumerate()
-            .filter(|(_, repo)| repo.lock().unwrap().status.is_terminal())
+            .filter(|(_, repo)| !repo.lock().unwrap().status.is_running())
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// Whether the launch should auto-pull, given the discovered repo count and current view.
+    /// Off by master toggle, over the (non-zero) repo limit, or in tree view unless allowed.
+    pub fn should_auto_pull(&self, repo_count: usize) -> bool {
+        self.auto_pull_on_launch
+            && (self.auto_pull_max_repos == 0 || repo_count <= self.auto_pull_max_repos as usize)
+            && (self.auto_pull_in_tree || !self.tree_enabled)
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {
@@ -3044,9 +3171,9 @@ impl AppState {
         self.selected_status_matches(RepoStatus::is_retryable)
     }
 
-    /// The selected repo is done (not in progress) — `f` is meaningful.
+    /// The selected repo is not in progress — `e` (refetch / pull) is meaningful.
     pub fn selected_repo_refetchable(&self) -> bool {
-        self.selected_status_matches(RepoStatus::is_terminal)
+        self.selected_status_matches(|status| !status.is_running())
     }
 
     /// Any repo has an issue — `R` is meaningful.
@@ -3056,11 +3183,11 @@ impl AppState {
             .any(|repo| repo.lock().unwrap().status.is_retryable())
     }
 
-    /// Any repo is done (not in progress) — `F` is meaningful.
+    /// Any repo is not in progress — `E` (refetch / pull all) is meaningful.
     pub fn any_refetchable(&self) -> bool {
         self.repos
             .iter()
-            .any(|repo| repo.lock().unwrap().status.is_terminal())
+            .any(|repo| !repo.lock().unwrap().status.is_running())
     }
 
     /// Navigate selection up, returns true if changed. Skips static group headers. The
@@ -3683,7 +3810,43 @@ mod tests {
         state.collapsed_groups.clear();
         state.tree_enabled = false;
         state.collapsed_folders.clear();
+        // Auto-pull policy comes from the user's real state.json — pin it to the defaults so the
+        // gate/settle tests are hermetic.
+        state.auto_pull_on_launch = true;
+        state.auto_pull_max_repos = 100;
+        state.auto_pull_in_tree = false;
+        state.auto_pull_suppressed = false;
         state
+    }
+
+    #[test]
+    fn auto_pull_limit_cycles_through_choices() {
+        assert_eq!(next_auto_pull_limit(50), 100);
+        assert_eq!(next_auto_pull_limit(100), 250);
+        assert_eq!(next_auto_pull_limit(250), 0); // ∞
+        assert_eq!(next_auto_pull_limit(0), 50); // ∞ wraps to 50
+        assert_eq!(next_auto_pull_limit(999), 50); // any stray value → 50
+    }
+
+    #[test]
+    fn should_auto_pull_respects_master_threshold_and_tree() {
+        let mut state = state_with(&[]); // normalized: on, limit 100, not in tree, flat view
+        assert!(state.should_auto_pull(10));
+        assert!(state.should_auto_pull(100)); // at the limit is allowed
+        assert!(!state.should_auto_pull(101)); // over the limit
+
+        state.auto_pull_max_repos = 0; // ∞ — no limit
+        assert!(state.should_auto_pull(100_000));
+
+        state.auto_pull_max_repos = 100;
+        state.auto_pull_on_launch = false; // master off
+        assert!(!state.should_auto_pull(1));
+
+        state.auto_pull_on_launch = true;
+        state.tree_enabled = true; // tree view suppresses by default
+        assert!(!state.should_auto_pull(5));
+        state.auto_pull_in_tree = true; // unless explicitly allowed
+        assert!(state.should_auto_pull(5));
     }
 
     #[test]
@@ -3776,7 +3939,9 @@ mod tests {
     }
 
     #[test]
-    fn refetch_targets_are_terminal_repos_only() {
+    fn refetch_targets_every_repo_not_running() {
+        // Refetch = "pull regardless of status", so it now includes idle/cached Queued repos
+        // (so a suppressed-auto-pull launch can pull them); only in-flight repos are excluded.
         let state = state_with(&[
             RepoStatus::UpToDate,
             RepoStatus::Failed,
@@ -3784,7 +3949,7 @@ mod tests {
             RepoStatus::Running { pid: 1 },
             RepoStatus::Queued,
         ]);
-        assert_eq!(state.refetchable_repos(), vec![0, 1, 2]);
+        assert_eq!(state.refetchable_repos(), vec![0, 1, 2, 4]);
         assert!(state.any_refetchable());
     }
 

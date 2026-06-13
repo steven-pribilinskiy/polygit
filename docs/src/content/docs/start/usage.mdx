@@ -1,6 +1,6 @@
 ---
 title: Usage
-description: Run pull-all in TUI or plain mode, point it at a directory, and tune concurrency and timeouts.
+description: Run polygit in TUI or plain mode, point it at a directory, and tune concurrency and timeouts.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -9,34 +9,34 @@ import { Aside } from '@astrojs/starlight/components';
 
 ```bash
 # TUI mode (auto-detected when stderr is a TTY)
-pull-all [DIR]
+polygit [DIR]
 
 # Default DIR is the current directory
-pull-all
+polygit
 ```
 
-`pull-all` scans `DIR` **recursively** for git repositories (pruning hidden /
+`polygit` scans `DIR` **recursively** for git repositories (pruning hidden /
 `node_modules` / `vendor` / `target` / `*.worktrees` dirs, and never descending into a found
 repo), then fast-forwards each in parallel as it's discovered. Point it at a whole tree:
 
 ```bash
-pull-all ~/projects     # crawl every project
-pull-all ~ --depth 4    # crawl home, capped 4 levels deep
-pull-all --no-recursive # legacy single-level scan (immediate children only)
+polygit ~/projects     # crawl every project
+polygit ~ --depth 4    # crawl home, capped 4 levels deep
+polygit --no-recursive # legacy single-level scan (immediate children only)
 ```
 
 Render the result as a collapsible [directory tree](../../guides/tree-view/) with `v t`, or as
 named [groups](../../guides/groups/) with `v g`. The list title shows live concurrency
-(`⇄ active/cap`); if a remote rate-limits the run, `pull-all` backs off automatically (see
+(`⇄ active/cap`); if a remote rate-limits the run, `polygit` backs off automatically (see
 the throttle banner) and retries with exponential backoff.
 
 ## Plain / headless mode
 
-When stdout isn't a TTY — or with `--no-tui` — `pull-all` streams plain output that's
+When stdout isn't a TTY — or with `--no-tui` — `polygit` streams plain output that's
 byte-compatible with the original bash reference, so it drops cleanly into scripts and CI.
 
 ```bash
-pull-all --no-tui ~/projects
+polygit --no-tui ~/projects
 ```
 
 ## Concurrency
@@ -44,8 +44,8 @@ pull-all --no-tui ~/projects
 Pulls run in parallel up to a limit (default: number of CPUs).
 
 ```bash
-pull-all -j 8 ~/projects        # flag
-PULL_JOBS=8 pull-all ~/projects # environment variable
+polygit -j 8 ~/projects        # flag
+PULL_JOBS=8 polygit ~/projects # environment variable
 ```
 
 ## Timeout
@@ -53,8 +53,8 @@ PULL_JOBS=8 pull-all ~/projects # environment variable
 Each individual pull is capped (default: 30 seconds) so one hung remote can't stall the run.
 
 ```bash
-pull-all --timeout 60 ~/projects
-PULL_TIMEOUT=60 pull-all ~/projects
+polygit --timeout 60 ~/projects
+PULL_TIMEOUT=60 polygit ~/projects
 ```
 
 ## The two panes
@@ -77,9 +77,9 @@ clickable links to the repo and design notes.
 
 ## Settings
 
-`,` opens a small settings modal (persisted in `~/.config/pull-all/state.json`), organized into
-a **General** section (panel padding, grouping) and a **Theming** section (icons, theme,
-background, contrast):
+`,` opens a small settings modal (persisted in `~/.config/polygit/state.json`), organized into
+a **General** section (panel padding, grouping, tree view), a **Theming** section (icons, theme,
+background, contrast), and a **Sync** section (auto-pull policy — see below):
 
 - **Panel padding** — a 1-cell inner padding inside every bordered panel and modal.
 - **Icons** — switch the status / column / marker glyphs between the default Unicode set and
@@ -88,7 +88,7 @@ background, contrast):
   accent color) so the app looks identical in any terminal. `auto` detects whether the
   terminal background is dark or light at startup (OSC 11 query, then `COLORFGBG`, then the
   Windows light/dark setting under WSL, then the macOS appearance setting) and applies the
-  matching palette. Under `auto`, pull-all also **re-detects at runtime** (via the tty-safe
+  matching palette. Under `auto`, polygit also **re-detects at runtime** (via the tty-safe
   sources — `COLORFGBG` / the WSL registry / macOS appearance), so toggling your OS between
   light and dark re-themes the running app within a couple of seconds, no restart needed.
 - **Background** — `normal` / `soft` / `terminal`. `normal` and `soft` paint a surface tone;
@@ -97,14 +97,36 @@ background, contrast):
 - **Contrast** — `normal` / `soft`. Independent of Background: it narrows the text/background
   distance and desaturates the accent + semantic colors. The two axes compose freely.
 - **Grouping** — render the list as named [group sections](../../guides/groups/) (same as `z`).
+- **Auto-pull on launch** — `on` / `off`. When off, launches never pull; the list shows cached
+  status and you pull on demand (`e` / `E`).
+- **Auto-pull limit** — `50` / `100` / `250` / `∞`. Skip the launch auto-pull when more repos
+  than this are discovered (so pointing polygit at a huge tree doesn't kick off hundreds of pulls).
+- **Auto-pull in tree view** — `on` / `off` (default off). The directory-tree view suppresses
+  the launch auto-pull unless you turn this on.
 
 The modal is fully mouse-driven too: click a row label to select it, click a radio chip to set
 that value, and close with the `[x]` button or a click anywhere outside. The same applies to
 every modal (help, confirm, copy menu, diff).
 
+## Auto-pull on launch & the status cache
+
+polygit is a polyrepo **status** dashboard first and a pull tool second. Every launch is useful
+immediately: the list is seeded from a persisted per-repo **status cache**
+(`~/.config/polygit/status-cache.json`), so each repo shows its last-known status the instant it's
+discovered — no git work required. Cached-but-not-pulled-this-session repos render **dim with a
+relative age** (e.g. `up-to-date 2d`, shown in the optional `t u` status column and the `i` info
+panel); pulling brightens them to the live result.
+
+Whether a launch **auto-pulls** is governed by the Settings → **Sync** section above. By default
+polygit auto-pulls small flat sets (the familiar behavior) but **skips** the auto-pull when there
+are more than 100 repos, or when the [directory-tree view](../../guides/tree-view/) is active —
+exactly the cases where pulling everything on startup is expensive or unwanted. When a launch
+skips auto-pull, the Result row reads "Ready — auto-pull off"; press **`E`** to pull every repo or
+**`e`** to pull just the selected one. Either way the cache is refreshed as repos are pulled.
+
 ## New-build reload
 
-pull-all watches its own binary while running. When a newer build lands at the same path
+polygit watches its own binary while running. When a newer build lands at the same path
 (e.g. `make install`'s atomic rename), a notice appears in the top-right corner with a
 `[reload]` button — clicking it restores the terminal and `exec`s the new binary with the same
 arguments, so the fresh build takes over in the same terminal and re-runs the pulls. `[x]`
