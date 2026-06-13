@@ -6,20 +6,23 @@ const status: Glyph[] = [
   { glyph: '⠋', tone: 'warn', label: 'Running', note: 'animated spinner while pulling' },
   { glyph: '◌', tone: 'muted', label: 'Up to date', note: 'already at the remote tip' },
   { glyph: '✓', tone: 'ok', label: 'Updated', note: 'fast-forwarded to new commits' },
-  { glyph: '⊝', tone: 'dim', label: 'No upstream', note: 'branch has no upstream — nothing to pull (not an error)' },
+  { glyph: '⊝', tone: 'dim', label: 'No upstream', note: 'branch has no upstream: nothing to pull (not an error)' },
   { glyph: '⊘', tone: 'dim', label: 'Skipped', note: 'dirty tree / not ff-able' },
-  { glyph: '↯', tone: 'magenta', label: 'Throttled', note: 'remote rate-limited — concurrency drops, auto-retried with backoff' },
+  { glyph: '↯', tone: 'magenta', label: 'Throttled', note: 'remote rate-limited: concurrency drops, auto-retried with backoff' },
   { glyph: '✗', tone: 'err', label: 'Failed', note: 'the pull errored' },
+  { glyph: '◌', tone: 'dim', label: 'Cached', note: 'last-known status from the cache, shown dim with an age until pulled' },
 ];
 
 const columns: Glyph[] = [
-  { glyph: '↑3 ↓1', tone: 'mixed', label: 'Ahead / behind', note: 'column key: a — yellow ahead, cyan behind' },
-  { glyph: '•2', tone: 'err', label: 'Dirty', note: 'column key: d — uncommitted file count' },
-  { glyph: '4d', tone: 'muted', label: 'Last commit', note: 'column key: l — relative age' },
-  { glyph: '⑂2', tone: 'cyan', label: 'Worktrees', note: 'column key: w — linked worktree count' },
-  { glyph: '⑂3', tone: 'ok', label: 'Branches', note: 'column key: b — local branches excluding main/dev' },
-  { glyph: '≡1', tone: 'magenta', label: 'Stashes', note: 'column key: s — stash entry count' },
-  { glyph: '●', tone: 'err', label: 'Dirty marker', note: 'repo page: branch/worktree has uncommitted changes' },
+  { glyph: 'ahead-behind', tone: 'mixed', label: 'Ahead / behind', note: 'key a · commits ahead (green) and behind (cyan) upstream' },
+  { glyph: '•2', tone: 'err', label: 'Dirty', note: 'key d · uncommitted file count' },
+  { glyph: '4d', tone: 'muted', label: 'Last commit', note: 'key l · relative age' },
+  { glyph: '⑃2', tone: 'cyan', label: 'Worktrees', note: 'key w · linked worktree count' },
+  { glyph: '⑂3', tone: 'ok', label: 'Branches', note: 'key b · local branches excluding main/dev' },
+  { glyph: '≡1', tone: 'magenta', label: 'Stashes', note: 'key s · stash entry count' },
+  { glyph: '⇣7', tone: 'ok', label: 'Pulled', note: 'key p · commits the last pull landed' },
+  { glyph: '±12', tone: 'cyan', label: 'Changed', note: 'key c · files the last pull changed' },
+  { glyph: '●', tone: 'err', label: 'Dirty marker', note: 'always-on: repo has uncommitted changes' },
 ];
 ---
 
@@ -47,7 +50,16 @@ const columns: Glyph[] = [
       {
         columns.map((item) => (
           <li>
-            <span class={`legend__glyph legend__glyph--${item.tone}`}>{item.glyph}</span>
+            <span class={`legend__glyph legend__glyph--${item.tone}`}>
+              {item.tone === 'mixed' ? (
+                <>
+                  <span class="g1">↑3</span>
+                  <span class="g2">↓1</span>
+                </>
+              ) : (
+                item.glyph
+              )}
+            </span>
             <span class="legend__text">
               <strong>{item.label}</strong>
               {item.note && <em>{item.note}</em>}
