@@ -1,0 +1,76 @@
+---
+/**
+ * A terminal "window" framing a real recorded polygit session, played by asciinema-player.
+ * The frame is part of the brand: a mono title bar echoing the app's own `[1] polygit · …`
+ * header. Plays on its own when motion is allowed; shows a populated still + controls otherwise.
+ */
+interface Props {
+  /** Cast file under /public (without the base prefix). */
+  src: string;
+  /** Title-bar text — mirrors the app's pane title. */
+  title?: string;
+  /** Poster frame time in seconds (a populated frame, not the blank cold start). */
+  poster?: number;
+}
+const { src, title = '[1] polygit', poster = 3.4 } = Astro.props;
+const castUrl = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${src}`;
+---
+
+<figure class="termcast" data-termcast>
+  <div class="termcast__bar" aria-hidden="true">
+    <span class="termcast__dots"><i></i><i></i><i></i></span>
+    <span class="termcast__title">{title}</span>
+    <span class="termcast__hint">recorded session</span>
+  </div>
+  <div class="termcast__screen" data-termcast-screen data-cast={castUrl} data-poster={poster}></div>
+  <figcaption class="sr-only">A recorded polygit session: discovering repos, pulling them in parallel, and opening the info panel.</figcaption>
+</figure>
+
+<script>
+  import * as AsciinemaPlayer from 'asciinema-player';
+  import 'asciinema-player/dist/bundle/asciinema-player.css';
+
+  const mounted = new WeakSet<Element>();
+
+  function mount(el: HTMLElement) {
+    if (mounted.has(el)) return;
+    mounted.add(el);
+    const cast = el.dataset.cast!;
+    const poster = Number(el.dataset.poster ?? 0);
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    AsciinemaPlayer.create(cast, el, {
+      autoPlay: !reduce,
+      loop: !reduce,
+      preload: true,
+      controls: true,
+      poster: `npt:${poster}`,
+      idleTimeLimit: 1.4,
+      terminalFontFamily:
+        "ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace",
+      fit: 'width',
+    });
+  }
+
+  function init() {
+    document
+      .querySelectorAll<HTMLElement>('[data-termcast-screen]')
+      .forEach((el) => {
+        // Only spin up the player when it scrolls near the viewport — cheaper first paint.
+        const io = new IntersectionObserver(
+          (entries, obs) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                mount(entry.target as HTMLElement);
+                obs.disconnect();
+              }
+            }
+          },
+          { rootMargin: '200px' }
+        );
+        io.observe(el);
+      });
+  }
+
+  init();
+  document.addEventListener('astro:page-load', init);
+</script>

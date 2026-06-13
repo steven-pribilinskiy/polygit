@@ -1,68 +1,74 @@
 ---
 title: polygit
-description: Interactive multi-repo git pull dashboard — a Rust/ratatui TUI that pulls every git repo in a directory in parallel.
+description: A keyboard-driven terminal dashboard for many git repos at once. Discover them, see status from cache instantly, and fast-forward them all in parallel.
 template: splash
-hero:
-  tagline: Pull every git repo in a directory at once. A fast, keyboard-driven terminal dashboard with live per-repo logs, branch/worktree/stash management, and inline diffs.
-  actions:
-    - text: Get started
-      link: start/installation/
-      icon: right-arrow
-      variant: primary
-    - text: View on GitHub
-      link: https://github.com/steven-pribilinskiy/polygit
-      icon: external
-      variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { LinkCard } from '@astrojs/starlight/components';
+import TerminalCast from '../../components/TerminalCast.astro';
 
-## What it does
+<div class="hero-term not-content">
+  <div class="hero-term__intro">
+    <p class="hero-term__prompt">polyrepo git, in your terminal</p>
+    <h1 class="hero-term__title">polygit<span class="hero-term__cursor" aria-hidden="true"></span></h1>
+    <p class="hero-term__tagline">
+      Point it at a directory of repos. It shows every one's status <b>instantly</b> from cache,
+      then fast-forwards them <b>in parallel</b> with live per-repo logs. Branches, worktrees,
+      stashes, and diffs included, all without leaving the terminal.
+    </p>
+    <div class="hero-term__actions">
+      <a class="btn-term btn-term--primary" href="start/installation/">Install polygit →</a>
+      <a class="btn-term btn-term--ghost" href="https://github.com/steven-pribilinskiy/polygit">View source</a>
+    </div>
+    <div class="hero-term__install">
+      <span aria-hidden="true">$</span> polygit ~/projects
+    </div>
+  </div>
 
-`polygit` walks a directory, finds every git repo, and fast-forwards them all in
-parallel — streaming each repo's output into a two-pane TUI while you watch. Drill
-into any repo to manage its branches, worktrees, and stashes, and read diffs inline
-without leaving the terminal.
+  <TerminalCast src="polygit-demo.cast" title="[1] polygit · ~/projects" />
+</div>
 
-<CardGrid stagger>
-  <Card title="Parallel pulls" icon="rocket">
-    Every repo pulls at once, bounded by a concurrency limit (default: `nproc`).
-    Live, per-repo log streaming in a scrollable preview pane.
-  </Card>
-  <Card title="Branch & worktree management" icon="git-branch">
-    A full-screen repo page lists every local branch, worktree, and stash with
-    fresh ahead/behind. Check out, fast-forward, delete, or discard — with confirms.
-  </Card>
-  <Card title="Inline diffs" icon="document">
-    Open a 90%-of-screen diff modal on any stash or dirty tree. Toggle between
-    uncommitted changes and everything since you forked from the base branch.
-  </Card>
-  <Card title="Keyboard-first" icon="laptop">
-    Vim-style navigation, mouse support, clickable status-bar commands, name + status
-    filters, sortable columns, and a tabbed help modal. Jump into
-    [lazygit](https://github.com/jesseduffield/lazygit) on any repo with `l`. Works headless
-    with `--no-tui`.
-  </Card>
-</CardGrid>
+<p class="term-rule not-content">what it does</p>
 
-## Quick start
+<ul class="feat not-content">
+  <li>
+    <span class="feat__glyph feat__glyph--ok" aria-hidden="true">✓</span>
+    <h3>Pull a fleet at once</h3>
+    <p>Every repo fast-forwards in parallel, bounded by a concurrency limit (default: <code>nproc</code>), with live per-repo log streaming. Auto-pull on launch is configurable: it pulls small flat sets and skips big trees or the directory-tree view.</p>
+  </li>
+  <li>
+    <span class="feat__glyph feat__glyph--cyan" aria-hidden="true">◌</span>
+    <h3>Useful before it pulls</h3>
+    <p>A persisted status cache seeds the list the instant repos are discovered: last-known status shown dim with an age (<code>up-to-date 2d</code>) until you pull. No network needed to know where everything stands.</p>
+  </li>
+  <li>
+    <span class="feat__glyph feat__glyph--magenta" aria-hidden="true">⑂</span>
+    <h3>Manage each repo</h3>
+    <p>A full-screen page per repo lists every branch, worktree, and stash with fresh ahead/behind. Check out, fast-forward, delete, or discard (with confirms), and read inline diffs in a 90%-of-screen modal.</p>
+  </li>
+  <li>
+    <span class="feat__glyph feat__glyph--warn" aria-hidden="true">⌨</span>
+    <h3>Keyboard-first, mouse-aware</h3>
+    <p>Vim-style navigation, a searchable keymap, sortable columns, name and status filters, and clickable status-bar commands. Jump into <a href="https://github.com/jesseduffield/lazygit">lazygit</a> on any repo with <kbd>l</kbd>. Runs headless with <code>--no-tui</code>.</p>
+  </li>
+</ul>
+
+<p class="term-rule not-content">quick start</p>
 
 ```bash
-# Build and install to ~/bin
+# Build from source and install to ~/bin (needs Rust stable)
 make install
 
-# Run in any directory of repos
+# Run it in any tree of repos
 polygit ~/projects
 ```
 
-<CardGrid>
-  <LinkCard title="Installation" href="start/installation/" description="Build from source with cargo, or install the binary." />
-  <LinkCard title="Keybindings" href="guides/keybindings/" description="Every key, searchable — list, repo page, and diff modal." />
-  <LinkCard title="Columns & glyphs" href="guides/columns-and-glyphs/" description="Decode the status glyphs and optional columns." />
-  <LinkCard title="CLI flags & env" href="reference/cli/" description="Every flag, environment variable, and default." />
-</CardGrid>
+<LinkCard title="Installation" href="start/installation/" description="Build from source with cargo, or install the binary onto your PATH." />
+<LinkCard title="Keybindings" href="guides/keybindings/" description="Every key, searchable: list, repo page, and diff modal." />
+<LinkCard title="Columns & glyphs" href="guides/columns-and-glyphs/" description="Decode the status glyphs, the optional columns, and the cached-status display." />
+<LinkCard title="CLI flags & env" href="reference/cli/" description="Every flag, environment variable, and default." />
 
 :::note[Canonical Rust build]
-This is the canonical Rust/ratatui implementation. It also fronts Go, Bun, and
-bash builds via `polygit go|bun|cli` — see [Sibling builds](reference/siblings/).
+This is the canonical Rust/ratatui implementation. The same binary also fronts Go, Bun, and
+bash builds via `polygit go|bun|cli`; see [Sibling builds](reference/siblings/).
 :::
