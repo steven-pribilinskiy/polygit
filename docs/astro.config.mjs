@@ -1,11 +1,17 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import remarkGfm from 'remark-gfm';
 
 // Project site served from a subpath on GitHub Pages.
 export default defineConfig({
   site: 'https://steven-pribilinskiy.github.io',
   base: '/polygit',
+  // Astro applies GFM to `.md` automatically but NOT to `.mdx` tables — add remark-gfm
+  // explicitly so the tables in our .mdx guides render (it extends to MDX by default).
+  markdown: {
+    remarkPlugins: [remarkGfm],
+  },
   integrations: [
     starlight({
       title: 'polygit',
