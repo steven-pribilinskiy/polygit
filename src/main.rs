@@ -1859,6 +1859,8 @@ async fn run_event_loop(
                         KeyCode::Char('w') => toggle_or_warn(&mut app, Column::Worktrees, "worktrees"),
                         KeyCode::Char('b') => toggle_or_warn(&mut app, Column::Branches, "extra branches"),
                         KeyCode::Char('s') => toggle_or_warn(&mut app, Column::Stashes, "stashes"),
+                        KeyCode::Char('p') => toggle_or_warn(&mut app, Column::PulledCommits, "pulled commits"),
+                        KeyCode::Char('c') => toggle_or_warn(&mut app, Column::PulledFiles, "changed files"),
                         KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::Enter => {
                             // Exit toggle mode and let the key run normally below.
                             app.pending_leader = None;
@@ -1909,6 +1911,8 @@ async fn run_event_loop(
                         KeyCode::Char('w') => Some(SortColumn::Worktrees),
                         KeyCode::Char('b') => Some(SortColumn::Branches),
                         KeyCode::Char('k') => Some(SortColumn::Stashes),
+                        KeyCode::Char('p') => Some(SortColumn::PulledCommits),
+                        KeyCode::Char('g') => Some(SortColumn::PulledFiles),
                         _ => None,
                     };
                     if let Some(column) = picked {
@@ -2278,7 +2282,9 @@ async fn run_event_loop(
                 if let Some(idx) = app.selected_repo_index() {
                     let repo = Arc::clone(&app.repos[idx]);
                     let mut state = repo.lock().unwrap();
-                    if state.details.is_none() && !state.details_loading {
+                    // Fetch when never loaded, or re-fetch when a pull marked details stale so
+                    // the panel reflects the new HEAD (sha, ahead/behind, last commit).
+                    if (state.details.is_none() || state.details_stale) && !state.details_loading {
                         state.details_loading = true;
                         drop(state);
                         tokio::spawn(run_repo_details(repo));

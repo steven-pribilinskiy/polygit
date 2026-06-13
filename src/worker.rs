@@ -13,7 +13,8 @@ use crate::app::{
 };
 use crate::git::{
     base_file_list, base_merge_base, branch_diff_stats, branch_file_diff, branch_file_list,
-    checkout_branch, classify_failure, classify_pull_output, default_base_branch, delete_branch, dirty_count,
+    checkout_branch, classify_failure, classify_pull_output, collect_pull_result,
+    default_base_branch, delete_branch, dirty_count,
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
@@ -38,6 +39,7 @@ pub async fn pull_repo(
         state.start = Some(started);
         state.elapsed = None;
         state.status_note = None;
+        state.pull_result = None;
         (state.path.clone(), state.name.clone())
     };
 
@@ -115,9 +117,14 @@ pub async fn pull_repo(
                     state.log.push(line.to_string());
                 }
             }
+            // Capture what the pull delivered (sha delta, commit/file counts, tags/branches)
+            // from the reflog + the captured pull output, for the columns + info panel.
+            let result = collect_pull_result(&path, &last_output).await;
             let mut state = repo_state.lock().unwrap();
             state.elapsed = Some(started.elapsed());
             state.status = RepoStatus::Updated;
+            state.pull_result = Some(result);
+            state.details_stale = true;
         }
         PullOutcome::Throttled => {
             // Tell the shared gate to back off, mark the repo, and schedule a backoff retry.
@@ -392,6 +399,7 @@ pub async fn run_repo_details(repo: SharedRepoState) {
     let mut state = repo.lock().unwrap();
     state.details = Some(details);
     state.details_loading = false;
+    state.details_stale = false;
 }
 
 /// Fetch the diff for one repo (working-tree changes if dirty, else the last pull's diff)
@@ -924,6 +932,8 @@ pub async fn run_refetch_batch(
             state.flash = flash;
             state.flash_until = flash.any().then(|| Instant::now() + FLASH_DURATION);
             state.details = Some(new_details);
+            // Details are fresh now — clear the post-pull stale flag pull_repo set.
+            state.details_stale = false;
         }));
     }
     for handle in handles {

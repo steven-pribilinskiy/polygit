@@ -91,6 +91,31 @@ pub struct RepoDetails {
     pub commit_timestamp: i64,
 }
 
+/// What the most recent pull (this session) delivered. `None` until a pull *updates* the repo;
+/// cleared at the start of every pull, so up-to-date repos carry no result. Runtime-only.
+#[derive(Debug, Clone, Default)]
+pub struct PullResult {
+    /// Short sha before the pull (`HEAD@{1}`); empty when unavailable (shallow / first pull).
+    pub prev_head: String,
+    /// Short sha after the pull (`HEAD`).
+    pub new_head: String,
+    /// Commits newly on the current branch (`HEAD@{1}..HEAD`).
+    pub commits: u32,
+    pub files: u32,
+    pub insertions: u32,
+    pub deletions: u32,
+    /// Best-effort counts parsed from the pull's fetch output (English-git heuristic).
+    pub new_tags: u32,
+    pub new_branches: u32,
+}
+
+impl PullResult {
+    /// Whether this result represents an actual delta worth surfacing.
+    pub fn has_delta(&self) -> bool {
+        self.commits > 0 || self.files > 0 || self.new_tags > 0 || self.new_branches > 0
+    }
+}
+
 /// Per-branch change counts vs the merge-base with the repo's default branch. `None` on a
 /// `BranchInfo` means the stats haven't been computed yet (loaded in a detached worker phase).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -370,6 +395,10 @@ pub enum Column {
     Worktrees,
     Branches,
     Stashes,
+    /// Commits the most recent pull landed on the current branch.
+    PulledCommits,
+    /// Files the most recent pull changed.
+    PulledFiles,
 }
 
 /// Which optional list columns are enabled. `#[serde(default)]` keeps older state files
@@ -384,6 +413,8 @@ pub struct ColumnFlags {
     pub worktrees: bool,
     pub branches: bool,
     pub stashes: bool,
+    pub pulled_commits: bool,
+    pub pulled_files: bool,
 }
 
 impl ColumnFlags {
@@ -503,6 +534,8 @@ pub enum SortColumn {
     Worktrees,
     Branches,
     Stashes,
+    PulledCommits,
+    PulledFiles,
 }
 
 impl SortColumn {
@@ -517,6 +550,8 @@ impl SortColumn {
             SortColumn::LastCommit => "last-commit",
             SortColumn::Worktrees => "worktrees",
             SortColumn::Branches => "branches",
+            SortColumn::PulledCommits => "pulled",
+            SortColumn::PulledFiles => "changed",
             SortColumn::Stashes => "stashes",
         }
     }
@@ -732,6 +767,10 @@ pub struct IconSet {
     pub branches: &'static str,
     pub worktrees: &'static str,
     pub stashes: &'static str,
+    /// Commits the last pull landed (pulled-commits column).
+    pub pulled: &'static str,
+    /// Files the last pull changed (changed-files column).
+    pub changed: &'static str,
     pub ahead: &'static str,
     pub behind: &'static str,
     pub warning: &'static str,
@@ -754,6 +793,8 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     // Distinct from `branches` (inverted fork) — same OCR block so it renders at the same width.
     worktrees: "⑃",
     stashes: "≡",
+    pulled: "⇣",
+    changed: "±",
     ahead: "↑",
     behind: "↓",
     warning: "⚠",
@@ -778,6 +819,8 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     branches: "🌿",
     worktrees: "🌳",
     stashes: "📦",
+    pulled: "📥",
+    changed: "📄",
     // Keep the compact 1-cell arrows for the tight ahead/behind numeric column — emoji arrows
     // are double-width and misalign it (and terminals disagree on their width).
     ahead: "↑",
@@ -958,6 +1001,12 @@ pub struct RepoState {
     /// "auth", "diverged", …) or "ref gone" for a deleted-upstream no-upstream. Cleared at the
     /// start of every pull.
     pub status_note: Option<&'static str>,
+    /// What the most recent pull delivered (commits/files/sha delta + best-effort tag/branch
+    /// counts). `Some` only after a pull *updated* the repo this session; cleared at pull start.
+    pub pull_result: Option<PullResult>,
+    /// Set when a pull updates the repo so the info panel re-fetches `details` (fresh sha,
+    /// ahead/behind, …) the next time it's viewed. Cleared once details are refreshed.
+    pub details_stale: bool,
     /// Log ring buffer (stdout + stderr from git pull).
     pub log: LogBuffer,
     /// Whether the preview pane should auto-scroll to bottom.
@@ -1027,6 +1076,8 @@ impl RepoState {
             remote_url: None,
             status: RepoStatus::Queued,
             status_note: None,
+            pull_result: None,
+            details_stale: false,
             log: LogBuffer::default(),
             auto_scroll: true,
             preview_scroll: 0,
@@ -2824,6 +2875,14 @@ impl AppState {
                 let key = |state: &RepoState| state.details.as_ref().map_or(0, |d| d.stash_count);
                 key(&left).cmp(&key(&right))
             }
+            SortColumn::PulledCommits => {
+                let key = |state: &RepoState| state.pull_result.as_ref().map_or(0, |p| p.commits);
+                key(&left).cmp(&key(&right))
+            }
+            SortColumn::PulledFiles => {
+                let key = |state: &RepoState| state.pull_result.as_ref().map_or(0, |p| p.files);
+                key(&left).cmp(&key(&right))
+            }
         }
     }
 
@@ -3520,7 +3579,14 @@ impl AppState {
             Column::Worktrees => self.columns.worktrees = !self.columns.worktrees,
             Column::Branches => self.columns.branches = !self.columns.branches,
             Column::Stashes => self.columns.stashes = !self.columns.stashes,
+            Column::PulledCommits => self.columns.pulled_commits = !self.columns.pulled_commits,
+            Column::PulledFiles => self.columns.pulled_files = !self.columns.pulled_files,
         }
+    }
+
+    /// Whether any repo recorded a pull delta this session (drives the pulled-column auto-hide).
+    fn any_pull_result(&self) -> bool {
+        self.repos.iter().any(|repo| repo.lock().unwrap().pull_result.is_some())
     }
 
     /// Whether a column could show a meaningful value, or is still loading. Hidden only once
@@ -3561,6 +3627,10 @@ impl AppState {
                     }
                 })
             }
+            // The pulled columns come from the pulls themselves: visible while pulls are still
+            // running (data may yet arrive), then auto-hide once everything settled with nothing
+            // pulled.
+            Column::PulledCommits | Column::PulledFiles => !self.all_done || self.any_pull_result(),
         }
     }
 
@@ -3574,6 +3644,26 @@ impl AppState {
             worktrees: self.columns.worktrees && self.column_available(Column::Worktrees),
             branches: self.columns.branches && self.column_available(Column::Branches),
             stashes: self.columns.stashes && self.column_available(Column::Stashes),
+            pulled_commits: self.columns.pulled_commits
+                && self.column_available(Column::PulledCommits),
+            pulled_files: self.columns.pulled_files && self.column_available(Column::PulledFiles),
+        }
+    }
+
+    /// Whether a sort column's underlying value is currently visible on screen — drives which
+    /// entries the `s` (sort) leader menu offers. Name/branch/status-glyph/dirty-marker are
+    /// always shown; the rest track their optional column's effective visibility.
+    pub fn sort_column_visible(&self, column: SortColumn) -> bool {
+        let effective = self.effective_columns();
+        match column {
+            SortColumn::Name | SortColumn::Branch | SortColumn::Status | SortColumn::Dirty => true,
+            SortColumn::AheadBehind => effective.ahead_behind,
+            SortColumn::LastCommit => effective.last_commit,
+            SortColumn::Worktrees => effective.worktrees,
+            SortColumn::Branches => effective.branches,
+            SortColumn::Stashes => effective.stashes,
+            SortColumn::PulledCommits => effective.pulled_commits,
+            SortColumn::PulledFiles => effective.pulled_files,
         }
     }
 }

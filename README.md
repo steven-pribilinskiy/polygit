@@ -15,10 +15,11 @@ Interactive multi-repo git pull dashboard. Pulls every git repo in a directory i
 - **Throttle adaptation**: detects remote rate-limiting (HTTP 429 / "rate limit" / SSH connection throttling) as a distinct **throttled** state (`↯`), shows a warning banner, automatically halves concurrency, and re-queues throttled repos with exponential backoff — restoring full concurrency once the remote is quiet
 - Automatic one-shot retry of a failed pull before marking it failed — skipped for permanent errors (repository not found, auth failure, diverged branch) where retrying can't change the result
 - Dynamic `Errors (N)` page (after `Result`) listing each failed repo with its error output
+- **What the pull delivered**: optional **pulled** (`t p`, `⇣N` commits) and **changed** (`t c`, `±N` files) columns showing what each repo's pull landed this run; the info panel's **Pulled** row spells out the full delta — `oldsha → newsha · N commits · M files (+ins −del) · N new tags · N new branches` — and the panel re-fetches after a pull so its numbers reflect the new HEAD
 - Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`e` / `E`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees)
 - Action hints dim when they'd be a no-op
 - Worktree discovery (`.worktrees/*/.git`)
-- Sort the list (`s` leader, or click a column header) by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes — re-pick or re-click flips `▲`/`▼` (persisted; the list is always sorted, Name asc by default)
+- Sort the list (`s` leader, or click a column header) by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes / pulled / changed — re-pick or re-click flips `▲`/`▼` (persisted; the list is always sorted, Name asc by default). The sort menu lists only the columns currently visible
 - Filter repos by name (`/`) or by status (`f` leader: updated / up-to-date / skipped / failed / issues)
 - **Repo groups** (`z`): named list sections from `~/.config/pull-all/groups.json` — membership by `*`-pattern, static list, shell command, or a fetched JSON document; sort/filter apply within each group, big groups collapse (`Enter`/`Space`/click on the header), dynamic memberships are cached and refreshed with `Z`
 - Clickable 2-row column header with the active sort indicator; an always-on dirty marker (`•`) with the count (`•N`) when the dirty column is toggled. Count columns render a **dim zero** (not a blank), and a column every repo lacks (no worktrees/stashes, ≤1 branch) auto-hides — its `t`-menu chip goes dim and inert
@@ -109,9 +110,9 @@ The `cli` backend (`pull-all-repos`, the original parallel-pull bash script that
 | `R` | Retry all repos with an issue (failed or skipped) |
 | `e` | Refetch selected repo (re-pull regardless of status, unless it's in progress) |
 | `E` | Refetch all repos that aren't currently in progress |
-| `i` | Toggle the info panel — an additive block above the log/diff (status, branch, ahead/behind, remote, last commit, worktrees, changes, path) |
+| `i` | Toggle the info panel — an additive block above the log/diff (status, branch, pulled delta, ahead/behind, remote, last commit, worktrees, changes, path) |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
-| `t` | Column-toggle leader: press `t` then `u`/`a`/`d`/`l`/`w`/`b`/`s` to show/hide a column (mode stays active until `Esc`) |
+| `t` | Column-toggle leader: press `t` then `u`/`a`/`d`/`l`/`w`/`b`/`s`/`p`/`c` to show/hide a column (mode stays active until `Esc`) |
 | `s` | Sort leader: press `s` then `n`/`c`/`s`/`a`/`d`/`l`/`w`/`b`/`k` to sort by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes — re-pick flips `▲`/`▼` (or click a column header); the list is always sorted (Name asc by default) |
 | `f` | Status-filter leader: press `f` then `a`/`u`/`c`/`s`/`f`/`i` to filter the list by all / updated / up-to-date / skipped / failed / issues (applies on top of `/`) |
 | `o` | Open the selected repo's remote in the browser |
@@ -140,11 +141,11 @@ Opens a full-screen page for the selected repo that runs `git fetch` and lists e
 
 ### Columns (`t` leader)
 
-The list always shows the status glyph + name + branch + a dirty marker (an amber `•` for any repo with uncommitted changes — amber, not red, since it's a "modified" state, not an error). Press `t` then a column key to toggle extra columns: `u` status text (a short label per state — `queued`/`running`/`up-to-date`/`updated`/`no upstream`/`dirty`/`throttled` — with the specific failure kind on failed repos: `not found`, `auth`, `diverged`, `not a repo`, `timeout`, `network`, `lock`, and `ref gone` for a deleted upstream ref), `a` ahead/behind, `d` adds the dirty **count** (`•N`) to the always-on marker, `l` last-commit age, `w` worktree count (`⑃N`, cyan), `b` feature-branch count (`⑂N`, green — local branches excluding `main`/`dev`), `s` stash count (`≡N`). Count columns render a **dim zero** rather than a blank, so the column shape stays recognizable. A column every repo leaves empty (no worktrees, no stashes, or ≤1 branch everywhere) auto-hides once its data has loaded, and its `t`-menu chip goes dim and inert. The git-derived columns fetch per-repo details in the background the first time one is enabled (cells show `…` until ready); `w` is free from worktree discovery. Enabled columns persist across runs.
+The list always shows the status glyph + name + branch + a dirty marker (an amber `•` for any repo with uncommitted changes — amber, not red, since it's a "modified" state, not an error). Press `t` then a column key to toggle extra columns: `u` status text (a short label per state — `queued`/`running`/`up-to-date`/`updated`/`no upstream`/`dirty`/`throttled` — with the specific failure kind on failed repos: `not found`, `auth`, `diverged`, `not a repo`, `timeout`, `network`, `lock`, and `ref gone` for a deleted upstream ref), `a` ahead/behind, `d` adds the dirty **count** (`•N`) to the always-on marker, `l` last-commit age, `w` worktree count (`⑃N`, cyan), `b` feature-branch count (`⑂N`, green — local branches excluding `main`/`dev`), `s` stash count (`≡N`), `p` commits the last pull landed (`⇣N`, green), `c` files the last pull changed (`±N`, cyan). Count columns render a **dim zero** rather than a blank, so the column shape stays recognizable. A column every repo leaves empty (no worktrees, no stashes, or ≤1 branch everywhere) auto-hides once its data has loaded, and its `t`-menu chip goes dim and inert; the **pulled**/**changed** columns auto-hide once the run finishes having pulled nothing. The git-derived columns fetch per-repo details in the background the first time one is enabled (cells show `…` until ready); `w` is free from worktree discovery, and pulled/changed come straight from each pull. Enabled columns persist across runs.
 
 ### Info panel (`i`)
 
-`i` toggles an info block above the right pane's content (the pull log or the diff) for the selected repo: status (with how long the pull took), branch, ahead/behind, remote, last commit (hash · subject · author · relative date), worktrees, uncommitted/stash counts, and the local path. The block is additive — the log/diff stays beneath it — and tracks the selection as you move. The extra git facts are fetched lazily for the selected repo only.
+`i` toggles an info block above the right pane's content (the pull log or the diff) for the selected repo: status (with how long the pull took), branch, the **Pulled** delta when the repo updated this run (`oldsha → newsha` on one line, then `N commits · M files (+ins −del)`, then best-effort `N new tags · N new branches`), ahead/behind, remote, last commit (hash · subject · author · relative date), worktrees, uncommitted/stash counts, and the local path. The block is additive — the log/diff stays beneath it — and tracks the selection as you move. The extra git facts are fetched lazily for the selected repo only, and re-fetched after a pull so the panel reflects the new HEAD.
 
 The panel is interactive (it's a web app in a terminal):
 
@@ -203,7 +204,7 @@ Fold the tree with the mouse (click a folder header), `←`/`→` (collapse/expa
 
 ### Sorting (`s` leader / column headers)
 
-The list is always sorted — **Name ascending** is the default. Press `s` then a column key (`n` name, `c` branch, `s` status, `a` ahead/behind, `d` dirty, `l` last-commit, `w` worktrees, `b` branches, `k` stashes) — or click a column header (including the **branch** header). Re-picking the same column (or re-clicking the header) flips the direction; the header shows `▲`/`▼` on the active column and the footer shows a clickable `⟪column ▲⟫` tag. The order persists across runs.
+The list is always sorted — **Name ascending** is the default. Press `s` then a column key (`n` name, `c` branch, `s` status, `a` ahead/behind, `d` dirty, `l` last-commit, `w` worktrees, `b` branches, `k` stashes, `p` pulled commits, `g` changed files) — or click a column header (including the **branch** header). The sort menu only lists columns currently visible on screen. Re-picking the same column (or re-clicking the header) flips the direction; the header shows `▲`/`▼` on the active column and the footer shows a clickable `⟪column ▲⟫` tag. The order persists across runs.
 
 ### Help modal (`?`)
 

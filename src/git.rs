@@ -5,7 +5,7 @@ use anyhow::Result;
 use tokio::process::Command;
 use tokio::sync::{mpsc, Semaphore};
 
-use crate::app::{BranchInfo, BranchStats, DiffFile, RepoDetails, StashInfo, WorktreeInfo};
+use crate::app::{BranchInfo, BranchStats, DiffFile, PullResult, RepoDetails, StashInfo, WorktreeInfo};
 
 /// Branches excluded from the feature-branch count.
 const EXCLUDED_BRANCHES: [&str; 2] = ["main", "dev"];
@@ -170,6 +170,114 @@ pub async fn diff_stat(dir: &Path) -> Result<String> {
         .output()
         .await?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Parse `git diff --shortstat` (`" 12 files changed, 340 insertions(+), 58 deletions(-)"`) into
+/// `(files, insertions, deletions)`. The insertions/deletions clauses are each optional. Pure.
+pub fn parse_shortstat(line: &str) -> (u32, u32, u32) {
+    let mut files = 0u32;
+    let mut insertions = 0u32;
+    let mut deletions = 0u32;
+    // Clauses are comma-separated; each is "<n> <word>…". Match on the keyword in the clause.
+    for clause in line.split(',') {
+        let clause = clause.trim();
+        let Some(count) = clause.split_whitespace().next().and_then(|num| num.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if clause.contains("file") {
+            files = count;
+        } else if clause.contains("insertion") {
+            insertions = count;
+        } else if clause.contains("deletion") {
+            deletions = count;
+        }
+    }
+    (files, insertions, deletions)
+}
+
+/// Best-effort count of fetch effects from captured `git pull`/`git fetch` output, returning
+/// `(refs_updated, new_branches, new_tags)`. Recognizes the English-git markers `[new tag]`,
+/// `[new branch]`, and the `   abc..def  x -> y` / `+ abc...def  x -> y (forced update)` ref
+/// lines. Heuristic — localized or unusual output may not match. Pure.
+pub fn parse_fetch_summary(output: &str) -> (u32, u32, u32) {
+    let mut refs_updated = 0u32;
+    let mut new_branches = 0u32;
+    let mut new_tags = 0u32;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("[new tag]") {
+            new_tags += 1;
+        } else if trimmed.contains("[new branch]") {
+            new_branches += 1;
+        } else if trimmed.contains("->")
+            && (trimmed.contains("..") || trimmed.contains("(forced update)"))
+        {
+            // A ref-advance line: "   abc1234..def5678  main -> origin/main".
+            refs_updated += 1;
+        }
+    }
+    (refs_updated, new_branches, new_tags)
+}
+
+/// `git rev-parse --short <rev>` as a trimmed string; empty on failure.
+async fn rev_parse_short(dir_str: &str, rev: &str) -> String {
+    Command::new("git")
+        .args(["-C", dir_str, "rev-parse", "--short", rev])
+        .output()
+        .await
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Collect what the just-completed pull delivered: the sha delta (`HEAD@{1}` → `HEAD`), the
+/// commit/file/line counts from the reflog range, and best-effort tag/branch counts parsed from
+/// the captured pull `output`. Reflog data is exact; an unavailable `HEAD@{1}` (shallow / first
+/// pull) leaves the delta zeroed but still records the new sha and any parsed fetch effects.
+pub async fn collect_pull_result(dir: &Path, output: &str) -> PullResult {
+    let dir_str = dir.to_str().unwrap_or(".");
+
+    let prev_head = rev_parse_short(dir_str, "HEAD@{1}").await;
+    let new_head = rev_parse_short(dir_str, "HEAD").await;
+
+    let (commits, files, insertions, deletions) = if prev_head.is_empty() {
+        (0, 0, 0, 0)
+    } else {
+        let commits = Command::new("git")
+            .args(["-C", dir_str, "rev-list", "--count", "HEAD@{1}..HEAD"])
+            .output()
+            .await
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| String::from_utf8_lossy(&out.stdout).trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let shortstat = Command::new("git")
+            .args(["-C", dir_str, "diff", "--shortstat", "HEAD@{1}", "HEAD"])
+            .output()
+            .await
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+            .unwrap_or_default();
+        let (files, insertions, deletions) = parse_shortstat(&shortstat);
+        (commits, files, insertions, deletions)
+    };
+
+    // The ref-advance count is informative but not surfaced; only tags + new branches are shown.
+    let (_refs_updated, new_branches, new_tags) = parse_fetch_summary(output);
+
+    PullResult {
+        prev_head,
+        new_head,
+        commits,
+        files,
+        insertions,
+        deletions,
+        new_tags,
+        new_branches,
+    }
 }
 
 /// Discover worktree entries from `<cwd>/<repo>.worktrees/*/.git`.
@@ -1558,6 +1666,38 @@ mod tests {
         // Unknown output: no kind, retry stays on.
         assert_eq!(classify_failure("some brand-new git error\n"), None);
         assert_eq!(classify_failure(""), None);
+    }
+
+    #[test]
+    fn parse_shortstat_reads_all_clause_combinations() {
+        assert_eq!(
+            parse_shortstat(" 12 files changed, 340 insertions(+), 58 deletions(-)"),
+            (12, 340, 58)
+        );
+        // Insertions only.
+        assert_eq!(parse_shortstat(" 1 file changed, 5 insertions(+)"), (1, 5, 0));
+        // Deletions only.
+        assert_eq!(parse_shortstat(" 2 files changed, 7 deletions(-)"), (2, 0, 7));
+        // Mode-change-only diffs report just the file count.
+        assert_eq!(parse_shortstat(" 1 file changed"), (1, 0, 0));
+        // Empty (no changes) → all zero.
+        assert_eq!(parse_shortstat(""), (0, 0, 0));
+    }
+
+    #[test]
+    fn parse_fetch_summary_counts_tags_branches_and_ref_updates() {
+        let output = "\
+From github.com:org/repo
+   abc1234..def5678  main       -> origin/main
+ * [new branch]      feature    -> origin/feature
+ * [new tag]         v1.2.0     -> v1.2.0
+ * [new tag]         v1.2.1     -> v1.2.1
+ + aaa1111...bbb2222 wip        -> origin/wip  (forced update)
+";
+        // 2 ref advances (the `..` line and the forced-update `...` line), 1 new branch, 2 tags.
+        assert_eq!(parse_fetch_summary(output), (2, 1, 2));
+        // No fetch effects.
+        assert_eq!(parse_fetch_summary("Already up to date.\n"), (0, 0, 0));
     }
 
     #[test]

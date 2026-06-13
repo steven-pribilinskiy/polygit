@@ -24,6 +24,14 @@ Press `t` to enter the column-toggle leader, then a column key. The mode stays a
 | `w` | Worktree count | `⑃N` (cyan) |
 | `b` | Feature-branch count (local branches excluding `main`/`dev`) | `⑂N` (green) |
 | `s` | Stash count | `≡N` |
+| `p` | Commits the last pull landed | `⇣N` (green) |
+| `c` | Files the last pull changed | `±N` (cyan) |
+
+The **pulled** (`p`) and **changed** (`c`) columns report what the *most recent pull this run*
+delivered — commits landed on the current branch and files touched. Repos that were already
+up to date show a dim `0`; both columns auto-hide once the run finishes with nothing pulled.
+The full breakdown (old→new sha, line counts, new tags/branches) lives in the info panel's
+**Pulled** row (`i`).
 
 The **status** column spells the glyph out as a short label (`queued`, `running`,
 `up-to-date`, `updated`, `no upstream`, `dirty`, `throttled`), and gets more specific where
@@ -55,9 +63,12 @@ The list is always sorted — **Name ascending** is the default.
 | `w` | Worktree count |
 | `b` | Branch count |
 | `k` | Stash count |
+| `p` | Commits pulled |
+| `g` | Files changed |
 
 Re-picking the same column (or re-clicking its header) flips the direction. The sort
-persists across runs.
+persists across runs. The sort menu lists **only the columns currently visible** — toggle a
+column off and its sort option disappears too.
 
 :::note[Worktree vs branch glyph]
 Worktrees render `⑃N` (cyan) and branches `⑂N` (green) — distinguished by both the glyph
@@ -68,4 +79,6 @@ Worktrees render `⑃N` (cyan) and branches `⑂N` (green) — distinguished by 
 
 The git-derived columns (`a`/`d`/`l`/`b`/`s`) fetch per-repo details in the background the
 first time one is enabled — cells show `…` until the data is ready. The worktree column
-(`w`) is free, since worktrees are already discovered during the initial scan.
+(`w`) is free, since worktrees are already discovered during the initial scan. The pulled
+(`p`) and changed (`c`) columns come straight from each pull, so they need no extra fetch —
+they show `…` only while a repo is still pulling.

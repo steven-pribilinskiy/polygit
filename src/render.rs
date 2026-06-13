@@ -487,7 +487,9 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         + usize::from(columns.last_commit) * 15
         + usize::from(columns.worktrees) * (count_w + 1)
         + usize::from(columns.branches) * (count_w + 1)
-        + usize::from(columns.stashes) * (count_w + 1);
+        + usize::from(columns.stashes) * (count_w + 1)
+        + usize::from(columns.pulled_commits) * (count_w + 1)
+        + usize::from(columns.pulled_files) * (count_w + 1);
 
     let inner_width = inner.width as usize;
     let branch_col_width = inner_width
@@ -637,6 +639,21 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             if columns.stashes {
                 let count = state.details.as_ref().map(|details| details.stash_count);
                 spans.push(count_span(icons.stashes, count, Color::Magenta, flash.stashes));
+            }
+            // Pulled columns: the count from this run's pull. `…` while the repo is still in
+            // flight; a dim `0` once it settles having pulled nothing (up-to-date / skipped).
+            let pulled_count = |pick: fn(&crate::app::PullResult) -> u32| -> Option<u32> {
+                match &state.pull_result {
+                    Some(result) => Some(pick(result)),
+                    None if state.status.is_terminal() => Some(0),
+                    None => None,
+                }
+            };
+            if columns.pulled_commits {
+                spans.push(count_span(icons.pulled, pulled_count(|r| r.commits), Color::Green, false));
+            }
+            if columns.pulled_files {
+                spans.push(count_span(icons.changed, pulled_count(|r| r.files), Color::Cyan, false));
             }
 
             ListItem::new(Line::from(spans))
@@ -824,6 +841,12 @@ fn build_list_header(
     }
     if columns.stashes {
         cells.push(Cell { label: "st", width: count_w, lead: true, sort: Some(SortColumn::Stashes) });
+    }
+    if columns.pulled_commits {
+        cells.push(Cell { label: "pull", width: count_w, lead: true, sort: Some(SortColumn::PulledCommits) });
+    }
+    if columns.pulled_files {
+        cells.push(Cell { label: "chg", width: count_w, lead: true, sort: Some(SortColumn::PulledFiles) });
     }
 
     let active_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
@@ -1391,6 +1414,68 @@ fn build_info_lines(
     match branch_link {
         Some(url) => push_link(&mut lines, &mut clicks, "Branch", &branch, &url),
         None => lines.push(plain("Branch", branch)),
+    }
+
+    // Pulled — what the most recent pull delivered: the old→new sha (the before/after the user
+    // wants to see), commit/file counts, and best-effort new tags/branches. Shown only when a
+    // pull updated this repo this session with a real delta.
+    if let Some(pull) = state.pull_result.as_ref().filter(|result| result.has_delta()) {
+        // Line 1: prev → new sha. The new sha links to the commit on the remote when browsable.
+        let mut spans: Vec<Span> = vec![Span::styled(format!("{:<13}", "Pulled"), label)];
+        if !pull.prev_head.is_empty() {
+            spans.push(Span::styled(pull.prev_head.clone(), dim));
+            spans.push(Span::styled(" → ", Style::default().fg(Color::Green)));
+        }
+        let new_link = state
+            .remote_url
+            .as_deref()
+            .and_then(web_remote)
+            .filter(|_| !pull.new_head.is_empty())
+            .map(|base| format!("{base}/commit/{}", pull.new_head));
+        if let Some(url) = &new_link {
+            let prefix_w: usize = spans.iter().map(|span| span.width()).sum();
+            let sha_w = UnicodeWidthStr::width(pull.new_head.as_str()) as u16;
+            clicks.push((lines.len(), prefix_w as u16, prefix_w as u16 + sha_w, InfoAction::OpenUrl(url.clone())));
+        }
+        spans.push(Span::styled(pull.new_head.clone(), if new_link.is_some() { link } else { value }));
+        lines.push(Line::from(spans));
+
+        // Line 2: N commits · M files (+ins −del).
+        let plural = |count: u32, word: &str| if count == 1 { word.to_string() } else { format!("{word}s") };
+        lines.push(Line::from(vec![
+            Span::raw(format!("{:<13}", "")),
+            Span::styled(
+                format!(
+                    "{} {} · {} {} ",
+                    pull.commits,
+                    plural(pull.commits, "commit"),
+                    pull.files,
+                    plural(pull.files, "file"),
+                ),
+                value,
+            ),
+            Span::styled("(", dim),
+            Span::styled(format!("+{}", pull.insertions), Style::default().fg(Color::Green)),
+            Span::raw(" "),
+            Span::styled(format!("−{}", pull.deletions), Style::default().fg(Color::Red)),
+            Span::styled(")", dim),
+        ]));
+
+        // Line 3 (optional): best-effort new tags / branches.
+        if pull.new_tags > 0 || pull.new_branches > 0 {
+            let mut parts: Vec<String> = Vec::new();
+            if pull.new_tags > 0 {
+                parts.push(format!("{} new {}", pull.new_tags, plural(pull.new_tags, "tag")));
+            }
+            if pull.new_branches > 0 {
+                let word = if pull.new_branches == 1 { "branch" } else { "branches" };
+                parts.push(format!("{} new {word}", pull.new_branches));
+            }
+            lines.push(Line::from(vec![
+                Span::raw(format!("{:<13}", "")),
+                Span::styled(parts.join(" · "), dim),
+            ]));
+        }
     }
 
     if let Some(details) = &state.details {
@@ -2086,7 +2171,11 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         app.column_available(Column::Worktrees),
         app.column_available(Column::Branches),
         app.column_available(Column::Stashes),
+        app.column_available(Column::PulledCommits),
+        app.column_available(Column::PulledFiles),
     );
+    // Which sort options the `s` menu offers — only columns currently visible on screen.
+    let sort_vis = |column: SortColumn| app.sort_column_visible(column);
     let status_filter = app.status_filter;
     let sort_column = app.sort_column;
     let sort_dir = app.sort_dir;
@@ -2177,6 +2266,16 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             } else {
                 disabled_item("s", "stashes")
             },
+            if avail.3 {
+                toggle_item(columns.pulled_commits, "p", "pulled", Column::PulledCommits)
+            } else {
+                disabled_item("p", "pulled")
+            },
+            if avail.4 {
+                toggle_item(columns.pulled_files, "c", "changed", Column::PulledFiles)
+            } else {
+                disabled_item("c", "changed")
+            },
         ];
         for (index, entry) in entries.into_iter().enumerate() {
             if index > 0 {
@@ -2232,17 +2331,35 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         };
         let mut segments: Vec<(String, Style, Option<Command>)> =
             vec![("sort: ".to_string(), hint, None)];
-        let entries = [
+        // Only offer sorts whose column is actually on screen — name/branch/status/dirty are
+        // always visible; the rest follow their effective column.
+        let mut entries: Vec<[(String, Style, Option<Command>); 3]> = vec![
             sort_item("n", "name", SortColumn::Name),
             sort_item("c", "branch", SortColumn::Branch),
             sort_item("s", "status", SortColumn::Status),
-            sort_item("a", "ahead/behind", SortColumn::AheadBehind),
             sort_item("d", "dirty", SortColumn::Dirty),
-            sort_item("l", "last-commit", SortColumn::LastCommit),
-            sort_item("w", "worktrees", SortColumn::Worktrees),
-            sort_item("b", "branches", SortColumn::Branches),
-            sort_item("k", "stashes", SortColumn::Stashes),
         ];
+        if sort_vis(SortColumn::AheadBehind) {
+            entries.push(sort_item("a", "ahead/behind", SortColumn::AheadBehind));
+        }
+        if sort_vis(SortColumn::LastCommit) {
+            entries.push(sort_item("l", "last-commit", SortColumn::LastCommit));
+        }
+        if sort_vis(SortColumn::Worktrees) {
+            entries.push(sort_item("w", "worktrees", SortColumn::Worktrees));
+        }
+        if sort_vis(SortColumn::Branches) {
+            entries.push(sort_item("b", "branches", SortColumn::Branches));
+        }
+        if sort_vis(SortColumn::Stashes) {
+            entries.push(sort_item("k", "stashes", SortColumn::Stashes));
+        }
+        if sort_vis(SortColumn::PulledCommits) {
+            entries.push(sort_item("p", "pulled", SortColumn::PulledCommits));
+        }
+        if sort_vis(SortColumn::PulledFiles) {
+            entries.push(sort_item("g", "changed", SortColumn::PulledFiles));
+        }
         for (index, entry) in entries.into_iter().enumerate() {
             if index > 0 {
                 segments.push((" · ".to_string(), hint, None));
