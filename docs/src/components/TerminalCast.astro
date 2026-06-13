@@ -2,10 +2,12 @@
 /**
  * A terminal "window" framing a real recorded polygit session, played by asciinema-player.
  * The frame is part of the brand: a mono title bar echoing the app's own `[1] polygit · …`
- * header. Plays on its own when motion is allowed; shows a populated still + controls otherwise.
+ * header. Two recordings exist — `<base>-light.cast` and `<base>-dark.cast` (polygit's own
+ * light/dark palette) — and the player swaps to match the page theme. Plays on its own when
+ * motion is allowed; shows a populated still + controls otherwise.
  */
 interface Props {
-  /** Cast file under /public (without the base prefix). */
+  /** Base cast name under /public, WITHOUT the `-light`/`-dark` suffix or `.cast`. */
   src: string;
   /** Title-bar text — mirrors the app's pane title. */
   title?: string;
@@ -13,7 +15,7 @@ interface Props {
   poster?: number;
 }
 const { src, title = '[1] polygit', poster = 3.4 } = Astro.props;
-const castUrl = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${src}`;
+const base = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${src}`;
 ---
 
 <figure class="termcast" data-termcast>
@@ -22,7 +24,7 @@ const castUrl = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${src}`;
     <span class="termcast__title">{title}</span>
     <span class="termcast__hint">recorded session</span>
   </div>
-  <div class="termcast__screen" data-termcast-screen data-cast={castUrl} data-poster={poster}></div>
+  <div class="termcast__screen" data-termcast-screen data-base={base} data-poster={poster}></div>
   <figcaption class="sr-only">A recorded polygit session: discovering repos, pulling them in parallel, and opening the info panel.</figcaption>
 </figure>
 
@@ -30,15 +32,24 @@ const castUrl = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${src}`;
   import * as AsciinemaPlayer from 'asciinema-player';
   import 'asciinema-player/dist/bundle/asciinema-player.css';
 
-  const mounted = new WeakSet<Element>();
+  type Entry = { player: { dispose?: () => void }; theme: string };
+  const players = new WeakMap<HTMLElement, Entry>();
 
-  function mount(el: HTMLElement) {
-    if (mounted.has(el)) return;
-    mounted.add(el);
-    const cast = el.dataset.cast!;
+  function currentTheme(): 'light' | 'dark' {
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  }
+
+  function render(el: HTMLElement) {
+    const theme = currentTheme();
+    const existing = players.get(el);
+    if (existing && existing.theme === theme) return;
+    existing?.player.dispose?.();
+    el.replaceChildren();
+
+    const base = el.dataset.base!;
     const poster = Number(el.dataset.poster ?? 0);
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    AsciinemaPlayer.create(cast, el, {
+    const player = AsciinemaPlayer.create(`${base}-${theme}.cast`, el, {
       autoPlay: !reduce,
       loop: !reduce,
       preload: true,
@@ -49,26 +60,39 @@ const castUrl = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${src}`;
         "ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace",
       fit: 'width',
     });
+    players.set(el, { player, theme });
   }
 
   function init() {
-    document
-      .querySelectorAll<HTMLElement>('[data-termcast-screen]')
-      .forEach((el) => {
-        // Only spin up the player when it scrolls near the viewport — cheaper first paint.
-        const io = new IntersectionObserver(
-          (entries, obs) => {
-            for (const entry of entries) {
-              if (entry.isIntersecting) {
-                mount(entry.target as HTMLElement);
-                obs.disconnect();
-              }
+    const screens = document.querySelectorAll<HTMLElement>('[data-termcast-screen]');
+    screens.forEach((el) => {
+      // Spin up the player only when it nears the viewport.
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              render(entry.target as HTMLElement);
+              obs.disconnect();
             }
-          },
-          { rootMargin: '200px' }
-        );
-        io.observe(el);
-      });
+          }
+        },
+        { rootMargin: '200px' }
+      );
+      io.observe(el);
+    });
+
+    // Re-render with the matching cast whenever the site theme flips.
+    const themeObserver = new MutationObserver(() => {
+      document
+        .querySelectorAll<HTMLElement>('[data-termcast-screen]')
+        .forEach((el) => {
+          if (players.has(el)) render(el);
+        });
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
   }
 
   init();

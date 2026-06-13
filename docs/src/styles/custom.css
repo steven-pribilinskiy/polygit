@@ -19,13 +19,13 @@
   --sl-color-gray-3: oklch(0.52 0.012 152);
   --sl-color-gray-7: oklch(0.96 0.008 152);
 
-  /* The terminal surface used by the hero + any rendered TUI frame — dark in both themes so a
-     terminal reads as a terminal regardless of page theme. */
-  --term-bg: oklch(0.19 0.014 152);
-  --term-bg-bar: oklch(0.24 0.016 152);
-  --term-border: oklch(0.34 0.02 152);
-  --term-ink: oklch(0.93 0.01 152);
-  --term-dim: oklch(0.62 0.012 152);
+  /* The terminal surface follows the page theme so the recorded session matches it. These light
+     values mirror polygit's own light palette (~#f5f6f8 bg). */
+  --term-bg: oklch(0.975 0.004 152);
+  --term-bg-bar: oklch(0.94 0.006 152);
+  --term-border: oklch(0.86 0.008 152);
+  --term-ink: oklch(0.26 0.012 152);
+  --term-dim: oklch(0.5 0.012 152);
 
   /* Glyph roles (light) — each pairs with a glyph + text label, never color-only. */
   --glyph-dim: oklch(0.62 0.012 152);
@@ -51,6 +51,8 @@
   --term-bg: oklch(0.17 0.013 152);
   --term-bg-bar: oklch(0.22 0.015 152);
   --term-border: oklch(0.34 0.02 152);
+  --term-ink: oklch(0.93 0.01 152);
+  --term-dim: oklch(0.62 0.012 152);
 
   --glyph-dim: oklch(0.55 0.012 152);
   --glyph-muted: oklch(0.7 0.012 152);
