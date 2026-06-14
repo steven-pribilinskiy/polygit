@@ -148,6 +148,8 @@ pub struct BranchInfo {
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub last_commit_rel: String,
+    /// Committer Unix timestamp of this branch's tip (for chronological age sorting); 0 if unknown.
+    pub last_commit_secs: i64,
     pub subject: String,
     /// Short HEAD sha of this branch (info panel).
     pub commit_sha: String,
@@ -364,6 +366,8 @@ pub struct PageRow {
     pub behind: Option<u32>,
     pub upstream: Option<String>,
     pub last_commit_rel: String,
+    /// Committer Unix timestamp of the tip commit (for age sorting); 0 for stashes / unknown.
+    pub last_commit_secs: i64,
     pub subject: String,
     /// Change stats vs the base branch (branch/worktree rows); `None` for stashes or while loading.
     pub stats: Option<BranchStats>,
@@ -445,6 +449,59 @@ pub enum RepoPageColumn {
     Base,
     Age,
     Subject,
+}
+
+/// A sortable repo-page column (the target of a header click). `Name` sorts by branch name; the
+/// rest mirror the `RepoPageColumn` data columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoPageSort {
+    Name,
+    AheadBehind,
+    Dirty,
+    Added,
+    Modified,
+    Deleted,
+    Total,
+    Upstream,
+    Base,
+    Age,
+    Subject,
+}
+
+/// Order two repo-page rows by `sort` (ascending); name is the stable tiebreak. The caller applies
+/// the direction. Worktree/stash rows missing a field sort as if zero/empty.
+pub fn repo_page_row_cmp(sort: RepoPageSort, first: &PageRow, second: &PageRow) -> std::cmp::Ordering {
+    let stat = |row: &PageRow, pick: fn(&BranchStats) -> u32| row.stats.as_ref().map(pick).unwrap_or(0);
+    let name = |row: &PageRow| row.branch.to_lowercase();
+    match sort {
+        RepoPageSort::Name => name(first).cmp(&name(second)),
+        RepoPageSort::AheadBehind => (first.behind.unwrap_or(0), first.ahead.unwrap_or(0))
+            .cmp(&(second.behind.unwrap_or(0), second.ahead.unwrap_or(0))),
+        RepoPageSort::Dirty => first.dirty_count.cmp(&second.dirty_count),
+        RepoPageSort::Added => stat(first, |stat| stat.added).cmp(&stat(second, |stat| stat.added)),
+        RepoPageSort::Modified => {
+            stat(first, |stat| stat.modified).cmp(&stat(second, |stat| stat.modified))
+        }
+        RepoPageSort::Deleted => {
+            stat(first, |stat| stat.deleted).cmp(&stat(second, |stat| stat.deleted))
+        }
+        RepoPageSort::Total => stat(first, |stat| stat.total()).cmp(&stat(second, |stat| stat.total())),
+        RepoPageSort::Upstream => first
+            .upstream
+            .clone()
+            .unwrap_or_default()
+            .to_lowercase()
+            .cmp(&second.upstream.clone().unwrap_or_default().to_lowercase()),
+        RepoPageSort::Base => first
+            .base
+            .clone()
+            .unwrap_or_default()
+            .to_lowercase()
+            .cmp(&second.base.clone().unwrap_or_default().to_lowercase()),
+        RepoPageSort::Age => first.last_commit_secs.cmp(&second.last_commit_secs),
+        RepoPageSort::Subject => first.subject.to_lowercase().cmp(&second.subject.to_lowercase()),
+    }
+    .then_with(|| name(first).cmp(&name(second)))
 }
 
 /// Which repo-page branch columns are shown. Defaults to all on; persisted in state.json.
@@ -1694,6 +1751,12 @@ pub struct AppState {
     pub repo_page_toggle: bool,
     /// Clickable repo-page column-toggle chips: `(row, col_start, col_end, column)`.
     pub repo_page_toggle_click: Vec<(u16, u16, u16, RepoPageColumn)>,
+    /// Repo-page branch-table sort column; `None` = natural order (HEAD first). Session-only.
+    pub repo_page_sort: Option<RepoPageSort>,
+    /// Direction for `repo_page_sort`.
+    pub repo_page_sort_dir: SortDir,
+    /// Clickable repo-page sort headers: `(row, col_start, col_end, sort)`. Rebuilt each render.
+    pub repo_page_sort_click: Vec<(u16, u16, u16, RepoPageSort)>,
     /// Show the bottom info panel on the repo page (persisted, default on).
     pub repo_page_info: bool,
     /// The open base-branch picker (clicking a `base` cell or pressing `b`), if any.
@@ -1866,6 +1929,9 @@ impl AppState {
             repo_page_columns: persisted.repo_page_columns,
             repo_page_toggle: false,
             repo_page_toggle_click: Vec::new(),
+            repo_page_sort: None,
+            repo_page_sort_dir: SortDir::Asc,
+            repo_page_sort_click: Vec::new(),
             repo_page_info: persisted.repo_page_info,
             base_picker: None,
             base_picker_area: Rect::default(),
@@ -3391,6 +3457,7 @@ impl AppState {
                 behind: branch.behind,
                 upstream: branch.upstream.clone(),
                 last_commit_rel: branch.last_commit_rel.clone(),
+                last_commit_secs: branch.last_commit_secs,
                 subject: branch.subject.clone(),
                 stats: branch.stats,
                 commit_sha: branch.commit_sha.clone(),
@@ -3422,6 +3489,7 @@ impl AppState {
                 last_commit_rel: branch_info
                     .map(|info| info.last_commit_rel.clone())
                     .unwrap_or_default(),
+                last_commit_secs: branch_info.map(|info| info.last_commit_secs).unwrap_or(0),
                 subject: String::new(),
                 stats: branch_info.and_then(|info| info.stats),
                 commit_sha: branch_info.map(|info| info.commit_sha.clone()).unwrap_or_default(),
@@ -3445,6 +3513,7 @@ impl AppState {
                 behind: None,
                 upstream: None,
                 last_commit_rel: String::new(),
+                last_commit_secs: 0,
                 subject: String::new(),
                 stats: None,
                 commit_sha: String::new(),
@@ -3454,7 +3523,51 @@ impl AppState {
                 base_is_override: false,
             });
         }
+        // Sort the branch and worktree sections independently by the active column (stashes keep
+        // their natural recency order). `None` leaves git's order (HEAD first).
+        if let Some(sort) = self.repo_page_sort {
+            let dir = self.repo_page_sort_dir;
+            let branch_count = page.branches.len();
+            let worktree_count = page.worktrees.len();
+            let order = |first: &PageRow, second: &PageRow| {
+                let ord = repo_page_row_cmp(sort, first, second);
+                if dir == SortDir::Desc { ord.reverse() } else { ord }
+            };
+            rows[..branch_count].sort_by(order);
+            rows[branch_count..branch_count + worktree_count].sort_by(order);
+        }
         rows
+    }
+
+    /// Set/flip the repo-page branch-table sort, keeping the selection on the same row.
+    pub fn set_repo_page_sort(&mut self, sort: RepoPageSort) {
+        let prev = self
+            .repo_page_rows()
+            .get(self.repo_page_selected)
+            .map(|row| (row.kind, row.branch.clone(), row.stash_index));
+        if self.repo_page_sort == Some(sort) {
+            self.repo_page_sort_dir = self.repo_page_sort_dir.flip();
+        } else {
+            self.repo_page_sort = Some(sort);
+            self.repo_page_sort_dir = SortDir::Asc;
+        }
+        if let Some(prev) = prev {
+            let rows = self.repo_page_rows();
+            if let Some(index) = rows
+                .iter()
+                .position(|row| (row.kind, row.branch.clone(), row.stash_index) == prev)
+            {
+                self.repo_page_selected = index;
+            }
+        }
+    }
+
+    /// The sort column whose clickable header contains `(col,row)`, if any.
+    pub fn repo_page_sort_at(&self, col: u16, row: u16) -> Option<RepoPageSort> {
+        self.repo_page_sort_click
+            .iter()
+            .find(|(header_row, start, end, _)| *header_row == row && col >= *start && col < *end)
+            .map(|(_, _, _, sort)| *sort)
     }
 
     /// Toggle a repo-page branch column on/off.
@@ -4146,6 +4259,7 @@ mod tests {
             ahead: upstream.map(|_| 0),
             behind: upstream.map(|_| 0),
             last_commit_rel: "1 day ago".into(),
+            last_commit_secs: 0,
             subject: "work".into(),
             commit_sha: "abc1234".into(),
             author: "Ada".into(),
@@ -4160,6 +4274,39 @@ mod tests {
     fn branch_stats_total_sums_fields() {
         let stats = BranchStats { added: 2, modified: 3, deleted: 1 };
         assert_eq!(stats.total(), 6);
+    }
+
+    #[test]
+    fn repo_page_row_cmp_sorts_by_column() {
+        let row = |name: &str, secs: i64, base: Option<&str>| PageRow {
+            kind: PageRowKind::Branch,
+            branch: name.to_string(),
+            path: PathBuf::from("/tmp"),
+            deletable: false,
+            is_head: false,
+            dirty: false,
+            dirty_count: 0,
+            stash_index: None,
+            ahead: None,
+            behind: None,
+            upstream: None,
+            last_commit_rel: String::new(),
+            last_commit_secs: secs,
+            subject: String::new(),
+            stats: None,
+            commit_sha: String::new(),
+            author: String::new(),
+            merge_base_short: None,
+            base: base.map(str::to_string),
+            base_is_override: false,
+        };
+        let zed = row("zed", 100, Some("origin/main"));
+        let abe = row("abe", 200, Some("origin/dev"));
+        use std::cmp::Ordering;
+        // Name sorts ascending; Age sorts by timestamp; Base sorts by the base branch string.
+        assert_eq!(repo_page_row_cmp(RepoPageSort::Name, &abe, &zed), Ordering::Less);
+        assert_eq!(repo_page_row_cmp(RepoPageSort::Age, &zed, &abe), Ordering::Less);
+        assert_eq!(repo_page_row_cmp(RepoPageSort::Base, &abe, &zed), Ordering::Less);
     }
 
     #[test]

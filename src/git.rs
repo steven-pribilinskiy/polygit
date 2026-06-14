@@ -1181,6 +1181,7 @@ fn parse_branch_line(line: &str) -> Option<BranchInfo> {
         subject: fields[5].to_string(),
         commit_sha: fields.get(6).map(|sha| sha.to_string()).unwrap_or_default(),
         author: fields.get(7).map(|author| author.to_string()).unwrap_or_default(),
+        last_commit_secs: fields.get(8).and_then(|secs| secs.parse().ok()).unwrap_or(0),
         stats: None,
         merge_base_short: None,
         base: None,
@@ -1192,7 +1193,7 @@ fn parse_branch_line(line: &str) -> Option<BranchInfo> {
 /// subject, short sha, and author.
 pub async fn list_local_branches(dir: &Path) -> Vec<BranchInfo> {
     let dir_str = dir.to_str().unwrap_or(".");
-    let format = "%(HEAD)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(committerdate:relative)%1f%(contents:subject)%1f%(objectname:short)%1f%(authorname)";
+    let format = "%(HEAD)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(committerdate:relative)%1f%(contents:subject)%1f%(objectname:short)%1f%(authorname)%1f%(committerdate:unix)";
     let output = match Command::new("git")
         .args([
             "-C",

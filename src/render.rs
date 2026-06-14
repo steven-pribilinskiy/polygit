@@ -12,7 +12,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{
     AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, HelpTab,
     HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow, PageRowKind, RepoPageColumn,
-    RepoState, RepoStatus, RightView, ScrollHit, ScrollKind, SortColumn, SortDir, StatusFilter,
+    RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit, ScrollKind, SortColumn, SortDir,
+    StatusFilter,
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
@@ -4078,7 +4079,8 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         .max()
         .unwrap_or(8)
         .min(NAME_MAX)
-        .max("branch".len());
+        // +1 so the sort ▲/▼ never overflows the "branch" header when names are very short.
+        .max("branch".len() + 1);
 
     // The optional columns after the name, in a fixed order. The header row and every data row
     // are built from the same widths so they stay aligned. Count cells render a dim zero.
@@ -4117,17 +4119,21 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             spans.push(count_cell("Σ", stats.map(|stat| stat.total()), count_w, Color::Gray));
         }
         if columns.upstream {
-            spans.push(Span::styled(format!("  {}", truncate_str(upstream, 28)), label));
+            // Pad to the header's fixed 28-cell width so the following `base` column starts at a
+            // stable screen column regardless of upstream length (or its absence on no-up rows).
+            spans.push(Span::styled(format!("  {:<28}", truncate_str(upstream, 28)), label));
         }
         if columns.base {
             base_index = Some(spans.len());
-            let text = if base.is_empty() {
-                "  …".to_string()
+            let inner = if base.is_empty() {
+                "…".to_string()
             } else if base_override {
-                format!("  {}*", truncate_str(base, 27))
+                format!("{}*", truncate_str(base, 27))
             } else {
-                format!("  {}", truncate_str(base, 28))
+                truncate_str(base, 28)
             };
+            // Pad to the header's fixed 28-cell width so `age`/`subject` stay aligned.
+            let text = format!("  {inner:<28}");
             let style = if base.is_empty() {
                 label
             } else if base_override {
@@ -4146,44 +4152,64 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         (spans, base_index)
     };
 
-    // The column-header line, aligned to the data columns. `count_cell` prefixes a single space,
-    // so each count header is ` {label:<5}` to match.
-    let column_header = || -> Line<'static> {
-        let mut spans: Vec<Span> = vec![
-            Span::raw("  "),
-            Span::styled(format!("{:<name_pad$}", "branch"), label),
-        ];
+    // The column-header line, aligned to the data columns and clickable to sort. `count_cell`
+    // prefixes a single space, so each count header is ` {label:<5}` to match. The active sort
+    // column shows ▲/▼ (inside its fixed width) and renders bold; header_cells records each cell's
+    // column range (relative to line start) so the render loop can register click targets.
+    let active_sort = app.repo_page_sort;
+    let sort_dir = app.repo_page_sort_dir;
+    let column_header = || -> (Line<'static>, Vec<(u16, u16, RepoPageSort)>) {
+        let mut spans: Vec<Span> = Vec::new();
+        let mut cells: Vec<(u16, u16, RepoPageSort)> = Vec::new();
+        let mut hcol: u16 = 0;
+        let mut cell =
+            |spans: &mut Vec<Span<'static>>, hcol: &mut u16, prefix: &str, text: &str, width: usize, sort: RepoPageSort| {
+                spans.push(Span::raw(prefix.to_string()));
+                *hcol += UnicodeWidthStr::width(prefix) as u16;
+                let arrow = if active_sort == Some(sort) { sort_dir.arrow() } else { "" };
+                let style = if active_sort == Some(sort) {
+                    label.add_modifier(Modifier::BOLD)
+                } else {
+                    label
+                };
+                let body = format!("{:<width$}", format!("{text}{arrow}"));
+                let body_w = UnicodeWidthStr::width(body.as_str()) as u16;
+                cells.push((*hcol, *hcol + body_w, sort));
+                spans.push(Span::styled(body, style));
+                *hcol += body_w;
+            };
+        cell(&mut spans, &mut hcol, "  ", "branch", name_pad, RepoPageSort::Name);
         if columns.ahead_behind {
-            spans.push(Span::styled(format!("  {:<10}", "↑↓"), label));
+            cell(&mut spans, &mut hcol, "  ", "↑↓", 10, RepoPageSort::AheadBehind);
         }
         if columns.dirty {
-            spans.push(Span::styled(format!(" {:<count_w$}", "Δ"), label));
+            cell(&mut spans, &mut hcol, " ", "Δ", count_w, RepoPageSort::Dirty);
         }
         if columns.added {
-            spans.push(Span::styled(format!(" {:<count_w$}", "+a"), label));
+            cell(&mut spans, &mut hcol, " ", "+a", count_w, RepoPageSort::Added);
         }
         if columns.modified {
-            spans.push(Span::styled(format!(" {:<count_w$}", "~m"), label));
+            cell(&mut spans, &mut hcol, " ", "~m", count_w, RepoPageSort::Modified);
         }
         if columns.deleted {
-            spans.push(Span::styled(format!(" {:<count_w$}", "-d"), label));
+            cell(&mut spans, &mut hcol, " ", "-d", count_w, RepoPageSort::Deleted);
         }
         if columns.total {
-            spans.push(Span::styled(format!(" {:<count_w$}", "Σ"), label));
+            cell(&mut spans, &mut hcol, " ", "Σ", count_w, RepoPageSort::Total);
         }
         if columns.upstream {
-            spans.push(Span::styled(format!("  {:<28}", "upstream"), label));
+            cell(&mut spans, &mut hcol, "  ", "upstream", 28, RepoPageSort::Upstream);
         }
         if columns.base {
-            spans.push(Span::styled(format!("  {:<28}", "base"), label));
+            cell(&mut spans, &mut hcol, "  ", "base", 28, RepoPageSort::Base);
         }
         if columns.age {
-            spans.push(Span::styled(format!("  {:<14}", "age"), label));
+            cell(&mut spans, &mut hcol, "  ", "age", 14, RepoPageSort::Age);
         }
         if columns.subject {
-            spans.push(Span::styled("  subject".to_string(), label));
+            cell(&mut spans, &mut hcol, "  ", "subject", 0, RepoPageSort::Subject);
         }
-        Line::from(spans)
+        (Line::from(spans), cells)
     };
 
     // Section header: a colored type icon for quick recognition, then the yellow label.
@@ -4204,7 +4230,9 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let mut items: Vec<PageItem> = Vec::new();
 
     items.push(section_header(icons.branches, Color::Green, format!("BRANCHES ({branch_count})")));
-    items.push((column_header(), None, None));
+    let (header_line, header_cells) = column_header();
+    let header_item_index = items.len();
+    items.push((header_line, None, None));
     for (sel_index, row) in rows.iter().enumerate() {
         if row.kind != PageRowKind::Branch {
             continue;
@@ -4332,9 +4360,22 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
 
     app.repo_page_click.clear();
     app.base_cell_click.clear();
+    app.repo_page_sort_click.clear();
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, sel, base_range)) in items[start..end].iter().enumerate() {
         let mut line = line.clone();
+        // Register the clickable sort headers when the header row is on screen.
+        if start + offset == header_item_index {
+            let screen_row = inner.y + offset as u16;
+            for (col_start, col_end, sort) in &header_cells {
+                app.repo_page_sort_click.push((
+                    screen_row,
+                    inner.x + col_start,
+                    inner.x + col_end,
+                    *sort,
+                ));
+            }
+        }
         if let Some(sel_index) = sel {
             let screen_row = inner.y + offset as u16;
             app.repo_page_click.push((screen_row, *sel_index));
