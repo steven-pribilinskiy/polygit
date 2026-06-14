@@ -1183,6 +1183,10 @@ async fn run_event_loop(
                             {
                                 app.repo_page_selected = selection;
                                 app.open_base_picker(selection);
+                            } else if let Some(sort) =
+                                app.repo_page_sort_at(mouse.column, mouse.row)
+                            {
+                                app.set_repo_page_sort(sort);
                             } else if let Some(selection) = app.repo_page_row_at(mouse.row) {
                                 app.repo_page_selected = selection;
                                 let double = last_click
