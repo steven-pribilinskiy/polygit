@@ -202,6 +202,10 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.show_help {
             render_help(frame, app, area);
         }
+        // The keyboard viewer sits on top of help (it's launched from the Hotkeys tab).
+        if app.show_keyboard {
+            render_keyboard_modal(frame, app, area);
+        }
         // The new-build notice and transient toast sit on top of everything, on every screen.
         render_update_notice(frame, app, area, tick);
         render_toast(frame, app, area);
@@ -264,6 +268,10 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.show_build_info {
         render_build_info(frame, app, area);
+    }
+    // The keyboard viewer sits on top of help (it's launched from the Hotkeys tab).
+    if app.show_keyboard {
+        render_keyboard_modal(frame, app, area);
     }
     // The new-build notice (top-right) and transient toast sit on top of everything.
     render_update_notice(frame, app, area, tick);
@@ -3129,11 +3137,22 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         tab_spans.push(Span::raw(" "));
         tab_col += chip_w + 1;
     }
+    // On the Hotkeys tab, offer a clickable button that pops the interactive keyboard viewer.
+    app.help_keyboard_click = None;
+    let kbd_btn = if app.help_tab == HelpTab::Hotkeys { "[⌨ keyboard]" } else { "" };
+    let kbd_w = UnicodeWidthStr::width(kbd_btn) as u16;
     let esc = "[esc]";
     let esc_w = esc.len() as u16;
     let esc_col = tab_bar_area.x + tab_bar_area.width.saturating_sub(esc_w);
-    if esc_col > tab_col {
-        tab_spans.push(Span::raw(" ".repeat((esc_col - tab_col) as usize)));
+    let kbd_col = esc_col.saturating_sub(if kbd_w > 0 { kbd_w + 1 } else { 0 });
+    if kbd_col > tab_col {
+        tab_spans.push(Span::raw(" ".repeat((kbd_col - tab_col) as usize)));
+    }
+    if kbd_w > 0 {
+        app.help_keyboard_click = Some((tab_bar_area.y, kbd_col, kbd_col + kbd_w));
+        tab_spans
+            .push(Span::styled(kbd_btn.to_string(), Style::default().fg(Color::LightMagenta)));
+        tab_spans.push(Span::raw(" "));
     }
     app.help_close_click = Some((tab_bar_area.y, esc_col, esc_col + esc_w));
     tab_spans.push(Span::styled(esc.to_string(), Style::default().fg(Color::DarkGray)));
@@ -3176,6 +3195,195 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         track,
         total: items.len(),
         viewport: content_height,
+    });
+}
+
+/// Pad `label` with spaces so it occupies exactly `width` display cells, centered.
+fn center_cell(label: &str, width: u16) -> String {
+    let used = UnicodeWidthStr::width(label) as u16;
+    if used >= width {
+        return label.to_string();
+    }
+    let total = (width - used) as usize;
+    let left = total / 2;
+    format!("{}{}{}", " ".repeat(left), label, " ".repeat(total - left))
+}
+
+/// The interactive keyboard viewer: an on-screen keyboard (same data as the docs viewer) where
+/// bound keys are highlighted; pressing or clicking a key fills a scrollable panel below with
+/// every action that key drives. Esc closes it. Mirrors `KeyboardModal.astro`.
+fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let modal_width = (area.width * 9 / 10).max(20);
+    let modal_height = (area.height * 9 / 10).max(8);
+    let modal_area = centered_rect(modal_width, modal_height, area);
+    app.keyboard_area = modal_area;
+
+    let (close_line, close_click) = modal_close_button(modal_area);
+    app.keyboard_close_click = close_click;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" keyboard — press any key to inspect it ")
+        .title_bottom(Line::from(" press / click any key · highlighted keys are bound · Esc close ").right_aligned());
+    let inner = block.inner(modal_area);
+
+    cast_shadow(frame, modal_area);
+    frame.render_widget(Clear, modal_area);
+    frame.render_widget(&block, modal_area);
+    frame.render_widget(Paragraph::new(close_line), Rect { height: 1, ..modal_area });
+
+    let uses = crate::keymap::key_uses();
+    let selected = app.keyboard_selected;
+
+    // Build the key rows (main block + nav/arrow cluster below it), recording click regions.
+    app.keyboard_key_click.clear();
+    let mut rows: Vec<Vec<crate::keymap::KeyDef>> = crate::keymap::layout(crate::keymap::Os::current());
+    // A spacer row, then the cluster rows.
+    let main_count = rows.len();
+    rows.extend(crate::keymap::cluster());
+
+    // Center the whole board on the widest row.
+    let row_width = |row: &[crate::keymap::KeyDef]| -> u16 {
+        let keys: u16 = row.iter().map(|key| key.width).sum();
+        keys + row.len().saturating_sub(1) as u16
+    };
+    let board_width = rows.iter().map(|row| row_width(row)).max().unwrap_or(0);
+    let left_pad = inner.width.saturating_sub(board_width) / 2;
+
+    let mut kb_lines: Vec<Line> = Vec::with_capacity(rows.len() + 1);
+    for (row_index, row) in rows.iter().enumerate() {
+        // Visual gap between the main block and the cluster.
+        if row_index == main_count {
+            kb_lines.push(Line::from(""));
+        }
+        let screen_row = inner.y + kb_lines.len() as u16;
+        let mut spans: Vec<Span> = vec![Span::raw(" ".repeat(left_pad as usize))];
+        let mut col = inner.x + left_pad;
+        for key in row {
+            let cell = center_cell(key.label, key.width);
+            let cell_w = key.width;
+            if key.code == "__gap" {
+                spans.push(Span::raw(cell));
+            } else {
+                let bound = uses.contains_key(key.code);
+                let is_selected = selected == Some(key.code);
+                let style = if is_selected {
+                    Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)
+                } else if bound {
+                    Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray).bg(Color::Rgb(40, 42, 54))
+                };
+                app.keyboard_key_click.push((screen_row, col, col + cell_w, key.code));
+                spans.push(Span::styled(cell, style));
+            }
+            col += cell_w;
+            spans.push(Span::raw(" "));
+            col += 1;
+        }
+        kb_lines.push(Line::from(spans));
+    }
+
+    let kb_height = kb_lines.len() as u16;
+    let kb_area = Rect { height: kb_height.min(inner.height), ..inner };
+    frame.render_widget(Paragraph::new(kb_lines), kb_area);
+
+    // Divider + the actions panel below the board.
+    let divider_y = inner.y + kb_height + 1;
+    if divider_y >= inner.y + inner.height {
+        app.keyboard_panel_area = Rect { height: 0, ..inner };
+        return;
+    }
+    let panel_area = Rect {
+        y: divider_y,
+        height: inner.height.saturating_sub(kb_height + 1),
+        ..inner
+    };
+    app.keyboard_panel_area = panel_area;
+
+    // Header line for the panel.
+    let header = match selected {
+        Some(code) => {
+            let label = crate::keymap::layout(crate::keymap::Os::current())
+                .iter()
+                .chain(crate::keymap::cluster().iter())
+                .flatten()
+                .find(|key| key.code == code)
+                .map(|key| key.label)
+                .unwrap_or(code);
+            format!(" {} ", label.trim())
+        }
+        None => String::new(),
+    };
+
+    let mut panel_lines: Vec<Line> = Vec::new();
+    match selected {
+        None => {
+            panel_lines.push(Line::from(Span::styled(
+                "Press any key (or click one above) to see what it does.",
+                Style::default().fg(Color::Gray),
+            )));
+            panel_lines.push(Line::from(""));
+            panel_lines.push(Line::from(Span::styled(
+                "Esc closes this viewer.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        Some(code) => match uses.get(code) {
+            None => {
+                panel_lines.push(Line::from(vec![
+                    Span::styled(header.clone(), Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+                    Span::raw("  "),
+                    Span::styled("no polygit action bound to this key", Style::default().fg(Color::DarkGray)),
+                ]));
+            }
+            Some(list) => {
+                panel_lines.push(Line::from(vec![
+                    Span::styled(header.clone(), Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+                    Span::raw("  "),
+                    Span::styled(format!("{} action{}", list.len(), if list.len() == 1 { "" } else { "s" }), Style::default().fg(Color::Gray)),
+                ]));
+                panel_lines.push(Line::from(""));
+                for use_ in list {
+                    panel_lines.push(Line::from(vec![
+                        Span::styled(format!("{:<14}", use_.combo), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+                        Span::raw(" "),
+                        Span::styled(use_.action.clone(), Style::default().fg(Color::White)),
+                        Span::raw("  "),
+                        Span::styled(format!("· {}", use_.section), Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+            }
+        },
+    }
+
+    // Clamp + window the panel scroll.
+    let panel_height = panel_area.height as usize;
+    let max_scroll = panel_lines.len().saturating_sub(panel_height);
+    if app.keyboard_scroll > max_scroll {
+        app.keyboard_scroll = max_scroll;
+    }
+    let start = app.keyboard_scroll;
+    let end = (start + panel_height).min(panel_lines.len());
+    let windowed: Vec<Line> = panel_lines[start..end].to_vec();
+    frame.render_widget(Paragraph::new(windowed), panel_area);
+
+    let track = scrollbar_track(modal_area, panel_area);
+    render_scrollbar(
+        frame,
+        track,
+        app.keyboard_scroll,
+        panel_lines.len(),
+        panel_height,
+        false,
+    );
+    app.scroll_hits.push(ScrollHit {
+        kind: ScrollKind::Keyboard,
+        track,
+        total: panel_lines.len(),
+        viewport: panel_height,
     });
 }
 
