@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
     KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
@@ -338,14 +338,30 @@ fn launch_lazygit(
 }
 
 /// Push the Kitty keyboard protocol flags when the terminal supports them, so modified keys
-/// (notably Shift+Enter) are reported with their modifier instead of as a bare Enter.
+/// (notably Shift+Enter) are reported with their modifier instead of as a bare Enter, and bare
+/// modifier presses (Shift/Ctrl/Alt/Super) arrive as their own key events for the keyboard viewer.
 /// Best-effort — a no-op on terminals without support.
 fn push_key_enhancement(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
     if supports_keyboard_enhancement().unwrap_or(false) {
         let _ = execute!(
             terminal.backend_mut(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            )
         );
+    }
+}
+
+/// The synthetic key event a clicked footer hint injects, so a click runs the same handler as
+/// the keypress it mirrors.
+fn hint_key_event(hint: app::HintKey) -> KeyEvent {
+    match hint {
+        app::HintKey::Char(ch) => KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+        app::HintKey::Enter => KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        app::HintKey::ShiftEnter => KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+        app::HintKey::Tab => KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+        app::HintKey::Esc => KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
     }
 }
 
@@ -794,6 +810,10 @@ async fn run_event_loop(
     // Last left-click (time, selection) for synthesizing double-click → open repo page.
     let mut last_click: Option<(Instant, usize)> = None;
 
+    // Keys injected by clicking a footer hint — drained before polling real input, so a clicked
+    // hint runs through the exact same key handler as a real keypress.
+    let mut synthetic_keys: std::collections::VecDeque<KeyEvent> = std::collections::VecDeque::new();
+
     loop {
         // Suspend the TUI and run claude code when requested (set by a key/click last iteration).
         if let Some(path) = pending_claude.take() {
@@ -911,10 +931,18 @@ async fn run_event_loop(
             terminal.draw(|frame| render::render(frame, &mut app, tick))?;
         }
 
-        // Handle events with a short timeout for animation
+        // Handle events with a short timeout for animation. A clicked footer hint queues a
+        // synthetic key, drained here before polling real input so it dispatches identically.
         let poll_timeout = Duration::from_millis(50);
-        if event::poll(poll_timeout)? {
-            match event::read()? {
+        let next_event = if let Some(key) = synthetic_keys.pop_front() {
+            Some(Event::Key(key))
+        } else if event::poll(poll_timeout)? {
+            Some(event::read()?)
+        } else {
+            None
+        };
+        if let Some(next_event) = next_event {
+            match next_event {
             Event::Mouse(mouse) => {
                 let mut app = app_state.lock().unwrap();
 
@@ -950,6 +978,15 @@ async fn run_event_loop(
                         }
                     }
                     _ => {}
+                }
+
+                // A clicked footer hint injects its key — works over the repo page and every modal
+                // footer, since only the visible footer's regions are registered this frame.
+                if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                    if let Some(hint) = app.hint_at(mouse.column, mouse.row) {
+                        synthetic_keys.push_back(hint_key_event(hint));
+                        continue;
+                    }
                 }
 
                 // New-build notice buttons work over any view (the notice renders above panes).
@@ -1910,6 +1947,12 @@ async fn run_event_loop(
                             app.help_tab = app.help_tab.prev();
                             app.help_scroll = 0;
                             app.save_state();
+                        }
+                        // `K` pops the interactive keyboard viewer (same as clicking [K ⌨ keyboard]).
+                        KeyCode::Char('K') => {
+                            app.show_keyboard = true;
+                            app.keyboard_selected = None;
+                            app.keyboard_scroll = 0;
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             app.help_scroll = app.help_scroll.saturating_add(1);

@@ -853,6 +853,28 @@ pub struct ClickRegion {
     pub command: Command,
 }
 
+/// The keystroke a clickable hint stands in for. Clicking the hint injects this key, so it runs
+/// through the exact same handler as the real key press — no per-action duplication. Used by the
+/// repo-page and modal footers, which act through context-specific key matches, not `Command`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HintKey {
+    Char(char),
+    Enter,
+    ShiftEnter,
+    Tab,
+    Esc,
+}
+
+/// A mouse-clickable hint region (repo page + modal footers), mapped to the key it triggers.
+/// Rebuilt each render, in the same screen-space as `ClickRegion`.
+#[derive(Debug, Clone, Copy)]
+pub struct HintClick {
+    pub row: u16,
+    pub col_start: u16,
+    pub col_end: u16,
+    pub key: HintKey,
+}
+
 /// Which scrollable region a scrollbar drag targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollKind {
@@ -1601,6 +1623,9 @@ pub struct AppState {
     pub details_pass_spawned: bool,
     /// Clickable command regions in the status bar (rebuilt each render).
     pub clickable: Vec<ClickRegion>,
+    /// Clickable hint regions in the repo-page / modal footers, mapped to the key they fire
+    /// (rebuilt each render).
+    pub hint_click: Vec<HintClick>,
     /// Draggable scrollbars registered each render (preview, diff panels, help, repo page).
     pub scroll_hits: Vec<ScrollHit>,
     /// Which scrollbar is currently being dragged (drives the live drag highlight).
@@ -1803,6 +1828,7 @@ impl AppState {
             pending_leader: None,
             details_pass_spawned: false,
             clickable: Vec::new(),
+            hint_click: Vec::new(),
             scroll_hits: Vec::new(),
             scrollbar_dragging: None,
             repo_page_click: Vec::new(),
@@ -3195,6 +3221,14 @@ impl AppState {
         self.auto_pull_on_launch
             && (self.auto_pull_max_repos == 0 || repo_count <= self.auto_pull_max_repos as usize)
             && (self.auto_pull_in_tree || !self.tree_active())
+    }
+
+    /// The hint key whose footer click-region contains `(col,row)`, if any.
+    pub fn hint_at(&self, col: u16, row: u16) -> Option<HintKey> {
+        self.hint_click
+            .iter()
+            .find(|hint| hint.row == row && col >= hint.col_start && col < hint.col_end)
+            .map(|hint| hint.key)
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {

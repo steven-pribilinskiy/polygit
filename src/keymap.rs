@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, ModifierKeyCode};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -163,14 +163,33 @@ pub fn keycode_to_code(code: KeyCode, mods: KeyModifiers) -> Option<&'static str
         KeyCode::PageUp => "PageUp",
         KeyCode::PageDown => "PageDown",
         KeyCode::Backspace => "Backspace",
+        KeyCode::CapsLock => "CapsLock",
+        // A bare modifier press (needs the kitty REPORT_ALL_KEYS flag) arrives as its own KeyCode.
+        KeyCode::Modifier(modifier) => return modifier_to_code(modifier),
         KeyCode::Char(ch) => return Some(char_to_code(ch)),
         _ => return None,
     };
-    // A bare Shift/Ctrl press won't arrive as its own KeyCode, so map the modifier when present.
+    // On terminals without REPORT_ALL_KEYS, a Ctrl press only shows up as a modifier on the next
+    // key; map it so Ctrl+<key> still lights up the Ctrl cell.
     if mods.contains(KeyModifiers::CONTROL) {
         return Some("ControlLeft");
     }
     Some(resolved)
+}
+
+/// Map a bare modifier key press to its layout `code`.
+fn modifier_to_code(modifier: ModifierKeyCode) -> Option<&'static str> {
+    match modifier {
+        ModifierKeyCode::LeftShift => Some("ShiftLeft"),
+        ModifierKeyCode::RightShift => Some("ShiftRight"),
+        ModifierKeyCode::LeftControl => Some("ControlLeft"),
+        ModifierKeyCode::RightControl => Some("ControlRight"),
+        ModifierKeyCode::LeftAlt => Some("AltLeft"),
+        ModifierKeyCode::RightAlt => Some("AltRight"),
+        ModifierKeyCode::LeftSuper | ModifierKeyCode::LeftMeta => Some("MetaLeft"),
+        ModifierKeyCode::RightSuper | ModifierKeyCode::RightMeta => Some("MetaRight"),
+        _ => None,
+    }
 }
 
 fn char_to_code(ch: char) -> &'static str {
@@ -224,8 +243,8 @@ const fn key(code: &'static str, label: &'static str, width: u16) -> KeyDef {
     KeyDef { code, label, width }
 }
 
-/// The keyboard layout, mirroring the docs. `os` selects the bottom modifier row labels.
-/// Returns the main rows followed by a separator marker row handled by the renderer.
+/// The main keyboard rows, mirroring the docs. `os` selects the bottom modifier row labels.
+/// The renderer pairs these with `cluster()` (the nav/arrow block) for the full board.
 pub fn layout(os: Os) -> Vec<Vec<KeyDef>> {
     let mut rows = vec![
         vec![
@@ -279,6 +298,43 @@ impl Os {
             "macos" => Os::Mac,
             "windows" => Os::Windows,
             _ => Os::Linux,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_modifier_presses_resolve_to_layout_codes() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(keycode_to_code(KeyCode::Modifier(ModifierKeyCode::LeftShift), none), Some("ShiftLeft"));
+        assert_eq!(keycode_to_code(KeyCode::Modifier(ModifierKeyCode::RightShift), none), Some("ShiftRight"));
+        assert_eq!(keycode_to_code(KeyCode::Modifier(ModifierKeyCode::LeftControl), none), Some("ControlLeft"));
+        assert_eq!(keycode_to_code(KeyCode::Modifier(ModifierKeyCode::RightControl), none), Some("ControlRight"));
+        assert_eq!(keycode_to_code(KeyCode::Modifier(ModifierKeyCode::LeftAlt), none), Some("AltLeft"));
+        assert_eq!(keycode_to_code(KeyCode::Modifier(ModifierKeyCode::LeftSuper), none), Some("MetaLeft"));
+        assert_eq!(keycode_to_code(KeyCode::CapsLock, none), Some("CapsLock"));
+    }
+
+    #[test]
+    fn ctrl_held_lights_the_ctrl_cell() {
+        // Fallback for terminals without REPORT_ALL_KEYS: a Ctrl-modified named key lights Ctrl.
+        assert_eq!(keycode_to_code(KeyCode::Up, KeyModifiers::CONTROL), Some("ControlLeft"));
+    }
+
+    #[test]
+    fn every_key_use_resolves_to_a_layout_code() {
+        // Guard against a keymap.json token that the renderer can't place on the board.
+        let codes: std::collections::HashSet<&str> = layout(Os::Linux)
+            .iter()
+            .chain(cluster().iter())
+            .flatten()
+            .map(|key| key.code)
+            .collect();
+        for code in key_uses().keys() {
+            assert!(codes.contains(code), "key use {code} has no cell in the layout");
         }
     }
 }
