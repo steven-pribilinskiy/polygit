@@ -220,6 +220,8 @@ The list is always sorted — **Name ascending** is the default. Press `s` then 
 
 `?` opens an in-app reference with four tabs — **Hotkeys** (contextual, with short sections laid out side by side), **CLI & Flags**, **Legend** (every glyph in both icon sets with its meaning), and **About** — switched with `Tab` (the last tab is remembered across opens). It links to this repo on GitHub and the design notes on `notes.lvh.me`, lists the `go`/`bun`/`cli` subcommands, every flag and environment variable, the hotkeys grouped by purpose, and exit codes. The links are clickable (open in your browser via `$BROWSER`/`wslview`/`xdg-open`). Scroll with `j`/`k`, `g`/`G`, `PgUp`/`PgDn`, or the wheel; close with `?`/`Esc`/`q`/`[esc]`/a click outside.
 
+On the **Hotkeys** tab, `[⌨ keyboard]` opens an interactive keyboard viewer (the same one on the [docs site](https://steven-pribilinskiy.github.io/polygit/guides/keybindings/), built from the same keymap): an OS-aware on-screen keyboard with the bound keys highlighted. Press or click any key to highlight it and list everything it does in a scrollable panel below; `Esc` closes the viewer.
+
 ### Mouse
 
 Click a repo row to select it, scroll the wheel over the left pane to move the

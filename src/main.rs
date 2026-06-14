@@ -2,6 +2,7 @@ mod app;
 mod cache;
 mod git;
 mod groups;
+mod keymap;
 mod persist;
 mod plain;
 mod profile;
@@ -1172,6 +1173,42 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Keyboard viewer: click a key to inspect it, [x]/outside closes, wheel scrolls
+                // the actions panel. Sits above the help modal, so it's gated first.
+                if app.show_keyboard {
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if region_hit(app.keyboard_close_click, mouse.column, mouse.row)
+                                || !point_in(app.keyboard_area, mouse.column, mouse.row)
+                            {
+                                app.show_keyboard = false;
+                                app.keyboard_selected = None;
+                                app.keyboard_scroll = 0;
+                            } else if let Some(code) = app
+                                .keyboard_key_click
+                                .iter()
+                                .find(|(row, start, end, _)| {
+                                    *row == mouse.row
+                                        && mouse.column >= *start
+                                        && mouse.column < *end
+                                })
+                                .map(|(_, _, _, code)| *code)
+                            {
+                                app.keyboard_selected = Some(code);
+                                app.keyboard_scroll = 0;
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            app.keyboard_scroll = app.keyboard_scroll.saturating_add(3);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.keyboard_scroll = app.keyboard_scroll.saturating_sub(3);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Help modal: click a tab to switch, the [esc] button to close, or a link to open
                 // it; the wheel scrolls.
                 if app.show_help {
@@ -1181,6 +1218,10 @@ async fn run_event_loop(
                                 app.help_tab = tab;
                                 app.help_scroll = 0;
                                 app.save_state();
+                            } else if region_hit(app.help_keyboard_click, mouse.column, mouse.row) {
+                                app.show_keyboard = true;
+                                app.keyboard_selected = None;
+                                app.keyboard_scroll = 0;
                             } else if app.help_close_at(mouse.column, mouse.row)
                                 || !point_in(app.help_area, mouse.column, mouse.row)
                             {
@@ -1335,6 +1376,27 @@ async fn run_event_loop(
                                 .push(ch);
                         }
                         _ => {}
+                    }
+                    continue;
+                }
+
+                // Keyboard viewer: capture every keypress to highlight that key + list its
+                // actions. Esc closes and stops listening; Ctrl-C still quits (safety, matching
+                // every other modal here).
+                if app.show_keyboard {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    if key.code == KeyCode::Esc {
+                        app.show_keyboard = false;
+                        app.keyboard_selected = None;
+                        app.keyboard_scroll = 0;
+                    } else if let Some(code) = keymap::keycode_to_code(key.code, key.modifiers) {
+                        app.keyboard_selected = Some(code);
+                        app.keyboard_scroll = 0;
                     }
                     continue;
                 }

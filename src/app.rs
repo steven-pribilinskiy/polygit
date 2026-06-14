@@ -861,6 +861,7 @@ pub enum ScrollKind {
     DiffBody,
     Help,
     RepoPage,
+    Keyboard,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.
@@ -1563,6 +1564,23 @@ pub struct AppState {
     pub help_tab_click: Vec<(u16, u16, u16, HelpTab)>,
     /// The clickable `[esc]` close region in the help modal: (row, col_start, col_end).
     pub help_close_click: Option<(u16, u16, u16)>,
+    // Keyboard viewer (a button on the Hotkeys help tab opens it):
+    /// The interactive keyboard modal is open. While open it captures every keypress (Esc closes).
+    pub show_keyboard: bool,
+    /// The key the user last pressed/clicked on the board (its layout `code`); drives the panel.
+    pub keyboard_selected: Option<&'static str>,
+    /// Scroll offset in the keyboard modal's actions panel.
+    pub keyboard_scroll: usize,
+    /// The keyboard modal's outer area (for outside-click close).
+    pub keyboard_area: Rect,
+    /// The actions panel's area in the keyboard modal (for wheel-scroll hit-testing).
+    pub keyboard_panel_area: Rect,
+    /// The keyboard modal's `[esc]` close region: (row, col_start, col_end).
+    pub keyboard_close_click: Option<(u16, u16, u16)>,
+    /// Clickable key cells in the keyboard modal: (row, col_start, col_end, code). Rebuilt each render.
+    pub keyboard_key_click: Vec<(u16, u16, u16, &'static str)>,
+    /// The "keyboard" button region on the Hotkeys help tab: (row, col_start, col_end).
+    pub help_keyboard_click: Option<(u16, u16, u16)>,
     /// When Some, the dedicated repo page is open for this absolute repo index.
     pub repo_page: Option<usize>,
     /// Selected row within the repo page (index into its selectable branch/worktree rows).
@@ -1767,6 +1785,14 @@ impl AppState {
             help_links: Vec::new(),
             help_tab_click: Vec::new(),
             help_close_click: None,
+            show_keyboard: false,
+            keyboard_selected: None,
+            keyboard_scroll: 0,
+            keyboard_area: Rect::default(),
+            keyboard_panel_area: Rect::default(),
+            keyboard_close_click: None,
+            keyboard_key_click: Vec::new(),
+            help_keyboard_click: None,
             repo_page: None,
             repo_page_selected: 0,
             repo_page_focus_head: false,
@@ -2485,6 +2511,10 @@ impl AppState {
             }
             ScrollKind::RepoPage => {
                 self.repo_page_scroll = value;
+                false
+            }
+            ScrollKind::Keyboard => {
+                self.keyboard_scroll = value;
                 false
             }
         }
