@@ -539,6 +539,18 @@
   background: var(--term-bg) !important;
   color: var(--term-ink) !important;
 }
+/* The asciinema theme hardcodes a near-black terminal bg + light-gray fg on `.ap-term`,
+   theme-agnostically. The recording paints its own cells, but unpainted areas (the cold-start
+   frame, the poster, padding) fall back to those defaults and flash black in light mode. Align
+   the player's default cell colors to each recording's own background/foreground so they match. */
+:root[data-theme='light'] .termcast .ap-player {
+  --term-color-background: #f5f6f8;
+  --term-color-foreground: #282a30;
+}
+:root[data-theme='dark'] .termcast .ap-player {
+  --term-color-background: #1a1b26;
+  --term-color-foreground: #c0c5ce;
+}
 .termcast .ap-control-bar {
   color: var(--term-ink) !important;
   background: color-mix(in srgb, var(--term-bg-bar) 92%, transparent) !important;
