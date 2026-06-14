@@ -2149,6 +2149,51 @@ fn build_hint_footer(
     Line::from(spans)
 }
 
+/// Pack `chips` (each an indivisible segment group) into as many rows as needed so each fits
+/// `area.width`, separated by ` · `. Row 0 starts with `prefix`; later rows start flush left.
+/// Click regions are registered per row at `base_y + row`. Used by the column picker, which has
+/// more chips than fit on one status row.
+fn pack_chips_into_rows(
+    prefix: Vec<(String, Style, Option<Command>)>,
+    chips: Vec<Vec<(String, Style, Option<Command>)>>,
+    area: Rect,
+    base_y: u16,
+    clickable: &mut Vec<ClickRegion>,
+    hint: Style,
+) -> Vec<Line<'static>> {
+    let sep_w = UnicodeWidthStr::width(" · ") as u16;
+    let group_w = |group: &[(String, Style, Option<Command>)]| -> u16 {
+        group.iter().map(|(text, _, _)| UnicodeWidthStr::width(text.as_str()) as u16).sum()
+    };
+    let mut rows: Vec<Vec<(String, Style, Option<Command>)>> = Vec::new();
+    let mut current = prefix;
+    let mut current_w = group_w(&current);
+    // The prefix carries its own trailing space, so the first chip joins flush (no ` · `).
+    let mut first_in_row = true;
+    for chip in chips {
+        let chip_w = group_w(&chip);
+        if !first_in_row && current_w + sep_w + chip_w > area.width {
+            rows.push(std::mem::take(&mut current));
+            current_w = 0;
+            first_in_row = true;
+        }
+        if !first_in_row {
+            current.push((" · ".to_string(), hint, None));
+            current_w += sep_w;
+        }
+        current.extend(chip);
+        current_w += chip_w;
+        first_in_row = false;
+    }
+    if !current.is_empty() {
+        rows.push(current);
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, segments)| build_status_row(segments, area.x, base_y + index as u16, clickable))
+        .collect()
+}
+
 /// Clip a string to at most `max` display cells (no ellipsis appended).
 fn clip_to_width(text: &str, max: usize) -> String {
     let mut out = String::new();
@@ -2303,11 +2348,9 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ]
     };
 
-    // Row 1: the filter prompt, an active leader menu (`t` cols / `f` status / `s` sort), or the
-    // normal navigation/filter/sort/layout hints.
-    let row1 = if filtering {
-        Line::from(format!("Filter: {filter_text}"))
-    } else if leader == Some(Leader::Toggle) {
+    // The column picker (`t`) has more chips than fit one row, so pack it across as many status
+    // rows as needed; when it wraps it takes over the find row (row 2) while open.
+    let toggle_lines: Option<Vec<Line>> = if leader == Some(Leader::Toggle) {
         let toggle_item = |on: bool, letter: &str, label: &str, column: Column| {
             leader_item(
                 format!("{} ", mark(on)),
@@ -2324,8 +2367,6 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (format!(" {label} (none)"), hint, None),
             ]
         };
-        let mut segments: Vec<(String, Style, Option<Command>)> =
-            vec![("cols: ".to_string(), hint, None)];
         let entries = [
             toggle_item(columns.status, "u", "status", Column::Status),
             toggle_item(columns.ahead_behind, "a", "ahead/behind", Column::AheadBehind),
@@ -2357,16 +2398,21 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 disabled_item("c", "changed")
             },
         ];
-        for (index, entry) in entries.into_iter().enumerate() {
-            if index > 0 {
-                segments.push((" · ".to_string(), hint, None));
-            }
-            segments.extend(entry);
-        }
-        segments.push((" · ".to_string(), hint, None));
-        segments.push(("esc".to_string(), key, Some(Command::LeaderCancel)));
-        // No right fragment while a leader menu is up — the menu needs the full row width.
-        compose_status_row(segments, Vec::new(), area, area.y, &mut clickable, hint)
+        let mut chips: Vec<Vec<(String, Style, Option<Command>)>> =
+            entries.into_iter().map(|entry| entry.to_vec()).collect();
+        chips.push(vec![("esc".to_string(), key, Some(Command::LeaderCancel))]);
+        let prefix = vec![("cols: ".to_string(), hint, None)];
+        Some(pack_chips_into_rows(prefix, chips, area, area.y, &mut clickable, hint))
+    } else {
+        None
+    };
+
+    // Row 1: the column picker's first row, the filter prompt, an active leader menu (`f` status /
+    // `s` sort), or the normal navigation/filter/sort/layout hints.
+    let row1 = if let Some(lines) = toggle_lines.as_ref() {
+        lines.first().cloned().unwrap_or_default()
+    } else if filtering {
+        Line::from(format!("Filter: {filter_text}"))
     } else if leader == Some(Leader::Filter) {
         let pick = |on: bool| if on { "●" } else { "○" };
         let filter_item = |letter: &str, label: &str, filter: StatusFilter| {
@@ -2585,14 +2631,13 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ("] ".to_string(), key, Some(Command::SplitWiden)),
         ("resize".to_string(), hint, None),
     ]);
-    let row2 = compose_status_row(
-        row2_segments,
-        right_built,
-        area,
-        area.y + 1,
-        &mut clickable,
-        hint,
-    );
+    // When the column picker wrapped to a second row, it owns row 2 — render its second line
+    // there instead of the find row (whose hidden clicks must not register).
+    let row2 = if let Some(second) = toggle_lines.as_ref().filter(|lines| lines.len() > 1) {
+        second[1].clone()
+    } else {
+        compose_status_row(row2_segments, right_built, area, area.y + 1, &mut clickable, hint)
+    };
 
     // Row 3 — actions. r/R/e/E dim when they'd be a no-op. The label words are clickable too;
     // clicking the "refetch"/"retry" label runs the all-repos (capital) variant. The repo-only
@@ -4440,10 +4485,19 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         let mut col = area.x + 7;
         for (column, letter, name, on) in entries {
             let available = app.repo_page_column_available(column);
-            let chip = format!("{} {letter} {name}", if on { "●" } else { "○" });
+            // Three distinct states: on `●` (green), off `○` (gray), unavailable `–` (faint,
+            // non-circular so it doesn't read as just another off column, and inert).
+            let mark = if !available {
+                "–"
+            } else if on {
+                "●"
+            } else {
+                "○"
+            };
+            let chip = format!("{mark} {letter} {name}");
             let chip_width = UnicodeWidthStr::width(chip.as_str()) as u16;
             let style = if !available {
-                label
+                label.add_modifier(Modifier::DIM)
             } else if on {
                 Style::default().fg(Color::Green)
             } else {
