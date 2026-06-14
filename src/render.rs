@@ -11,8 +11,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
     AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, HelpTab,
-    IconSet, InfoAction, Leader, ListRow, PageRow, PageRowKind, RepoPageColumn, RepoState,
-    RepoStatus, RightView, ScrollHit, ScrollKind, SortColumn, SortDir, StatusFilter,
+    HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow, PageRowKind, RepoPageColumn,
+    RepoState, RepoStatus, RightView, ScrollHit, ScrollKind, SortColumn, SortDir, StatusFilter,
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
@@ -46,10 +46,14 @@ fn apply_palette(frame: &mut Frame, palette: &crate::theme::Palette) {
         cell.fg = palette.map_fg(cell.fg);
         cell.bg = palette.map_bg(cell.bg);
         // Materialize DIM (disabled/no-op hints): terminals render the attribute
-        // inconsistently, so fade the foreground toward the background instead.
+        // inconsistently, so fade the foreground toward the background instead. On a light
+        // background the faint fg already sits close to the bg, so fade it less — a 0.7 fade
+        // there washes disabled hints out to near-invisible.
         if cell.modifier.contains(Modifier::DIM) {
-            if let (Color::Rgb(..), Color::Rgb(..)) = (cell.fg, cell.bg) {
-                cell.fg = crate::theme::blend_toward(cell.fg, cell.bg, 0.7);
+            if let (Color::Rgb(..), Color::Rgb(bg_r, bg_g, bg_b)) = (cell.fg, cell.bg) {
+                let light_bg = u16::from(bg_r) + u16::from(bg_g) + u16::from(bg_b) > 3 * 140;
+                let amount = if light_bg { 0.4 } else { 0.7 };
+                cell.fg = crate::theme::blend_toward(cell.fg, cell.bg, amount);
                 cell.modifier.remove(Modifier::DIM);
             }
         }
@@ -175,6 +179,7 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // whatever panels are visible (status bar, preview footer, …).
     app.scroll_hits.clear();
     app.clickable.clear();
+    app.hint_click.clear();
 
     // The dedicated repo page is full-screen and replaces the normal layout.
     if app.repo_page.is_some() {
@@ -2120,6 +2125,29 @@ fn build_status_row(
     Line::from(spans)
 }
 
+/// Build a styled, clickable hint footer (the root status-bar look: bold accent keys, dim
+/// labels, `·` separators) from `(text, style, Option<HintKey>)` segments, laid out left to
+/// right from `start_col` on `row`. Keyed segments register a `HintClick`; clicking one injects
+/// that key, so the hint runs the exact same handler as the real keypress.
+fn build_hint_footer(
+    segments: Vec<(String, Style, Option<HintKey>)>,
+    start_col: u16,
+    row: u16,
+    hint_click: &mut Vec<HintClick>,
+) -> Line<'static> {
+    let mut spans = Vec::with_capacity(segments.len());
+    let mut col = start_col;
+    for (text, style, key) in segments {
+        let width = UnicodeWidthStr::width(text.as_str()) as u16;
+        if let Some(key) = key {
+            hint_click.push(HintClick { row, col_start: col, col_end: col + width, key });
+        }
+        col = col.saturating_add(width);
+        spans.push(Span::styled(text, style));
+    }
+    Line::from(spans)
+}
+
 /// Clip a string to at most `max` display cells (no ellipsis appended).
 fn clip_to_width(text: &str, max: usize) -> String {
     let mut out = String::new();
@@ -2229,6 +2257,9 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let sort_dir = app.sort_dir;
     let grouping_on = app.grouping_active();
     let tree_on = app.tree_active();
+    // Repo-specific actions (open page, claude, lazygit, open remote, copy) only make sense when a
+    // real repo row is selected — not the Result/Errors summary row or a folder/group header.
+    let has_repo = app.selected_repo_index().is_some();
 
     // Right-aligned fragments (justify-between): the list title already shows done/elapsed,
     // so the right side carries the version, the binary's build age, and the meta actions.
@@ -2563,18 +2594,22 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     );
 
     // Row 3 — actions. r/R/e/E dim when they'd be a no-op. The label words are clickable too;
-    // clicking the "refetch"/"retry" label runs the all-repos (capital) variant.
-    let row3 = compose_status_row(
-        vec![
-            ("e".to_string(), style_refetch_one, Some(Command::Refetch)),
-            ("/".to_string(), hint_refetch, None),
-            ("E".to_string(), style_refetch_all, Some(Command::RefetchAll)),
-            (" refetch".to_string(), hint_refetch, Some(Command::RefetchAll)),
-            (" · ".to_string(), hint, None),
-            ("r".to_string(), style_retry_one, Some(Command::Retry)),
-            ("/".to_string(), hint_retry, None),
-            ("R".to_string(), style_retry_all, Some(Command::RetryAll)),
-            (" retry".to_string(), hint_retry, Some(Command::RetryAll)),
+    // clicking the "refetch"/"retry" label runs the all-repos (capital) variant. The repo-only
+    // actions (page/claude/lazygit/open/copy) are hidden entirely when no repo is selected (the
+    // Result/Errors row or a header) — there's nothing for them to act on.
+    let mut row3_segments: Vec<(String, Style, Option<Command>)> = vec![
+        ("e".to_string(), style_refetch_one, Some(Command::Refetch)),
+        ("/".to_string(), hint_refetch, None),
+        ("E".to_string(), style_refetch_all, Some(Command::RefetchAll)),
+        (" refetch".to_string(), hint_refetch, Some(Command::RefetchAll)),
+        (" · ".to_string(), hint, None),
+        ("r".to_string(), style_retry_one, Some(Command::Retry)),
+        ("/".to_string(), hint_retry, None),
+        ("R".to_string(), style_retry_all, Some(Command::RetryAll)),
+        (" retry".to_string(), hint_retry, Some(Command::RetryAll)),
+    ];
+    if has_repo {
+        row3_segments.extend([
             (" · ".to_string(), hint, None),
             ("enter".to_string(), key, Some(Command::OpenPage)),
             (" page".to_string(), hint, Some(Command::OpenPage)),
@@ -2592,13 +2627,9 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             ("/".to_string(), hint, None),
             ("Y".to_string(), key, Some(Command::CopyRemote)),
             (" copy".to_string(), hint, Some(Command::CopyPath)),
-        ],
-        right_meta,
-        area,
-        area.y + 2,
-        &mut clickable,
-        hint,
-    );
+        ]);
+    }
+    let row3 = compose_status_row(row3_segments, right_meta, area, area.y + 2, &mut clickable, hint);
 
     app.clickable.extend(clickable);
 
@@ -2927,7 +2958,10 @@ fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<String>)> {
                     ("v g · v t", "toggle grouped view · tree view"),
                     ("Z", "refresh dynamic group memberships"),
                     ("- / + / *", "collapse all · expand all · expand subtree"),
-                    ("za zo zc zO zM zR", "fold: toggle/open/close/subtree/all"),
+                    ("za", "fold: toggle the folder/group"),
+                    ("zo · zc", "fold: open · close"),
+                    ("zO", "fold: expand subtree"),
+                    ("zM · zR", "fold: collapse all · expand all"),
                     ("← / →", "collapse + jump to parent / expand"),
                     ("enter · space", "collapse/expand (on a folder/group header)"),
                 ],
@@ -2951,7 +2985,13 @@ fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<String>)> {
             let run: Sec = ("Run", &[("c", "claude in repo dir"), ("l", "lazygit in repo dir")]);
             let other: Sec = (
                 "Other",
-                &[(", · D", "settings · open docs site"), ("? · q · ^C", "help · quit · exit")],
+                &[
+                    (",", "settings"),
+                    ("D", "open docs site"),
+                    ("?", "help"),
+                    ("q", "quit"),
+                    ("^C", "exit"),
+                ],
             );
             let layout: Sec = (
                 "Layout",
@@ -3139,7 +3179,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     }
     // On the Hotkeys tab, offer a clickable button that pops the interactive keyboard viewer.
     app.help_keyboard_click = None;
-    let kbd_btn = if app.help_tab == HelpTab::Hotkeys { "[⌨ keyboard]" } else { "" };
+    let kbd_btn = if app.help_tab == HelpTab::Hotkeys { "[K ⌨ keyboard]" } else { "" };
     let kbd_w = UnicodeWidthStr::width(kbd_btn) as u16;
     let esc = "[esc]";
     let esc_w = esc.len() as u16;
@@ -3237,54 +3277,142 @@ fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let uses = crate::keymap::key_uses();
     let selected = app.keyboard_selected;
 
-    // Build the key rows (main block + nav/arrow cluster below it), recording click regions.
+    // Build the board: the main block plus the nav/arrow cluster. The cluster sits to the right
+    // (bottom-aligned, mirroring the docs viewer) when there's width for it, else below as a
+    // fallback. When the modal is large the keys grow into tall bordered boxes ("full-blown");
+    // otherwise they stay the compact single-row strip.
     app.keyboard_key_click.clear();
-    let mut rows: Vec<Vec<crate::keymap::KeyDef>> = crate::keymap::layout(crate::keymap::Os::current());
-    // A spacer row, then the cluster rows.
-    let main_count = rows.len();
-    rows.extend(crate::keymap::cluster());
+    let mut clicks: Vec<(u16, u16, u16, &'static str)> = Vec::new();
+    let os = crate::keymap::Os::current();
+    let main_rows = crate::keymap::layout(os);
+    let cluster_rows = crate::keymap::cluster();
 
-    // Center the whole board on the widest row.
-    let row_width = |row: &[crate::keymap::KeyDef]| -> u16 {
-        let keys: u16 = row.iter().map(|key| key.width).sum();
-        keys + row.len().saturating_sub(1) as u16
+    const GAP: u16 = 3; // columns between the main block and the right-hand cluster
+    const FULL_ROWS: u16 = 3; // screen lines per key in the full (boxed) tier
+    const FULL_MIN_PANEL: u16 = 8; // lines reserved for the action panel before going full-size
+
+    let cell_width = |width: u16, scale: u16, boxed: bool| width * scale + if boxed { 2 } else { 0 };
+    let row_width = |row: &[crate::keymap::KeyDef], scale: u16, boxed: bool| -> u16 {
+        row.iter().map(|key| cell_width(key.width, scale, boxed)).sum::<u16>()
+            + row.len().saturating_sub(1) as u16
     };
-    let board_width = rows.iter().map(|row| row_width(row)).max().unwrap_or(0);
-    let left_pad = inner.width.saturating_sub(board_width) / 2;
+    let board_width_at =
+        |scale: u16, boxed: bool| main_rows.iter().map(|row| row_width(row, scale, boxed)).max().unwrap_or(0);
+    let cluster_width_at =
+        |scale: u16, boxed: bool| cluster_rows.iter().map(|row| row_width(row, scale, boxed)).max().unwrap_or(0);
+    let combined_at =
+        |scale: u16, boxed: bool| board_width_at(scale, boxed) + GAP + cluster_width_at(scale, boxed);
 
-    let mut kb_lines: Vec<Line> = Vec::with_capacity(rows.len() + 1);
-    for (row_index, row) in rows.iter().enumerate() {
-        // Visual gap between the main block and the cluster.
-        if row_index == main_count {
-            kb_lines.push(Line::from(""));
-        }
-        let screen_row = inner.y + kb_lines.len() as u16;
-        let mut spans: Vec<Span> = vec![Span::raw(" ".repeat(left_pad as usize))];
-        let mut col = inner.x + left_pad;
-        for key in row {
-            let cell = center_cell(key.label, key.width);
-            let cell_w = key.width;
-            if key.code == "__gap" {
-                spans.push(Span::raw(cell));
-            } else {
-                let bound = uses.contains_key(key.code);
-                let is_selected = selected == Some(key.code);
-                let style = if is_selected {
-                    Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)
-                } else if bound {
-                    Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::DarkGray).bg(Color::Rgb(40, 42, 54))
-                };
-                app.keyboard_key_click.push((screen_row, col, col + cell_w, key.code));
-                spans.push(Span::styled(cell, style));
+    // Largest full-tier (boxed) scale that fits side-by-side, given enough height; else compact.
+    let full_scale = if inner.height >= FULL_ROWS * main_rows.len() as u16 + FULL_MIN_PANEL {
+        (1..=3u16).rev().find(|&scale| combined_at(scale, true) <= inner.width)
+    } else {
+        None
+    };
+    let (boxed, scale, cluster_right) = match full_scale {
+        Some(scale) => (true, scale, true),
+        None => (false, 1, combined_at(1, false) <= inner.width),
+    };
+    let lines_per_key = if boxed { FULL_ROWS as usize } else { 1 };
+
+    let board_width = board_width_at(scale, boxed);
+    let cluster_width = cluster_width_at(scale, boxed);
+    let combined_width = if cluster_right {
+        board_width + GAP + cluster_width
+    } else {
+        board_width.max(cluster_width)
+    };
+    let left_pad = inner.width.saturating_sub(combined_width) / 2;
+    let board_x = inner.x + left_pad;
+
+    let sel_style = Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD);
+    let bound_style = Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD);
+    let unbound_style = Style::default().fg(Color::DarkGray).bg(Color::Rgb(40, 42, 54));
+
+    // Render one keyboard row's `sub`-th screen line starting at absolute column `start_col`,
+    // appending spans and a click region per key cell. Returns the column it ended at.
+    let place_row = |row: &[crate::keymap::KeyDef],
+                     sub: usize,
+                     start_col: u16,
+                     screen_row: u16,
+                     spans: &mut Vec<Span<'static>>,
+                     clicks: &mut Vec<(u16, u16, u16, &'static str)>|
+     -> u16 {
+        let mut col = start_col;
+        for (index, key) in row.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw(" "));
+                col += 1;
             }
-            col += cell_w;
-            spans.push(Span::raw(" "));
-            col += 1;
+            let interior = key.width * scale;
+            let outer = interior + if boxed { 2 } else { 0 };
+            if key.code == "__gap" {
+                spans.push(Span::raw(" ".repeat(outer as usize)));
+                col += outer;
+                continue;
+            }
+            let style = if selected == Some(key.code) {
+                sel_style
+            } else if uses.contains_key(key.code) {
+                bound_style
+            } else {
+                unbound_style
+            };
+            let text = if boxed {
+                match sub {
+                    0 => format!("╭{}╮", "─".repeat(interior as usize)),
+                    2 => format!("╰{}╯", "─".repeat(interior as usize)),
+                    _ => format!("│{}│", center_cell(key.label, interior)),
+                }
+            } else {
+                center_cell(key.label, interior)
+            };
+            spans.push(Span::styled(text, style));
+            clicks.push((screen_row, col, col + outer, key.code));
+            col += outer;
         }
-        kb_lines.push(Line::from(spans));
+        col
+    };
+
+    let mut kb_lines: Vec<Line> = Vec::new();
+    if cluster_right {
+        // The cluster's 4 rows sit beside the bottom 4 of the 5 main rows (bottom-aligned).
+        let cluster_offset = main_rows.len().saturating_sub(cluster_rows.len());
+        let cluster_x = board_x + board_width + GAP;
+        for (main_index, main_row) in main_rows.iter().enumerate() {
+            for sub in 0..lines_per_key {
+                let screen_row = inner.y + kb_lines.len() as u16;
+                let mut spans: Vec<Span<'static>> = vec![Span::raw(" ".repeat(left_pad as usize))];
+                let end_col = place_row(main_row, sub, board_x, screen_row, &mut spans, &mut clicks);
+                if main_index >= cluster_offset {
+                    if cluster_x > end_col {
+                        spans.push(Span::raw(" ".repeat((cluster_x - end_col) as usize)));
+                    }
+                    place_row(&cluster_rows[main_index - cluster_offset], sub, cluster_x, screen_row, &mut spans, &mut clicks);
+                }
+                kb_lines.push(Line::from(spans));
+            }
+        }
+    } else {
+        for main_row in &main_rows {
+            for sub in 0..lines_per_key {
+                let screen_row = inner.y + kb_lines.len() as u16;
+                let mut spans: Vec<Span<'static>> = vec![Span::raw(" ".repeat(left_pad as usize))];
+                place_row(main_row, sub, board_x, screen_row, &mut spans, &mut clicks);
+                kb_lines.push(Line::from(spans));
+            }
+        }
+        kb_lines.push(Line::from("")); // visual gap before the stacked cluster
+        for cluster_row in &cluster_rows {
+            for sub in 0..lines_per_key {
+                let screen_row = inner.y + kb_lines.len() as u16;
+                let mut spans: Vec<Span<'static>> = vec![Span::raw(" ".repeat(left_pad as usize))];
+                place_row(cluster_row, sub, board_x, screen_row, &mut spans, &mut clicks);
+                kb_lines.push(Line::from(spans));
+            }
+        }
     }
+    app.keyboard_key_click = clicks;
 
     let kb_height = kb_lines.len() as u16;
     let kb_area = Rect { height: kb_height.min(inner.height), ..inner };
@@ -3346,10 +3474,17 @@ fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
                     Span::styled(format!("{} action{}", list.len(), if list.len() == 1 { "" } else { "s" }), Style::default().fg(Color::Gray)),
                 ]));
                 panel_lines.push(Line::from(""));
+                // Size the keys column to the longest combo *currently shown*, so it tightens for
+                // keys with only short combos and stays aligned when one combo is long.
+                let combo_width = list
+                    .iter()
+                    .map(|use_| UnicodeWidthStr::width(use_.combo.as_str()))
+                    .max()
+                    .unwrap_or(0);
                 for use_ in list {
                     panel_lines.push(Line::from(vec![
-                        Span::styled(format!("{:<14}", use_.combo), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                        Span::raw(" "),
+                        Span::styled(pad_display(&use_.combo, combo_width), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+                        Span::raw("  "),
                         Span::styled(use_.action.clone(), Style::default().fg(Color::White)),
                         Span::raw("  "),
                         Span::styled(format!("· {}", use_.section), Style::default().fg(Color::DarkGray)),
@@ -3401,24 +3536,63 @@ fn diff_status_color(status: &str) -> Color {
 /// the selected file's diff (bottom). Clicking or `j`/`k` selects a file.
 /// The diff-modal footer hint line, dependent on the focused pane (file list vs diff) and the
 /// source's available verbs. Shows `f filter` only when the status chips are active.
-fn diff_modal_footer(source: &DiffSource, focus: DiffFocus, chips: bool) -> String {
-    let mut parts: Vec<&str> = match focus {
-        DiffFocus::Files => vec!["j/k pick", "⇧PgUp/PgDn page", "⌥/⇧wheel scroll", "tab → diff"],
-        DiffFocus::Diff => vec!["j/k scroll", "PgUp/PgDn page", "g/G top/end", "tab → files"],
-    };
+fn diff_modal_footer(
+    source: &DiffSource,
+    focus: DiffFocus,
+    chips: bool,
+) -> Vec<(String, Style, Option<HintKey>)> {
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint = Style::default().fg(Color::DarkGray);
+    let mut seg: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    let sep = (" · ".to_string(), hint, None);
+    // Navigation hints aren't single keys, so they're shown but not clickable.
+    match focus {
+        DiffFocus::Files => seg.extend([
+            ("j/k".to_string(), key, None),
+            (" pick · ".to_string(), hint, None),
+            ("⇧PgUp/PgDn".to_string(), key, None),
+            (" page · ".to_string(), hint, None),
+            ("⌥/⇧wheel".to_string(), key, None),
+            (" scroll".to_string(), hint, None),
+            sep.clone(),
+            ("tab".to_string(), key, Some(HintKey::Tab)),
+            (" → diff".to_string(), hint, Some(HintKey::Tab)),
+        ]),
+        DiffFocus::Diff => seg.extend([
+            ("j/k".to_string(), key, None),
+            (" scroll · ".to_string(), hint, None),
+            ("PgUp/PgDn".to_string(), key, None),
+            (" page · ".to_string(), hint, None),
+            ("g/G".to_string(), key, None),
+            (" top/end".to_string(), hint, None),
+            sep.clone(),
+            ("tab".to_string(), key, Some(HintKey::Tab)),
+            (" → files".to_string(), hint, Some(HintKey::Tab)),
+        ]),
+    }
     if chips {
-        parts.push("f filter");
+        seg.push(sep.clone());
+        seg.push(("f".to_string(), key, Some(HintKey::Char('f'))));
+        seg.push((" filter".to_string(), hint, Some(HintKey::Char('f'))));
     }
     if matches!(source, DiffSource::Dirty { .. }) {
-        parts.push("t toggle");
+        seg.push(sep.clone());
+        seg.push(("t".to_string(), key, Some(HintKey::Char('t'))));
+        seg.push((" toggle".to_string(), hint, Some(HintKey::Char('t'))));
     }
-    match source {
-        DiffSource::Stash { .. } => parts.push("d drop"),
-        DiffSource::Dirty { .. } => parts.push("d discard/remove"),
-        DiffSource::Branch { .. } => {}
+    let delete_label = match source {
+        DiffSource::Stash { .. } => Some(" drop"),
+        DiffSource::Dirty { .. } => Some(" discard/remove"),
+        DiffSource::Branch { .. } => None,
+    };
+    if let Some(label) = delete_label {
+        seg.push(sep.clone());
+        seg.push(("d".to_string(), key, Some(HintKey::Char('d'))));
+        seg.push((label.to_string(), hint, Some(HintKey::Char('d'))));
     }
-    parts.push("esc");
-    format!(" {} ", parts.join(" · "))
+    seg.push(sep);
+    seg.push(("esc".to_string(), key, Some(HintKey::Esc)));
+    seg
 }
 
 fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
@@ -3475,6 +3649,9 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
     };
 
     let (close_line, close_click) = modal_close_button(modal_area);
+    // Styled, clickable footer on the bottom border (left-aligned so its click columns line up).
+    let footer_row = modal_area.y + modal_area.height.saturating_sub(1);
+    let footer_line = build_hint_footer(footer, modal_area.x + 1, footer_row, &mut app.hint_click);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -3482,7 +3659,7 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
         .title_top(close_line)
-        .title_bottom(Line::from(footer).right_aligned());
+        .title_bottom(footer_line);
     let inner = block.inner(modal_area);
     cast_shadow(frame, modal_area);
     frame.render_widget(Clear, modal_area);
@@ -3812,16 +3989,52 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     } else if loading || !fetched {
         title.push_str(&format!("· {} fetching… ", spinner_frame(tick, icons)));
     }
-    // A terse footer; the `d` verb is dynamic to the selected row, and `?` opens the full keys.
-    let d_hint = rows
-        .get(selected)
-        .and_then(|row| row.delete_action())
-        .map(|action| format!(" · d {action}"))
-        .unwrap_or_default();
-    let footer = format!(
-        " ↑↓ move · enter diff · ⇧enter checkout · p pull{d_hint} · t cols · i info · y copy · ? help · esc "
-    );
-    // A clickable back button on the top border (mouse counterpart of `esc`).
+    // A styled, clickable footer matching the root status bar: bold accent keys, dim labels,
+    // each key/label clickable (it injects the same key). The `d` verb is dynamic to the selected
+    // row, and `?` opens the full keys. `↑↓ move` is a hint only — rows are selected by clicking.
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint = Style::default().fg(Color::DarkGray);
+    let sep = || (" · ".to_string(), hint, None);
+    let mut footer_segments: Vec<(String, Style, Option<HintKey>)> = vec![
+        ("↑↓".to_string(), key, None),
+        (" move".to_string(), hint, None),
+        sep(),
+        ("enter".to_string(), key, Some(HintKey::Enter)),
+        (" diff".to_string(), hint, Some(HintKey::Enter)),
+        sep(),
+        ("⇧enter".to_string(), key, Some(HintKey::ShiftEnter)),
+        (" checkout".to_string(), hint, Some(HintKey::ShiftEnter)),
+        sep(),
+        ("p".to_string(), key, Some(HintKey::Char('p'))),
+        (" pull".to_string(), hint, Some(HintKey::Char('p'))),
+    ];
+    if let Some(action) = rows.get(selected).and_then(|row| row.delete_action()) {
+        footer_segments.push(sep());
+        footer_segments.push(("d".to_string(), key, Some(HintKey::Char('d'))));
+        footer_segments.push((format!(" {action}"), hint, Some(HintKey::Char('d'))));
+    }
+    footer_segments.extend([
+        sep(),
+        ("t".to_string(), key, Some(HintKey::Char('t'))),
+        (" cols".to_string(), hint, Some(HintKey::Char('t'))),
+        sep(),
+        ("i".to_string(), key, Some(HintKey::Char('i'))),
+        (" info".to_string(), hint, Some(HintKey::Char('i'))),
+        sep(),
+        ("y".to_string(), key, Some(HintKey::Char('y'))),
+        (" copy".to_string(), hint, Some(HintKey::Char('y'))),
+        sep(),
+        ("?".to_string(), key, Some(HintKey::Char('?'))),
+        (" help".to_string(), hint, Some(HintKey::Char('?'))),
+        sep(),
+        ("esc".to_string(), key, Some(HintKey::Esc)),
+        (" back".to_string(), hint, Some(HintKey::Esc)),
+    ]);
+    // The footer sits on the bottom border, left-aligned (starts one cell in from the corner) so
+    // its click columns are predictable.
+    let footer_row = area.y + area.height.saturating_sub(1);
+    let footer_line = build_hint_footer(footer_segments, area.x + 1, footer_row, &mut app.hint_click);
+    // The top-border `[esc back]` button stays as a redundant always-visible affordance.
     let back_text = "[esc back]";
     let back_line = Line::from(Span::styled(
         back_text,
@@ -3838,7 +4051,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
         .title_top(back_line)
-        .title_bottom(Line::from(footer).right_aligned());
+        .title_bottom(footer_line);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -4586,10 +4799,26 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         }
     }
     lines.push(Line::from(String::new()));
-    lines.push(Line::from(Span::styled(
-        "  ↑↓ move · space/enter toggle · esc close",
-        Style::default().fg(Color::DarkGray),
-    )));
+    let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let footer_hint = Style::default().fg(Color::DarkGray);
+    let footer_row = inner.y + lines.len() as u16;
+    lines.push(build_hint_footer(
+        vec![
+            ("  ".to_string(), footer_hint, None),
+            ("↑↓".to_string(), footer_key, None),
+            (" move · ".to_string(), footer_hint, None),
+            ("space".to_string(), footer_key, Some(HintKey::Char(' '))),
+            ("/".to_string(), footer_hint, None),
+            ("enter".to_string(), footer_key, Some(HintKey::Enter)),
+            (" toggle".to_string(), footer_hint, Some(HintKey::Enter)),
+            (" · ".to_string(), footer_hint, None),
+            ("esc".to_string(), footer_key, Some(HintKey::Esc)),
+            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
+        ],
+        inner.x,
+        footer_row,
+        &mut app.hint_click,
+    ));
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -4804,10 +5033,24 @@ fn render_copy_menu(frame: &mut Frame, app: &mut AppState, area: Rect) {
         lines.push(Line::from(Span::styled(format!("  {cursor}{label}"), style)));
     }
     lines.push(Line::from(String::new()));
-    lines.push(Line::from(Span::styled(
-        "  ↑↓ move · enter/click copy · esc close",
-        Style::default().fg(Color::DarkGray),
-    )));
+    let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let footer_hint = Style::default().fg(Color::DarkGray);
+    let footer_row = inner.y + lines.len() as u16;
+    lines.push(build_hint_footer(
+        vec![
+            ("  ".to_string(), footer_hint, None),
+            ("↑↓".to_string(), footer_key, None),
+            (" move · ".to_string(), footer_hint, None),
+            ("enter".to_string(), footer_key, Some(HintKey::Enter)),
+            (" copy".to_string(), footer_hint, Some(HintKey::Enter)),
+            (" · ".to_string(), footer_hint, None),
+            ("esc".to_string(), footer_key, Some(HintKey::Esc)),
+            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
+        ],
+        inner.x,
+        footer_row,
+        &mut app.hint_click,
+    ));
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -4880,10 +5123,24 @@ fn render_base_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
         lines.push(Line::from(Span::styled(format!("  {cursor}{check}{}", truncate_str(&text, 44)), style)));
     }
     lines.push(Line::from(String::new()));
-    lines.push(Line::from(Span::styled(
-        "  ↑↓ move · enter/click set · esc close",
-        Style::default().fg(Color::DarkGray),
-    )));
+    let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let footer_hint = Style::default().fg(Color::DarkGray);
+    let footer_row = inner.y + lines.len() as u16;
+    lines.push(build_hint_footer(
+        vec![
+            ("  ".to_string(), footer_hint, None),
+            ("↑↓".to_string(), footer_key, None),
+            (" move · ".to_string(), footer_hint, None),
+            ("enter".to_string(), footer_key, Some(HintKey::Enter)),
+            (" set".to_string(), footer_hint, Some(HintKey::Enter)),
+            (" · ".to_string(), footer_hint, None),
+            ("esc".to_string(), footer_key, Some(HintKey::Esc)),
+            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
+        ],
+        inner.x,
+        footer_row,
+        &mut app.hint_click,
+    ));
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -4911,19 +5168,23 @@ mod tests {
 
     #[test]
     fn diff_modal_footer_depends_on_focus_and_source() {
+        // Flatten the footer's segment texts so the content assertions read naturally.
+        let joined = |source: &DiffSource, focus: DiffFocus, chips: bool| -> String {
+            diff_modal_footer(source, focus, chips).iter().map(|(text, _, _)| text.as_str()).collect()
+        };
         let stash = DiffSource::Stash { path: "/tmp".into(), index: 0, label: "x".into() };
-        let files = diff_modal_footer(&stash, DiffFocus::Files, false);
+        let files = joined(&stash, DiffFocus::Files, false);
         assert!(files.contains("tab → diff"));
         assert!(files.contains("⇧PgUp/PgDn page"));
         assert!(files.contains("d drop"));
-        let diff = diff_modal_footer(&stash, DiffFocus::Diff, false);
+        let diff = joined(&stash, DiffFocus::Diff, false);
         assert!(diff.contains("tab → files"));
         assert!(diff.contains("g/G top/end"));
         // A read-only branch diff has no verb; chips add `f filter` when active.
         let branch = DiffSource::Branch { path: "/tmp".into(), name: "b".into() };
-        let plain = diff_modal_footer(&branch, DiffFocus::Files, false);
-        assert!(!plain.contains(" d "));
+        let plain = joined(&branch, DiffFocus::Files, false);
+        assert!(!plain.contains(" drop") && !plain.contains(" discard"));
         assert!(!plain.contains("f filter"));
-        assert!(diff_modal_footer(&branch, DiffFocus::Files, true).contains("f filter"));
+        assert!(joined(&branch, DiffFocus::Files, true).contains("f filter"));
     }
 }
