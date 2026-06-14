@@ -4484,6 +4484,17 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     // Column-toggle menu: a chip row (active ●, off ○, unavailable dim & inert), captured for clicks.
     app.repo_page_toggle_click.clear();
     if let Some(area) = toggle_area {
+        // Unavailable columns: pre-blend `faint` hard toward the resolved background so they
+        // clearly recede. The generic DIM materialization leaves them too close to the off
+        // columns (and doesn't always fire), so set the dim color explicitly here. On a terminal
+        // background the bg isn't an RGB value to blend, so keep the DIM attribute (native dim).
+        let palette = app.palette();
+        let unavailable_style = match palette.bg {
+            Color::Rgb(..) => {
+                Style::default().fg(crate::theme::blend_toward(palette.faint, palette.bg, 0.72))
+            }
+            _ => Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+        };
         let entries: [(RepoPageColumn, &str, &str, bool); 9] = [
             (RepoPageColumn::AheadBehind, "b", "↑↓", columns.ahead_behind),
             (RepoPageColumn::Dirty, "y", "dirty", columns.dirty),
@@ -4511,7 +4522,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             let chip = format!("{mark} {letter} {name}");
             let chip_width = UnicodeWidthStr::width(chip.as_str()) as u16;
             let style = if !available {
-                label.add_modifier(Modifier::DIM)
+                unavailable_style
             } else if on {
                 Style::default().fg(Color::Green)
             } else {
