@@ -3188,10 +3188,13 @@ impl AppState {
 
     /// Whether the launch should auto-pull, given the discovered repo count and current view.
     /// Off by master toggle, over the (non-zero) repo limit, or in tree view unless allowed.
+    /// Tree suppression keys off `tree_active()` (the toggle is on AND the scan actually has
+    /// nested folders), not the raw flag — a flat scan like `…/microfrontends` renders no tree,
+    /// so a leftover `tree_enabled` from a previous nested scan must not suppress its auto-pull.
     pub fn should_auto_pull(&self, repo_count: usize) -> bool {
         self.auto_pull_on_launch
             && (self.auto_pull_max_repos == 0 || repo_count <= self.auto_pull_max_repos as usize)
-            && (self.auto_pull_in_tree || !self.tree_enabled)
+            && (self.auto_pull_in_tree || !self.tree_active())
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {
@@ -3876,7 +3879,22 @@ mod tests {
         assert!(!state.should_auto_pull(1));
 
         state.auto_pull_on_launch = true;
-        state.tree_enabled = true; // tree view suppresses by default
+        state.tree_enabled = true; // toggle on, but a flat scan has no folders…
+        assert!(
+            state.should_auto_pull(5),
+            "a flat scan renders no tree, so tree_enabled alone must not suppress auto-pull"
+        );
+
+        // …only an *active* tree (toggle on AND nested folders present) suppresses.
+        state.tree_nodes = vec![TreeNode {
+            rel_path: "sub".to_string(),
+            name: "sub".to_string(),
+            depth: 0,
+            parent: None,
+            children: Vec::new(),
+            repos: vec![0],
+        }];
+        assert!(state.tree_active());
         assert!(!state.should_auto_pull(5));
         state.auto_pull_in_tree = true; // unless explicitly allowed
         assert!(state.should_auto_pull(5));
