@@ -449,9 +449,18 @@ fn dispatch_command(
             app.set_sort(column); // re-applying the active column flips direction
         }
         Cmd::NameFilter => {
-            app.filter_input_mode = true;
-            if app.filter.is_none() {
-                app.filter = Some(String::new());
+            // Clicking the `/ filter` hint toggles: enter filter input, or exit it when already
+            // filtering (dropping an empty filter so it leaves no dangling tag).
+            if app.filter_input_mode {
+                app.filter_input_mode = false;
+                if app.filter.as_deref() == Some("") {
+                    app.filter = None;
+                }
+            } else {
+                app.filter_input_mode = true;
+                if app.filter.is_none() {
+                    app.filter = Some(String::new());
+                }
             }
         }
         Cmd::ClearNameFilter => {

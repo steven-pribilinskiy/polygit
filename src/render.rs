@@ -1205,28 +1205,38 @@ fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, _tick: u64)
         .padding(panel_pad(app))
         .border_style(pane_border_style(app.preview_focused));
 
-    // A `⧉` copy button on the top border copies the whole log when a repo's log is showing.
+    // A `⧉` copy button on the top border copies the repo's log when it has output, otherwise the
+    // repo path — so it's always useful (an up-to-date repo's log is empty). Same clipboard handler
+    // as the info panel's Path copy.
     let showing_repo_log = selected_repo.is_some()
         && !overlay
         && selected_group.is_none()
         && selected_folder.is_none();
-    if showing_repo_log && !content_lines.is_empty() {
-        let glyph = "⧉";
-        let col_end = area.x + area.width.saturating_sub(2);
-        let col_start = col_end.saturating_sub(UnicodeWidthStr::width(glyph) as u16);
-        block = block.title_top(
-            Line::from(Span::styled(
-                glyph,
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ))
-            .right_aligned(),
-        );
-        app.info_click.push((
-            area.y,
-            col_start,
-            col_end,
-            InfoAction::CopyText(content_lines.join("\n")),
-        ));
+    if showing_repo_log {
+        let log_text = content_lines.join("\n");
+        let copy_text = if log_text.trim().is_empty() {
+            selected_repo
+                .map(|idx| app.repos[idx].lock().unwrap().path.display().to_string())
+                .unwrap_or_default()
+        } else {
+            log_text
+        };
+        if !copy_text.is_empty() {
+            let glyph = "⧉";
+            // The right-aligned title renders just inside the border corner (area.x+width-1), so the
+            // click region must end there too — sub(2) left it one cell left of the glyph, so every
+            // click missed and nothing copied.
+            let col_end = area.x + area.width.saturating_sub(1);
+            let col_start = col_end.saturating_sub(UnicodeWidthStr::width(glyph) as u16);
+            block = block.title_top(
+                Line::from(Span::styled(
+                    glyph,
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ))
+                .right_aligned(),
+            );
+            app.info_click.push((area.y, col_start, col_end, InfoAction::CopyText(copy_text)));
+        }
     }
 
     // Group view: the key hints live in the pane chrome as styled, CLICKABLE segments (same
@@ -1639,7 +1649,11 @@ fn build_info_lines(
                 let copy_col = LABEL_W as u16 + value_w + 1;
                 clicks.push((line_idx, copy_col, copy_col + 1, InfoAction::CopyText(path.clone())));
                 spans.push(Span::raw(" "));
-                spans.push(Span::styled("⧉".to_string(), link));
+                // A copy button, not a link — cyan + bold (matching the pane-title `⧉`), no underline.
+                spans.push(Span::styled(
+                    "⧉".to_string(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ));
             }
             lines.push(Line::from(spans));
         };
