@@ -12,8 +12,18 @@ permissions:
   contents: write
 
 jobs:
+  # Create the release once, up front. If the matrix jobs each created it, they'd race and one
+  # would fail with "tag_name already_exists", dropping that target's binary from the release.
+  create-release:
+    name: Create release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+
   build:
     name: ${{ matrix.target }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,6 +51,7 @@ jobs:
           cp "$bin" "polygit-${{ matrix.target }}"
           tar -czf "polygit-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" polygit
 
+      # The release already exists (create-release), so this only uploads assets — no create race.
       - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:
