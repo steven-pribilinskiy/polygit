@@ -69,6 +69,11 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let Some((hcol, hrow)) = app.hover else {
         return;
     };
+    // While dragging the splitter or a scrollbar, suppress hover — the drag has its own feedback
+    // and a moving highlight under the cursor is just noise.
+    if app.divider_dragging || app.scrollbar_dragging.is_some() {
+        return;
+    }
     // A hover tint, distinct from selection: the selection background pulled halfway to the surface
     // so it reads as "under the cursor", not "selected". Terminal-bg mode has no RGB surface to
     // blend toward, so use the selection background directly.
@@ -198,6 +203,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
         {
             hits.push(scroll.track);
+        } else if app.repo_page_row_at(hrow).is_some() {
+            // A selectable branch/worktree/stash row — highlight it across the content width.
+            let inner = app.repo_page_inner;
+            hits.push(Rect { x: inner.x, y: hrow, width: inner.width, height: 1 });
         }
     } else {
         // Main two-pane view.
@@ -514,6 +523,12 @@ fn render_divider(frame: &mut Frame, app: &AppState) {
     let bottom = area.y + area.height - 1;
     let center = area.y + area.height / 2;
     let dragging = app.divider_dragging;
+    // Hovered (not dragging): the grip brightens to cyan so the handle reacts to the cursor.
+    let hovered = !dragging
+        && app.hover_effects
+        && app.hover.is_some_and(|(hover_col, hover_row)| {
+            (i32::from(hover_col) - i32::from(col)).abs() <= 1 && hover_row >= top && hover_row < bottom
+        });
     // The pane boundary is two adjacent border columns (list's right border + preview's left
     // border); straddle both so the grip is ~2 cells wide and sits right in the middle.
     let cols = [col.saturating_sub(1), col];
@@ -531,7 +546,13 @@ fn render_divider(frame: &mut Frame, app: &AppState) {
 
     // A shaded run at center hints "grab here"; its length scales with the pane height. While
     // dragging it brightens to cyan AND fills solid for unmistakable grabbed feedback.
-    let (grip_symbol, grip_color) = if dragging { ("█", Color::Cyan) } else { ("▒", Color::Gray) };
+    let (grip_symbol, grip_color) = if dragging {
+        ("█", Color::Cyan)
+    } else if hovered {
+        ("▒", Color::Cyan)
+    } else {
+        ("▒", Color::Gray)
+    };
     let half = (area.height / 5).clamp(3, 9) / 2;
     let start = center.saturating_sub(half).max(top);
     let end = (center + half + 1).min(bottom);
@@ -4626,6 +4647,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let toggle_area = app.repo_page_toggle.then(|| take_bottom(1));
     let info_area = info_lines.as_ref().map(|lines| take_bottom(lines.len() as u16 + 2));
     let inner = body;
+    app.repo_page_inner = inner;
 
     let inner_height = inner.height as usize;
     let max_scroll = items.len().saturating_sub(inner_height);
