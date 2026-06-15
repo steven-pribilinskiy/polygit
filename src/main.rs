@@ -10,7 +10,7 @@ mod render;
 mod theme;
 mod worker;
 
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -722,6 +722,8 @@ async fn run_tui(
 
     // Restore terminal
     pop_key_enhancement(&mut terminal);
+    // Disable all-motion mouse tracking (hover effects) — DisableMouseCapture doesn't cover 1003.
+    let _ = terminal.backend_mut().write_all(b"\x1b[?1003l");
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
@@ -822,6 +824,10 @@ async fn run_event_loop(
     // Keys injected by clicking a footer hint — drained before polling real input, so a clicked
     // hint runs through the exact same key handler as a real keypress.
     let mut synthetic_keys: std::collections::VecDeque<KeyEvent> = std::collections::VecDeque::new();
+
+    // Whether all-motion mouse tracking (DEC 1003) is currently enabled in the terminal; kept in
+    // sync with the `hover_effects` setting each render.
+    let mut hover_tracking_on = false;
 
     loop {
         // Suspend the TUI and run claude code when requested (set by a key/click last iteration).
@@ -935,6 +941,21 @@ async fn run_event_loop(
         // Render
         {
             let mut app = app_state.lock().unwrap();
+            // Sync all-motion mouse tracking (DEC 1003) to the hover-effects setting: on enables
+            // `Moved` events for hover highlighting; off restores the terminal's own selection.
+            if app.hover_effects != hover_tracking_on {
+                let mut out = io::stdout();
+                let _ = out.write_all(if app.hover_effects {
+                    b"\x1b[?1003h"
+                } else {
+                    b"\x1b[?1003l"
+                });
+                let _ = out.flush();
+                hover_tracking_on = app.hover_effects;
+                if !app.hover_effects {
+                    app.hover = None;
+                }
+            }
             app.divider_dragging = dragging_divider;
             app.scrollbar_dragging = scroll_drag;
             terminal.draw(|frame| render::render(frame, &mut app, tick))?;
@@ -954,6 +975,17 @@ async fn run_event_loop(
             match next_event {
             Event::Mouse(mouse) => {
                 let mut app = app_state.lock().unwrap();
+
+                // Bare cursor motion (only delivered while hover tracking is on) just records the
+                // position for the hover highlight — no action.
+                if matches!(mouse.kind, MouseEventKind::Moved) {
+                    app.hover = Some((mouse.column, mouse.row));
+                    continue;
+                }
+                // Any other mouse event also updates the hover position so the highlight follows.
+                if app.hover_effects {
+                    app.hover = Some((mouse.column, mouse.row));
+                }
 
                 // Draggable scrollbars (preview, diff panels, help, repo page) are handled here,
                 // before the per-view gates, so a grab works in any modal/view.

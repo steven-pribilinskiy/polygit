@@ -64,6 +64,10 @@ pub struct PersistedState {
     /// Allow the launch auto-pull while the directory-tree view is active (default off — tree
     /// view suppresses auto-pull).
     pub auto_pull_in_tree: bool,
+    /// Highlight actionable elements under the mouse cursor. Off by default: it enables all-motion
+    /// mouse tracking, which takes over the terminal's own text selection / URL hover.
+    #[serde(default)]
+    pub hover_effects: bool,
 }
 
 fn default_true() -> bool {
