@@ -69,43 +69,6 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let Some((hcol, hrow)) = app.hover else {
         return;
     };
-    // When a modal/overlay is in the foreground, restrict hovering to its bounds — background
-    // chrome (status bar, list, footers) stays inert behind it, and its own registered click
-    // regions can't bleed through. Modals without a stored area disable hover while open.
-    let modal_area: Option<Rect> = if app.confirm.is_some() {
-        Some(app.confirm_area)
-    } else if app.show_settings {
-        Some(app.settings_area)
-    } else if app.show_keyboard {
-        Some(app.keyboard_area)
-    } else if app.show_help {
-        Some(app.help_area)
-    } else if app.diff_modal.is_some() {
-        Some(app.diff_modal_area)
-    } else if app.copy_menu.is_some() {
-        Some(app.copy_menu_area)
-    } else if app.base_picker.is_some() {
-        Some(app.base_picker_area)
-    } else if app.show_build_info {
-        Some(Rect::default())
-    } else {
-        None
-    };
-    // Outside the active modal there's nothing to highlight.
-    if let Some(area) = modal_area {
-        if !crate::app::point_in(area, hcol, hrow) {
-            return;
-        }
-    }
-    let in_modal = |rect: Rect| {
-        modal_area.is_none_or(|area| {
-            rect.x >= area.x
-                && rect.y >= area.y
-                && rect.x + rect.width <= area.x + area.width
-                && rect.y + rect.height <= area.y + area.height
-        })
-    };
-
     // A hover tint, distinct from selection: the selection background pulled halfway to the surface
     // so it reads as "under the cursor", not "selected". Terminal-bg mode has no RGB surface to
     // blend toward, so use the selection background directly.
@@ -113,73 +76,173 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         Color::Rgb(..) => crate::theme::blend_toward(palette.selection_bg, palette.bg, 0.5),
         _ => palette.selection_bg,
     };
+    let contains = |row: u16, start: u16, end: u16| hrow == row && hcol >= start && hcol < end;
+    let row_rect =
+        |row: u16, start: u16, end: u16| Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 };
+    let inner_row = |area: Rect| Rect { x: area.x + 1, y: hrow, width: area.width.saturating_sub(2), height: 1 };
 
-    // First matching region wins. Most clickable chrome registers a `(row, col_start, col_end)`
-    // span; gather them from every source.
-    let mut hit: Option<Rect> = None;
-    let mut spans: Vec<(u16, u16, u16)> = Vec::new();
-    spans.extend(app.clickable.iter().map(|region| (region.row, region.col_start, region.col_end)));
-    spans.extend(app.hint_click.iter().map(|hint| (hint.row, hint.col_start, hint.col_end)));
-    spans.extend(app.repo_page_sort_click.iter().map(|&(row, start, end, _)| (row, start, end)));
-    spans.extend(app.repo_page_toggle_click.iter().map(|&(row, start, end, _)| (row, start, end)));
-    spans.extend(app.info_click.iter().map(|&(row, start, end, _)| (row, start, end)));
-    spans.extend(app.base_cell_click.iter().map(|&(row, start, end, _)| (row, start, end)));
-    spans.extend(app.help_tab_click.iter().map(|&(row, start, end, _)| (row, start, end)));
-    spans.extend(app.keyboard_key_click.iter().map(|&(row, start, end, _)| (row, start, end)));
-    spans.extend(app.settings_click.iter().map(|&(row, start, end, _, _)| (row, start, end)));
-    for (row, start, end) in spans {
-        if hrow == row && hcol >= start && hcol < end {
-            let rect = Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 };
-            // Skip a background region that happens to sit behind the active modal.
-            if in_modal(rect) {
-                hit = Some(rect);
-                break;
+    // Only the foreground's OWN regions are considered — every modal/view registers click regions
+    // into shared vecs, so gathering them all lets a large modal's background bleed through. The
+    // first match in each branch wins; for command/hint chrome we highlight every span that shares
+    // the hovered one's action (so a key and its label light up together).
+    let mut hits: Vec<Rect> = Vec::new();
+    if app.confirm.is_some() {
+        if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
+            hits.push(row_rect(region.row, region.col_start, region.col_end));
+        }
+    } else if app.show_settings {
+        if let Some(&(row, start, end, ..)) =
+            app.settings_click.iter().find(|&&(r, s, e, ..)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.settings_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        }
+    } else if app.show_keyboard {
+        if let Some(&(row, start, end, _)) =
+            app.keyboard_key_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.keyboard_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        }
+    } else if app.show_help {
+        if let Some(&(row, start, end, tab)) =
+            app.help_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            // The active tab keeps its active color on hover (no hover tint over it).
+            if tab != app.help_tab {
+                hits.push(row_rect(row, start, end));
             }
+        } else if let Some((row, start, end)) =
+            app.help_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.help_keyboard_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if app.help_links.iter().any(|&(row, _)| row == hrow) {
+            hits.push(inner_row(app.help_area));
+        }
+    } else if app.diff_modal.is_some() {
+        if let Some((row, start, end)) =
+            app.diff_modal_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some(scroll) =
+            app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
+        {
+            hits.push(scroll.track);
+        } else if app.diff_modal_file_at(hrow).is_some() {
+            hits.push(inner_row(app.diff_modal_area));
+        }
+    } else if app.copy_menu.is_some() {
+        if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.copy_menu_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if app.copy_menu_click.iter().any(|&(row, _)| row == hrow) {
+            hits.push(inner_row(app.copy_menu_area));
+        }
+    } else if app.base_picker.is_some() {
+        if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.base_picker_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        }
+    } else if app.show_build_info {
+        if let Some((row, start, end)) =
+            app.build_info_reload_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        }
+    } else if app.repo_page.is_some() {
+        if let Some(&(row, start, end, _)) =
+            app.repo_page_sort_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.repo_page_toggle_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.base_cell_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.repo_page_back_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some(scroll) =
+            app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
+        {
+            hits.push(scroll.track);
+        }
+    } else {
+        // Main two-pane view.
+        if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
+            // Highlight every status-bar span that runs the same command (key + label together).
+            for sibling in app.clickable.iter().filter(|c| c.command == region.command) {
+                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some(column) = app.header_sort_at(hcol, hrow) {
+            // A sortable list column header cell — highlight it across the header's rows.
+            if let Some(&(start, end, _)) =
+                app.header_click.iter().find(|&&(s, e, c)| c == column && hcol >= s && hcol < e)
+            {
+                let header = app.header_area;
+                for row in header.y..header.y + header.height {
+                    hits.push(row_rect(row, start, end));
+                }
+            }
+        } else if let Some(&(row, start, end, _)) =
+            app.info_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some(scroll) =
+            app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
+        {
+            hits.push(scroll.track);
+        } else if (i32::from(hcol) - i32::from(app.divider_col)).abs() <= 1
+            && hrow >= app.main_area.y
+            && hrow < app.main_area.y + app.main_area.height
+        {
+            hits.push(Rect { x: app.divider_col, y: app.main_area.y, width: 1, height: app.main_area.height });
+        } else if app.list_selection_at(hcol, hrow).is_some() {
+            hits.push(Rect {
+                x: app.list_area.x,
+                y: hrow,
+                width: app.divider_col.saturating_sub(app.list_area.x),
+                height: 1,
+            });
         }
     }
 
-    // Scrollbar tracks.
-    if hit.is_none() {
-        hit = app
-            .scroll_hits
-            .iter()
-            .find(|scroll| crate::app::point_in(scroll.track, hcol, hrow) && in_modal(scroll.track))
-            .map(|scroll| scroll.track);
-    }
-
-    // The splitter/divider column and list rows are background-only (no modal open).
-    if hit.is_none()
-        && modal_area.is_none()
-        && app.repo_page.is_none()
-        && (i32::from(hcol) - i32::from(app.divider_col)).abs() <= 1
-        && hrow >= app.main_area.y
-        && hrow < app.main_area.y + app.main_area.height
-    {
-        hit = Some(Rect {
-            x: app.divider_col,
-            y: app.main_area.y,
-            width: 1,
-            height: app.main_area.height,
-        });
-    }
-
-    // A selectable main-list row (highlight the whole row up to the divider).
-    if hit.is_none()
-        && modal_area.is_none()
-        && app.repo_page.is_none()
-        && app.list_selection_at(hcol, hrow).is_some()
-    {
-        hit = Some(Rect {
-            x: app.list_area.x,
-            y: hrow,
-            width: app.divider_col.saturating_sub(app.list_area.x),
-            height: 1,
-        });
-    }
-
-    if let Some(rect) = hit {
-        let rect = rect.intersection(frame.area());
-        frame.buffer_mut().set_style(rect, Style::default().bg(hover_bg));
+    let frame_area = frame.area();
+    let buf = frame.buffer_mut();
+    for rect in hits {
+        buf.set_style(rect.intersection(frame_area), Style::default().bg(hover_bg));
     }
 }
 
