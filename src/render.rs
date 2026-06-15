@@ -69,6 +69,43 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let Some((hcol, hrow)) = app.hover else {
         return;
     };
+    // When a modal/overlay is in the foreground, restrict hovering to its bounds — background
+    // chrome (status bar, list, footers) stays inert behind it, and its own registered click
+    // regions can't bleed through. Modals without a stored area disable hover while open.
+    let modal_area: Option<Rect> = if app.confirm.is_some() {
+        Some(app.confirm_area)
+    } else if app.show_settings {
+        Some(app.settings_area)
+    } else if app.show_keyboard {
+        Some(app.keyboard_area)
+    } else if app.show_help {
+        Some(app.help_area)
+    } else if app.diff_modal.is_some() {
+        Some(app.diff_modal_area)
+    } else if app.copy_menu.is_some() {
+        Some(app.copy_menu_area)
+    } else if app.base_picker.is_some() {
+        Some(app.base_picker_area)
+    } else if app.show_build_info {
+        Some(Rect::default())
+    } else {
+        None
+    };
+    // Outside the active modal there's nothing to highlight.
+    if let Some(area) = modal_area {
+        if !crate::app::point_in(area, hcol, hrow) {
+            return;
+        }
+    }
+    let in_modal = |rect: Rect| {
+        modal_area.is_none_or(|area| {
+            rect.x >= area.x
+                && rect.y >= area.y
+                && rect.x + rect.width <= area.x + area.width
+                && rect.y + rect.height <= area.y + area.height
+        })
+    };
+
     // A hover tint, distinct from selection: the selection background pulled halfway to the surface
     // so it reads as "under the cursor", not "selected". Terminal-bg mode has no RGB surface to
     // blend toward, so use the selection background directly.
@@ -92,8 +129,12 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     spans.extend(app.settings_click.iter().map(|&(row, start, end, _, _)| (row, start, end)));
     for (row, start, end) in spans {
         if hrow == row && hcol >= start && hcol < end {
-            hit = Some(Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 });
-            break;
+            let rect = Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 };
+            // Skip a background region that happens to sit behind the active modal.
+            if in_modal(rect) {
+                hit = Some(rect);
+                break;
+            }
         }
     }
 
@@ -102,12 +143,13 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         hit = app
             .scroll_hits
             .iter()
-            .find(|scroll| crate::app::point_in(scroll.track, hcol, hrow))
+            .find(|scroll| crate::app::point_in(scroll.track, hcol, hrow) && in_modal(scroll.track))
             .map(|scroll| scroll.track);
     }
 
-    // The splitter/divider column (only in the main two-pane view).
+    // The splitter/divider column and list rows are background-only (no modal open).
     if hit.is_none()
+        && modal_area.is_none()
         && app.repo_page.is_none()
         && (i32::from(hcol) - i32::from(app.divider_col)).abs() <= 1
         && hrow >= app.main_area.y
@@ -122,7 +164,11 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     }
 
     // A selectable main-list row (highlight the whole row up to the divider).
-    if hit.is_none() && app.repo_page.is_none() && app.list_selection_at(hcol, hrow).is_some() {
+    if hit.is_none()
+        && modal_area.is_none()
+        && app.repo_page.is_none()
+        && app.list_selection_at(hcol, hrow).is_some()
+    {
         hit = Some(Rect {
             x: app.list_area.x,
             y: hrow,
