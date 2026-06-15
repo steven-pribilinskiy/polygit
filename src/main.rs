@@ -828,6 +828,10 @@ async fn run_event_loop(
     // Whether all-motion mouse tracking (DEC 1003) is currently enabled in the terminal; kept in
     // sync with the `hover_effects` setting each render.
     let mut hover_tracking_on = false;
+    // Dwell tracking for the footer-command tooltip: which command the cursor is resting on and
+    // since when. The tooltip appears once it's been the same command for ~1s.
+    let mut hover_dwell_cmd: Option<app::Command> = None;
+    let mut hover_dwell_since = Instant::now();
 
     loop {
         // Suspend the TUI and run claude code when requested (set by a key/click last iteration).
@@ -957,6 +961,20 @@ async fn run_event_loop(
                 hover_tracking_on = app.hover_effects;
                 if !app.hover_effects {
                     app.hover = None;
+                }
+            }
+            // Footer-command tooltip: reads last frame's click regions (the layout is stable
+            // frame-to-frame), so the tooltip it sets is drawn in this same render.
+            let cmd_now = app.hover.and_then(|(col, row)| app.command_at(col, row));
+            if cmd_now != hover_dwell_cmd {
+                hover_dwell_cmd = cmd_now;
+                hover_dwell_since = Instant::now();
+                app.hover_tooltip = None;
+            } else if let (Some(cmd), Some((col, row))) = (cmd_now, app.hover) {
+                if app.hover_tooltip.is_none()
+                    && hover_dwell_since.elapsed() >= Duration::from_millis(1000)
+                {
+                    app.hover_tooltip = Some((cmd.tooltip(), col, row));
                 }
             }
             app.divider_dragging = dragging_divider;

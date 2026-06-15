@@ -354,9 +354,41 @@ fn truncate_left(s: &str, max_width: usize) -> String {
 /// remap the whole buffer to the active theme + contrast palette.
 pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
     render_widgets(frame, app, tick);
+    render_tooltip(frame, app);
     let palette = app.palette();
     apply_palette(frame, &palette);
     apply_hover(frame, app, &palette);
+}
+
+/// Render the footer-command tooltip (a small bordered popup above the hovered status-bar hint),
+/// when one has been set after a dwell. Drawn before the palette pass so its semantic colors remap.
+fn render_tooltip(frame: &mut Frame, app: &AppState) {
+    let Some((text, anchor_col, anchor_row)) = app.hover_tooltip else {
+        return;
+    };
+    let area = frame.area();
+    if area.width < 6 || area.height < 3 {
+        return;
+    }
+    let text_width = UnicodeWidthStr::width(text) as u16;
+    // border (2) + 1-cell horizontal padding (2) around the text.
+    let width = (text_width + 4).min(area.width);
+    let height = 3;
+    // Sit above the anchor (footer hints live at the bottom); clamp into the screen.
+    let y = anchor_row.saturating_sub(height).max(area.y);
+    let max_x = (area.x + area.width).saturating_sub(width);
+    let x = anchor_col.min(max_x);
+    let rect = Rect { x, y, width, height };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan))
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(rect);
+    cast_shadow(frame, rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+    frame.render_widget(Paragraph::new(text), inner);
 }
 
 /// Draw all widgets for the current state (colors still in the semantic ANSI palette).
