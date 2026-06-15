@@ -1706,6 +1706,8 @@ pub struct AppState {
     pub help_keyboard_click: Option<(u16, u16, u16)>,
     /// When Some, the dedicated repo page is open for this absolute repo index.
     pub repo_page: Option<usize>,
+    /// The repo page's scrolling content area (for hover row hit-testing). Set each render.
+    pub repo_page_inner: Rect,
     /// Selected row within the repo page (index into its selectable branch/worktree rows).
     pub repo_page_selected: usize,
     /// Pending one-shot: snap the repo-page selection to the HEAD branch once its rows load.
@@ -1935,6 +1937,7 @@ impl AppState {
             keyboard_key_click: Vec::new(),
             help_keyboard_click: None,
             repo_page: None,
+            repo_page_inner: Rect::default(),
             repo_page_selected: 0,
             repo_page_focus_head: false,
             repo_page_scroll: 0,
