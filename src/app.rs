@@ -1011,6 +1011,9 @@ pub enum Command {
     Settings,
     /// Open the build-info modal (the clickable "built … ago" status-bar tag).
     ShowBuildInfo,
+    /// Move the selection down / up (the clickable `j` / `k` move hints).
+    NavDown,
+    NavUp,
     Quit,
 }
 
@@ -1053,6 +1056,8 @@ impl Command {
             Command::CopyRemote => "Copy the selected repo's remote (origin) URL",
             Command::Settings => "Open settings",
             Command::ShowBuildInfo => "Show when this build was made + reload to a newer one",
+            Command::NavDown => "Move the selection down",
+            Command::NavUp => "Move the selection up",
             Command::Quit => "Quit polygit",
         }
     }
