@@ -945,11 +945,14 @@ async fn run_event_loop(
             // `Moved` events for hover highlighting; off restores the terminal's own selection.
             if app.hover_effects != hover_tracking_on {
                 let mut out = io::stdout();
-                let _ = out.write_all(if app.hover_effects {
+                // Off must re-assert button/SGR tracking: some terminals drop click reporting
+                // entirely when all-motion (1003) is turned off, leaving the UI unclickable.
+                let seq: &[u8] = if app.hover_effects {
                     b"\x1b[?1003h"
                 } else {
-                    b"\x1b[?1003l"
-                });
+                    b"\x1b[?1003l\x1b[?1000h\x1b[?1002h\x1b[?1006h"
+                };
+                let _ = out.write_all(seq);
                 let _ = out.flush();
                 hover_tracking_on = app.hover_effects;
                 if !app.hover_effects {
@@ -976,15 +979,14 @@ async fn run_event_loop(
             Event::Mouse(mouse) => {
                 let mut app = app_state.lock().unwrap();
 
-                // Bare cursor motion (only delivered while hover tracking is on) just records the
-                // position for the hover highlight — no action.
-                if matches!(mouse.kind, MouseEventKind::Moved) {
-                    app.hover = Some((mouse.column, mouse.row));
-                    continue;
-                }
-                // Any other mouse event also updates the hover position so the highlight follows.
+                // Record the cursor for the hover highlight — only when the feature is on, so a
+                // stray motion event (e.g. just after toggling off) can't resurrect a highlight.
                 if app.hover_effects {
                     app.hover = Some((mouse.column, mouse.row));
+                }
+                // Bare cursor motion carries no action.
+                if matches!(mouse.kind, MouseEventKind::Moved) {
+                    continue;
                 }
 
                 // Draggable scrollbars (preview, diff panels, help, repo page) are handled here,
