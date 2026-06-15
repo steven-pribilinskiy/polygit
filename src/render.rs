@@ -61,6 +61,82 @@ fn apply_palette(frame: &mut Frame, palette: &crate::theme::Palette) {
     }
 }
 
+/// Paint a subtle hover background over the actionable element under the cursor (status-bar
+/// commands, footer hints, table-sort headers, column chips, info links/copy buttons, settings
+/// options, keyboard keys, scrollbars, the splitter, and main-list rows). Runs after the palette
+/// pass; only does anything when `hover_effects` is on (then `app.hover` carries the cursor).
+fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palette) {
+    let Some((hcol, hrow)) = app.hover else {
+        return;
+    };
+    // A hover tint, distinct from selection: the selection background pulled halfway to the surface
+    // so it reads as "under the cursor", not "selected". Terminal-bg mode has no RGB surface to
+    // blend toward, so use the selection background directly.
+    let hover_bg = match palette.bg {
+        Color::Rgb(..) => crate::theme::blend_toward(palette.selection_bg, palette.bg, 0.5),
+        _ => palette.selection_bg,
+    };
+
+    // First matching region wins. Most clickable chrome registers a `(row, col_start, col_end)`
+    // span; gather them from every source.
+    let mut hit: Option<Rect> = None;
+    let mut spans: Vec<(u16, u16, u16)> = Vec::new();
+    spans.extend(app.clickable.iter().map(|region| (region.row, region.col_start, region.col_end)));
+    spans.extend(app.hint_click.iter().map(|hint| (hint.row, hint.col_start, hint.col_end)));
+    spans.extend(app.repo_page_sort_click.iter().map(|&(row, start, end, _)| (row, start, end)));
+    spans.extend(app.repo_page_toggle_click.iter().map(|&(row, start, end, _)| (row, start, end)));
+    spans.extend(app.info_click.iter().map(|&(row, start, end, _)| (row, start, end)));
+    spans.extend(app.base_cell_click.iter().map(|&(row, start, end, _)| (row, start, end)));
+    spans.extend(app.help_tab_click.iter().map(|&(row, start, end, _)| (row, start, end)));
+    spans.extend(app.keyboard_key_click.iter().map(|&(row, start, end, _)| (row, start, end)));
+    spans.extend(app.settings_click.iter().map(|&(row, start, end, _, _)| (row, start, end)));
+    for (row, start, end) in spans {
+        if hrow == row && hcol >= start && hcol < end {
+            hit = Some(Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 });
+            break;
+        }
+    }
+
+    // Scrollbar tracks.
+    if hit.is_none() {
+        hit = app
+            .scroll_hits
+            .iter()
+            .find(|scroll| crate::app::point_in(scroll.track, hcol, hrow))
+            .map(|scroll| scroll.track);
+    }
+
+    // The splitter/divider column (only in the main two-pane view).
+    if hit.is_none()
+        && app.repo_page.is_none()
+        && (i32::from(hcol) - i32::from(app.divider_col)).abs() <= 1
+        && hrow >= app.main_area.y
+        && hrow < app.main_area.y + app.main_area.height
+    {
+        hit = Some(Rect {
+            x: app.divider_col,
+            y: app.main_area.y,
+            width: 1,
+            height: app.main_area.height,
+        });
+    }
+
+    // A selectable main-list row (highlight the whole row up to the divider).
+    if hit.is_none() && app.repo_page.is_none() && app.list_selection_at(hcol, hrow).is_some() {
+        hit = Some(Rect {
+            x: app.list_area.x,
+            y: hrow,
+            width: app.divider_col.saturating_sub(app.list_area.x),
+            height: 1,
+        });
+    }
+
+    if let Some(rect) = hit {
+        let rect = rect.intersection(frame.area());
+        frame.buffer_mut().set_style(rect, Style::default().bg(hover_bg));
+    }
+}
+
 /// 1-cell inner padding for every bordered panel/modal when the setting is on; none otherwise.
 fn panel_pad(app: &AppState) -> Padding {
     if app.panel_padding {
@@ -171,6 +247,7 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
     render_widgets(frame, app, tick);
     let palette = app.palette();
     apply_palette(frame, &palette);
+    apply_hover(frame, app, &palette);
 }
 
 /// Draw all widgets for the current state (colors still in the semantic ANSI palette).
@@ -4760,7 +4837,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // Sections of (label, option chips). Global row indices run across sections and must
     // match `set_setting_option` / `toggle_selected_setting`:
     // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast
-    // (Theming), 7 auto-pull · 8 auto-pull limit · 9 auto-pull-in-tree (Sync).
+    // (Theming), 7 auto-pull · 8 auto-pull limit · 9 auto-pull-in-tree (Sync), 10 hover (Mouse).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -4821,6 +4898,13 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                     vec![("on", app.auto_pull_in_tree), ("off", !app.auto_pull_in_tree)],
                 ),
             ],
+        ),
+        (
+            "Mouse",
+            vec![(
+                "Hover effects",
+                vec![("on", app.hover_effects), ("off", !app.hover_effects)],
+            )],
         ),
     ];
 

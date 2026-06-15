@@ -1814,6 +1814,12 @@ pub struct AppState {
     pub auto_pull_max_repos: u32,
     /// Allow the launch auto-pull while the tree view is active (default off).
     pub auto_pull_in_tree: bool,
+    /// Highlight actionable elements under the cursor (persisted). Enabling it turns on all-motion
+    /// mouse tracking (main.rs syncs the terminal mode to this flag).
+    pub hover_effects: bool,
+    /// Current mouse position `(col, row)` while `hover_effects` is on, else `None`. Drives the
+    /// post-render hover highlight; never persisted.
+    pub hover: Option<(u16, u16)>,
     /// Set once discovery completes and the launch decision skipped pulling — the run is then
     /// "settled" without any repo being pulled, and the footer offers a manual pull-everything.
     pub auto_pull_suppressed: bool,
@@ -1966,6 +1972,8 @@ impl AppState {
             auto_pull_on_launch: persisted.auto_pull_on_launch,
             auto_pull_max_repos: persisted.auto_pull_max_repos,
             auto_pull_in_tree: persisted.auto_pull_in_tree,
+            hover_effects: persisted.hover_effects,
+            hover: None,
             auto_pull_suppressed: false,
             status_cache: crate::cache::load(),
         }
@@ -2234,6 +2242,7 @@ impl AppState {
             auto_pull_on_launch: self.auto_pull_on_launch,
             auto_pull_max_repos: self.auto_pull_max_repos,
             auto_pull_in_tree: self.auto_pull_in_tree,
+            hover_effects: self.hover_effects,
         });
     }
 
@@ -2494,6 +2503,8 @@ impl AppState {
             (8, 3) => self.auto_pull_max_repos = 0,
             (9, 0) => self.auto_pull_in_tree = true,
             (9, 1) => self.auto_pull_in_tree = false,
+            (10, 0) => self.hover_effects = true,
+            (10, 1) => self.hover_effects = false,
             _ => return,
         }
         self.save_state();
@@ -3163,12 +3174,12 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 10;
+    pub const SETTINGS_ROWS: usize = 11;
 
     /// Toggle/cycle the currently-selected settings row, persisting immediately.
     /// Row order (matches `render_settings` sections): 0 padding · 1 grouping · 2 tree (General),
     /// 3 icons · 4 theme · 5 background · 6 contrast (Theming), 7 auto-pull · 8 auto-pull limit ·
-    /// 9 auto-pull-in-tree (Sync).
+    /// 9 auto-pull-in-tree (Sync), 10 hover effects (Mouse).
     pub fn toggle_selected_setting(&mut self) {
         match self.settings_selected {
             0 => self.panel_padding = !self.panel_padding,
@@ -3194,6 +3205,7 @@ impl AppState {
             7 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
             8 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
             9 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            10 => self.hover_effects = !self.hover_effects,
             _ => {}
         }
         self.save_state();
