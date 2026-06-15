@@ -1014,6 +1014,50 @@ pub enum Command {
     Quit,
 }
 
+impl Command {
+    /// A one-line description shown as a tooltip after dwelling on the command's status-bar hint.
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            Command::Retry => "Retry the selected repo (only if it failed or was skipped)",
+            Command::RetryAll => "Retry every repo that failed or was skipped",
+            Command::Refetch => "Re-pull the selected repo from scratch",
+            Command::RefetchAll => "Re-pull every repo from scratch",
+            Command::Info => "Toggle the info panel for the selected repo",
+            Command::Help => "Open the help modal (keys, flags, glyphs, about)",
+            Command::OpenPage => "Open the selected repo's page: branches, worktrees, stashes",
+            Command::ToggleLeader => "Choose which columns are shown",
+            Command::ToggleColumn(_) => "Toggle this column on or off",
+            Command::FilterLeader => "Filter the list by status",
+            Command::SetFilter(_) => "Filter by this status",
+            Command::SortLeader => "Sort the list by a column",
+            Command::SetSort(_) => "Sort by this column",
+            Command::LeaderCancel => "Close this menu",
+            Command::FlipSort => "Flip the sort direction",
+            Command::NameFilter => "Filter repos by name (type to match)",
+            Command::ClearNameFilter => "Clear the name filter",
+            Command::ResultOverlay => "Show the Result / Errors summary",
+            Command::FocusToggle => "Switch focus between the list and the preview",
+            Command::SplitNarrow => "Narrow the left pane",
+            Command::SplitWiden => "Widen the left pane",
+            Command::GroupingToggle => "Toggle the grouped list view",
+            Command::TreeToggle => "Toggle the directory-tree view",
+            Command::ToggleGroupCollapsed(_) => "Collapse or expand this group",
+            Command::FoldCollapseAll => "Collapse all folders and groups",
+            Command::FoldExpandAll => "Expand all folders and groups",
+            Command::FoldExpandSubtree => "Expand the selected subtree",
+            Command::DiffView => "Toggle the diff view in the preview pane",
+            Command::Claude => "Start claude code in the selected repo's directory",
+            Command::Lazygit => "Open lazygit in the selected repo",
+            Command::OpenRemote => "Open the selected repo's remote in your browser",
+            Command::CopyPath => "Copy the selected repo's absolute path",
+            Command::CopyRemote => "Copy the selected repo's remote (origin) URL",
+            Command::Settings => "Open settings",
+            Command::ShowBuildInfo => "Show when this build was made + reload to a newer one",
+            Command::Quit => "Quit polygit",
+        }
+    }
+}
+
 /// What a confirmation dialog will do when accepted.
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
@@ -1820,6 +1864,9 @@ pub struct AppState {
     /// Current mouse position `(col, row)` while `hover_effects` is on, else `None`. Drives the
     /// post-render hover highlight; never persisted.
     pub hover: Option<(u16, u16)>,
+    /// A footer-command tooltip `(text, anchor_col, anchor_row)`, set after dwelling ~1s on a
+    /// status-bar command; rendered as a small popup above the anchor. Never persisted.
+    pub hover_tooltip: Option<(&'static str, u16, u16)>,
     /// Set once discovery completes and the launch decision skipped pulling — the run is then
     /// "settled" without any repo being pulled, and the footer offers a manual pull-everything.
     pub auto_pull_suppressed: bool,
@@ -1974,6 +2021,7 @@ impl AppState {
             auto_pull_in_tree: persisted.auto_pull_in_tree,
             hover_effects: persisted.hover_effects,
             hover: None,
+            hover_tooltip: None,
             auto_pull_suppressed: false,
             status_cache: crate::cache::load(),
         }
@@ -3307,6 +3355,15 @@ impl AppState {
             .iter()
             .find(|hint| hint.row == row && col >= hint.col_start && col < hint.col_end)
             .map(|hint| hint.key)
+    }
+
+    /// The status-bar command whose click-region contains `(col,row)`, if any (drives the
+    /// hover tooltip).
+    pub fn command_at(&self, col: u16, row: u16) -> Option<Command> {
+        self.clickable
+            .iter()
+            .find(|region| region.row == row && col >= region.col_start && col < region.col_end)
+            .map(|region| region.command)
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {
