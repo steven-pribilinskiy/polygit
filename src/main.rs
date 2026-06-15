@@ -55,16 +55,7 @@ fn now_unix() -> i64 {
 
 /// Interactive polyrepo git dashboard — discover, status, and pull many repos.
 #[derive(Parser, Debug)]
-#[command(
-    name = "polygit",
-    version,
-    about,
-    after_help = "Sibling implementations (forwarded verbatim):\n  \
-        polygit go  [args]   Go / bubbletea build\n  \
-        polygit bun [args]   Bun / ink build (JIT)\n  \
-        polygit cli [args]   bash streaming version\n\n\
-        A directory literally named go/bun/cli is still reachable as ./go etc."
-)]
+#[command(name = "polygit", version, about)]
 struct Cli {
     /// Directory to pull repos from (default: cwd)
     dir: Option<PathBuf>,
@@ -104,7 +95,6 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
-    maybe_dispatch_sibling();
     let exit_code = run().await.unwrap_or_else(|err| {
         eprintln!("error: {err:#}");
         1
@@ -182,41 +172,6 @@ async fn watch_theme(app_state: Arc<Mutex<AppState>>) {
             app_state.lock().unwrap().auto_dark = dark;
         }
     }
-}
-
-/// If invoked as `polygit go|bun|cli [args]`, replace this process with the matching
-/// sibling implementation and forward the remaining args. Returns for every other
-/// invocation so the default Rust TUI runs.
-fn maybe_dispatch_sibling() {
-    let mut args = std::env::args().skip(1);
-    let Some(subcommand) = args.next() else {
-        return;
-    };
-    let target = match subcommand.as_str() {
-        "go" => "polygit-tui-go",
-        "bun" => "polygit-tui-bun-jit",
-        "cli" => "polygit-repos",
-        _ => return,
-    };
-    let program = sibling_program(target);
-    let rest: Vec<String> = args.collect();
-    let error = Command::new(&program).args(&rest).exec();
-    eprintln!("error: failed to launch `{}`: {error}", program.to_string_lossy());
-    std::process::exit(127);
-}
-
-/// Resolve a sibling backend: prefer `<dir-of-this-exe>/polygit-siblings/<target>` (kept off
-/// `$PATH` so the backends aren't top-level commands), falling back to the bare name on `$PATH`.
-fn sibling_program(target: &str) -> std::ffi::OsString {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("polygit-siblings").join(target);
-            if candidate.exists() {
-                return candidate.into_os_string();
-            }
-        }
-    }
-    std::ffi::OsString::from(target)
 }
 
 /// Open a URL in the user's browser via the first available opener, detached.

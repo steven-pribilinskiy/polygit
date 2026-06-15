@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`polygit` is an interactive multi-repo `git pull` dashboard: a Rust/ratatui TUI that recursively discovers every git repo under a directory and pulls them in parallel with live per-repo logs. Repos can be viewed flat, grouped (`groups.json`), or as a collapsible directory tree (or tree+groups). The Rust build is canonical; the same binary also fronts Go, Bun, and bash alternatives via `polygit go|bun|cli` subcommands (which `exec` siblings from `polygit-siblings/`, kept off `$PATH`).
+`polygit` is an interactive multi-repo `git pull` dashboard: a Rust/ratatui TUI that recursively discovers every git repo under a directory and pulls them in parallel with live per-repo logs. Repos can be viewed flat, grouped (`groups.json`), or as a collapsible directory tree (or tree+groups). The Rust build is the only one; an old bash original lives in `polygit-siblings/polygit-repos` (no longer wired up — kept as a plain-mode reference, pending archival).
 
 Stack: Rust (stable) · ratatui 0.29 · crossterm 0.28 (event-stream) · tokio · clap · anyhow.
 
@@ -22,14 +22,14 @@ cargo test <name>   # run a single test, e.g. cargo test classify_no_upstream
 - **Run the TUI:** `polygit [DIR]` (recursive by default; `--depth N` caps it, `--no-recursive`/`--depth 1` = legacy single-level). Plain streaming mode: `polygit --no-tui [DIR]` (the TUI is gated on `stderr` being a TTY — redirecting stderr forces plain mode). `-j N` / `PULL_JOBS` sets concurrency; `--timeout S` per pull.
 - **Verifying the TUI under tmux/`script`:** auto-responses from a detached harness confuse the event reader and small-width ptys can panic pre-existing clamps — drive a **real-sized** pty (e.g. python `pty.fork` + `TIOCSWINSZ` to 120×34, render with `pyte`) and set `COLORFGBG` to skip the OSC background probe. Don't trust a blank `tmux capture-pane` as "it crashed".
 - **Tests must be hermetic vs `state.json`:** `app.rs` tests run on the user's real persisted prefs — the `normalized()` test helper resets sort/filter/grouping/**tree**/collapsed sets. A manual TUI session that collapses folders/groups persists them; forgetting to reset in a new test helper makes tree/group tests fail spuriously.
-- **`make build` builds AND installs.** It compiles, refreshes the repo `bin/`, and installs the binary onto `$PATH` (`$(BINDIR)`, default `$(HOME)/bin`) via an **atomic rename** — `cp …/polygit.new && mv -f` — because a plain `cp` over a running binary fails with "Text file busy", and the rename is what the in-app new-build `↺ [reload]` watcher keys on. So after `make build`, the `pull`/`p` aliases run the new build immediately; no separate install step. `make install` only adds the sibling backends on top. Override the target dir with `make BINDIR=/some/dir build`.
+- **`make build` builds AND installs.** It compiles, refreshes the repo `bin/`, and installs the binary onto `$PATH` (`$(BINDIR)`, default `$(HOME)/bin`) via an **atomic rename** — `cp …/polygit.new && mv -f` — because a plain `cp` over a running binary fails with "Text file busy", and the rename is what the in-app new-build `↺ [reload]` watcher keys on. So after `make build`, the `pull`/`p` aliases run the new build immediately; no separate install step. `make install` is kept as a plain alias of `make build`. Override the target dir with `make BINDIR=/some/dir build`.
 - **Bump `Cargo.toml` version on every change** (patch = fix, minor = feature) — this project treats it as release-worthy.
 
 ## Architecture
 
 Source is a flat module set under `src/` (no submodules); each file is one concern:
 
-- **`main.rs`** — clap CLI, sibling dispatch, terminal setup, and the **synchronous event loop** (`run_event_loop`). Owns all key + mouse handling, the leader-chord state machine, and "suspend the TUI to run an external program" flows.
+- **`main.rs`** — clap CLI, terminal setup, and the **synchronous event loop** (`run_event_loop`). Owns all key + mouse handling, the leader-chord state machine, and "suspend the TUI to run an external program" flows.
 - **`app.rs`** — all state types: `AppState` (the god-object), `RepoState`, the status/column/sort/filter/leader/icon enums, `IconSet`, and the **pure logic + hit-test helpers** (`visible_indices`, `list_selection_at`, `set_sort`, `counts`, etc.).
 - **`render.rs`** — every ratatui draw call: the two main panes, status-bar footer, info block, help/settings/confirm/diff modals, and the full-screen repo page. No state mutation except writing captured geometry back to `AppState`.
 - **`worker.rs`** — async tokio tasks: the pull workers (`pull_repo`, bounded by the shared `ThrottleControl` semaphore), the streaming discovery driver (`run_discovery`) and throttle governor (`run_governor`), refetch/retry batches, and the lazy loaders for repo details, diffs, the repo page, and diff-modal file lists.

@@ -58,7 +58,6 @@ export default defineConfig({
           items: [
             { label: 'CLI flags & env', slug: 'reference/cli' },
             { label: 'Exit codes', slug: 'reference/exit-codes' },
-            { label: 'Sibling builds', slug: 'reference/siblings' },
             { label: 'Architecture', slug: 'reference/architecture' },
           ],
         },

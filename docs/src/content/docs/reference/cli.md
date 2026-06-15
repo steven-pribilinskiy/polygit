@@ -15,9 +15,7 @@ polygit [OPTIONS] [DIR]
 
 The scan is recursive by default — it crawls the tree in parallel, pruning hidden dirs,
 `node_modules`/`vendor`/`target`/`dist`/… and `*.worktrees`, and never descending into a
-found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level scan. A
-directory literally named `go`, `bun`, or `cli` is reachable as `polygit ./go` —
-see [Sibling builds](../siblings/).
+found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level scan.
 
 ## Flags
 

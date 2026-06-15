@@ -29,16 +29,17 @@ This builds the latest `main` and drops `polygit` in `~/.cargo/bin`.
 
 ## From source
 
-To hack on it, or to get the bash/Go/Bun sibling backends too:
+To hack on it:
 
 ```bash
 git clone https://github.com/steven-pribilinskiy/polygit.git
 cd polygit
-make install      # release build → ~/bin/polygit (+ the bash sibling)
+make build        # release build → ~/bin/polygit
 ```
 
-`make build` just builds + installs the binary; `make install` also drops the `polygit-repos`
-bash backend into `~/bin/polygit-siblings/`. Make sure the target dir is on your `PATH`.
+`make build` builds **and** installs the binary onto your `$PATH` via an atomic rename
+(`make install` is kept as an alias). Make sure the target dir (`~/bin` by default, override
+with `make BINDIR=/some/dir build`) is on your `PATH`.
 
 ## Verify
 
