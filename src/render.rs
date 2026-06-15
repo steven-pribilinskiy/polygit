@@ -2795,8 +2795,12 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         let info_label = if app.info_pinned { active } else { hint };
         let diff_label = if app.right_view == RightView::Diff { active } else { hint };
         let mut row1_segments: Vec<(String, Style, Option<Command>)> = vec![
-            ("j/k".to_string(), key, None),
-            (" move · ".to_string(), hint, None),
+            // `[j/]` moves down, `[k move]` moves up — both halves clickable.
+            ("j".to_string(), key, Some(Command::NavDown)),
+            ("/".to_string(), hint, Some(Command::NavDown)),
+            ("k".to_string(), key, Some(Command::NavUp)),
+            (" move".to_string(), hint, Some(Command::NavUp)),
+            (" · ".to_string(), hint, None),
             ("space".to_string(), key, Some(Command::ResultOverlay)),
             (" result".to_string(), hint, Some(Command::ResultOverlay)),
             (" · ".to_string(), hint, None),

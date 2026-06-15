@@ -523,6 +523,12 @@ fn dispatch_command(
         Cmd::ShowBuildInfo => {
             app.show_build_info = true;
         }
+        Cmd::NavDown => {
+            app.nav_down();
+        }
+        Cmd::NavUp => {
+            app.nav_up();
+        }
         Cmd::Quit => {
             return Some(if app.all_done {
                 let failed = app
