@@ -8,15 +8,16 @@ BINDIR ?= $(HOME)/bin
 # and the rename is what polygit's in-app new-build watcher keys on (the `↺ [reload]` notice).
 build:
 	cargo build --release
-	cp target/release/polygit bin/polygit
+	@cp target/release/polygit bin/polygit
+	@echo "→ refreshed repo binary: bin/polygit"
 	@mkdir -p $(BINDIR)
-	cp target/release/polygit $(BINDIR)/polygit.new
-	mv -f $(BINDIR)/polygit.new $(BINDIR)/polygit
+	@cp target/release/polygit $(BINDIR)/polygit.new
+	@mv -f $(BINDIR)/polygit.new $(BINDIR)/polygit
+	@echo "→ installed on \$$PATH (atomic): $(BINDIR)/polygit"
+	@echo "✓ build complete — pull/p aliases now run the new build"
 
-# `build` already installs the main binary; this adds the sibling backends (go/bun/bash).
+# `build` already builds and installs the binary onto $PATH; `install` is kept as an alias.
 install: build
-	mkdir -p $(BINDIR)/polygit-siblings
-	cp polygit-siblings/polygit-repos $(BINDIR)/polygit-siblings/polygit-repos
 
 test:
 	cargo test

@@ -3038,12 +3038,6 @@ fn help_items_cli() -> Vec<(Line<'static>, Option<String>)> {
         (Line::from(spans), None)
     };
 
-    items.push(header("SUBCOMMANDS  (forward to sibling builds; args passed through)"));
-    items.push(entry("polygit go", " [args]", "Go / bubbletea build", ""));
-    items.push(entry("polygit bun", " [args]", "Bun / ink build (JIT)", ""));
-    items.push(entry("polygit cli", " [args]", "bash streaming version", ""));
-    items.push(plain(""));
-
     items.push(header("FLAGS & ENVIRONMENT"));
     items.push(entry("[DIR]", "", "directory to scan (recursively)", "(default: cwd)"));
     items.push(entry("--depth N", "", "max scan depth", "(default: 16; 1 = flat)"));

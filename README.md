@@ -47,8 +47,8 @@ curl -fsSL https://steven-pribilinskiy.github.io/polygit/install.sh | bash
 # Or with cargo (no clone needed)
 cargo install --git https://github.com/steven-pribilinskiy/polygit
 
-# Or from source (also installs the bash/Go/Bun siblings)
-make install            # release build → ~/bin/polygit
+# Or from source
+make build              # release build → ~/bin/polygit
 ```
 
 See the [installation docs](https://steven-pribilinskiy.github.io/polygit/start/installation/) for details.
@@ -79,22 +79,6 @@ polygit --timeout 60 [DIR]
 # Skip worktree discovery
 polygit --no-worktrees [DIR]
 ```
-
-## Sibling implementations
-
-`polygit` forwards to the other builds when the first argument is `go`, `bun`, or `cli`; all remaining arguments are passed through verbatim:
-
-```bash
-polygit go  [args]   # Go / bubbletea build (polygit-tui-go)
-polygit bun [args]   # Bun / ink build, JIT (polygit-tui-bun-jit)
-polygit cli [args]   # bash streaming version (polygit-repos)
-```
-
-A directory literally named `go`/`bun`/`cli` is still reachable as `polygit ./go`.
-
-The backends live in `polygit-siblings/` next to the `polygit` binary (e.g. `~/bin/polygit-siblings/`), deliberately **off `$PATH`** so they aren't top-level commands — they're reachable only through `polygit go|bun|cli`. The dispatcher resolves them relative to its own location and falls back to `$PATH` if that directory is absent.
-
-The `cli` backend (`polygit-repos`, the original parallel-pull bash script that `src/plain.rs` was ported from) is tracked in this repo under [`polygit-siblings/`](polygit-siblings/) and deployed by `make install`. The `go` and `bun` backends are built from their own source trees.
 
 ## Keybindings
 
@@ -260,7 +244,7 @@ make bench
 
 ## Architecture
 
-- `src/main.rs` — CLI entry point, sibling dispatch, TUI setup, event loop
+- `src/main.rs` — CLI entry point, TUI setup, event loop
 - `src/app.rs` — Application state types (`AppState`, `RepoState`, `LogBuffer`) + retry/refetch eligibility helpers
 - `src/git.rs` — Git operations + the recursive repo walker (`spawn_repo_walker`, `should_descend`) and pull-output classification (`classify_pull_output`, incl. throttle detection) + unit tests
 - `src/worker.rs` — Async pull workers + streaming discovery (`run_discovery`) and the throttle governor (`run_governor`), bounded by the shared `ThrottleControl` semaphore

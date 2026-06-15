@@ -10,7 +10,7 @@ description: How the polygit Rust crate is organized.
 
 | File | Responsibility |
 |------|----------------|
-| `src/main.rs` | CLI entry point, sibling dispatch, TUI setup, and the event loop. |
+| `src/main.rs` | CLI entry point, TUI setup, and the event loop. |
 | `src/app.rs` | Application state types (`AppState`, `RepoState`, `LogBuffer`, `TreeNode`/`build_tree`, `ThrottleControl`, page/diff/confirm models) and retry/refetch eligibility + tree/fold helpers. |
 | `src/git.rs` | Git operations plus the **recursive repo walker** (`spawn_repo_walker`, `should_descend`, `discover_repos_recursive`, `relative_path`) and `classify_pull_output` (incl. throttle detection); unit tests. |
 | `src/worker.rs` | Async workers bounded by the shared `ThrottleControl` semaphore — streaming discovery (`run_discovery`), the throttle governor (`run_governor`), pulls, page loads (incl. `run_branch_stats`, a detached per-branch A/M/D stats pass), diffs, and the branch/worktree/stash/discard mutations. |
