@@ -1722,6 +1722,10 @@ pub struct AppState {
     /// A browser-style status line shown at the bottom-left while hovering a link (its URL).
     /// Set each frame by the hover handler; `None` clears it.
     pub status_hint: Option<String>,
+    /// Whether the help modal is maximized (≈90% of the viewport). Session-only.
+    pub help_maximized: bool,
+    /// The clickable maximize/restore toggle in the help tab bar: (row, col_start, col_end).
+    pub help_maximize_click: Option<(u16, u16, u16)>,
     /// Clickable help-modal tab chips: (row, col_start, col_end, tab). Rebuilt each render.
     pub help_tab_click: Vec<(u16, u16, u16, HelpTab)>,
     /// The clickable `[esc]` close region in the help modal: (row, col_start, col_end).
@@ -1970,6 +1974,8 @@ impl AppState {
             help_notes_expanded: false,
             help_notes_toggle_row: None,
             status_hint: None,
+            help_maximized: false,
+            help_maximize_click: None,
             help_tab_click: Vec::new(),
             help_close_click: None,
             show_keyboard: false,

@@ -149,6 +149,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.help_keyboard_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.help_maximize_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
         } else if app.help_links.iter().any(|&(row, _)| row == hrow)
             || app.help_notes_toggle_row == Some(hrow)
         {
@@ -3496,8 +3500,15 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         hotkeys.len().max(cli.len()).max(legend.len()).max(about.len()) as u16 + 1; // +1 tab bar
     let max_width = area.width.saturating_sub(2);
     let max_height = area.height.saturating_sub(2);
-    let modal_width = (widest + 4 + pad).min(max_width).max(40.min(max_width));
-    let modal_height = (tallest + 2 + pad).min(max_height).max(8.min(max_height));
+    let (modal_width, modal_height) = if app.help_maximized {
+        // ~90% of the viewport.
+        (area.width.saturating_mul(9) / 10, area.height.saturating_mul(9) / 10)
+    } else {
+        (
+            (widest + 4 + pad).min(max_width).max(40.min(max_width)),
+            (tallest + 2 + pad).min(max_height).max(8.min(max_height)),
+        )
+    };
     let modal_area = centered_rect(modal_width, modal_height, area);
     app.help_area = modal_area;
 
@@ -3556,10 +3567,15 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.help_keyboard_click = None;
     let kbd_btn = if app.help_tab == HelpTab::Hotkeys { "[K ⌨ keyboard]" } else { "" };
     let kbd_w = UnicodeWidthStr::width(kbd_btn) as u16;
+    // Right-aligned buttons, laid out right→left: [esc], then maximize/restore, then (Hotkeys
+    // only) the keyboard viewer.
     let esc = "[esc]";
     let esc_w = esc.len() as u16;
+    let max_btn = if app.help_maximized { "[m restore]" } else { "[m maximize]" };
+    let max_w = max_btn.len() as u16;
     let esc_col = tab_bar_area.x + tab_bar_area.width.saturating_sub(esc_w);
-    let kbd_col = esc_col.saturating_sub(if kbd_w > 0 { kbd_w + 1 } else { 0 });
+    let max_col = esc_col.saturating_sub(max_w + 1);
+    let kbd_col = max_col.saturating_sub(if kbd_w > 0 { kbd_w + 1 } else { 0 });
     if kbd_col > tab_col {
         tab_spans.push(Span::raw(" ".repeat((kbd_col - tab_col) as usize)));
     }
@@ -3569,6 +3585,9 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
             .push(Span::styled(kbd_btn.to_string(), Style::default().fg(Color::LightMagenta)));
         tab_spans.push(Span::raw(" "));
     }
+    app.help_maximize_click = Some((tab_bar_area.y, max_col, max_col + max_w));
+    tab_spans.push(Span::styled(max_btn.to_string(), Style::default().fg(Color::DarkGray)));
+    tab_spans.push(Span::raw(" "));
     app.help_close_click = Some((tab_bar_area.y, esc_col, esc_col + esc_w));
     tab_spans.push(Span::styled(esc.to_string(), Style::default().fg(Color::DarkGray)));
     let tab_bar = Line::from(tab_spans);
