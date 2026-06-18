@@ -1429,7 +1429,7 @@ fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, _tick: u64)
                 },
             };
             let header = format!(
-                " {} · {} · {}{} ",
+                " Command log · {} · {} · {}{} ",
                 state.name,
                 status_label(&state.status),
                 pid_str,
