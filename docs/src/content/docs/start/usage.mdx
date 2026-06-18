@@ -79,7 +79,7 @@ clickable links to the repo and design notes.
 
 `,` opens a small settings modal (persisted in `~/.config/polygit/state.json`), organized into
 a **General** section (panel padding, grouping, tree view), a **Theming** section (icons, theme,
-background, contrast), and a **Sync** section (auto-pull policy — see below):
+background, contrast, selection), and a **Sync** section (auto-pull policy — see below):
 
 - **Panel padding** — a 1-cell inner padding inside every bordered panel and modal.
 - **Icons** — switch the status / column / marker glyphs between the default Unicode set and
@@ -96,6 +96,10 @@ background, contrast), and a **Sync** section (auto-pull policy — see below):
   (selected rows and modal shadows still get a tone so they stay visible).
 - **Contrast** — `normal` / `soft`. Independent of Background: it narrows the text/background
   distance and desaturates the accent + semantic colors. The two axes compose freely.
+- **Selection** — how the selected row is highlighted everywhere a row is selectable (repo list,
+  repo page, diff file list). `blue` is a solid blue bar with white text; `subtle` is a soft blue
+  tint that keeps each column's own color (status hue, branch accent) readable. Hovering the
+  selected row deepens the tint in either mode so it stays distinct from a plain hover.
 - **Grouping** — render the list as named [group sections](../../guides/groups/) (same as `z`).
 - **Auto-pull on launch** — `on` / `off`. When off, launches never pull; the list shows cached
   status and you pull on demand (`e` / `E`).

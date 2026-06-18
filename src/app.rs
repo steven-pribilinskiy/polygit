@@ -787,6 +787,27 @@ impl Contrast {
     }
 }
 
+/// How the selected row is highlighted. `Blue` is a solid blue bar with white text (high contrast,
+/// but it overrides per-column colors). `Subtle` is a soft tint that keeps each column's own color
+/// readable — better for the repo list / repo page / diff list, whose values are color-coded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SelectionStyle {
+    #[default]
+    Blue,
+    Subtle,
+}
+
+impl SelectionStyle {
+    /// Toggle Blue ↔ Subtle.
+    pub fn cycle(self) -> Self {
+        match self {
+            SelectionStyle::Blue => SelectionStyle::Subtle,
+            SelectionStyle::Subtle => SelectionStyle::Blue,
+        }
+    }
+}
+
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1767,6 +1788,8 @@ pub struct AppState {
     pub theme: Theme,
     /// Contrast level for the active palette (text + accent saturation).
     pub contrast: Contrast,
+    /// Selected-row highlight style (blue bar vs subtle tint that keeps column colors).
+    pub selection_style: SelectionStyle,
     /// Background tone for the active palette (surface only), independent of `Contrast`.
     pub background: Background,
     /// Whether the terminal background was detected as dark at startup (resolves `Theme::Auto`).
@@ -1972,6 +1995,7 @@ impl AppState {
             icon_style: persisted.icon_style,
             theme: persisted.theme,
             contrast: persisted.contrast,
+            selection_style: persisted.selection_style,
             background: crate::persist::resolve_background(persisted.background, persisted.contrast),
             auto_dark,
             show_settings: false,
@@ -2290,6 +2314,7 @@ impl AppState {
             icon_style: self.icon_style,
             theme: self.theme,
             contrast: self.contrast,
+            selection_style: self.selection_style,
             background: Some(self.background),
             sort_column: self.sort_column,
             sort_dir: self.sort_dir,
@@ -2557,16 +2582,18 @@ impl AppState {
             (5, 2) => self.background = Background::Terminal,
             (6, 0) => self.contrast = Contrast::Normal,
             (6, 1) => self.contrast = Contrast::Soft,
-            (7, 0) => self.auto_pull_on_launch = true,
-            (7, 1) => self.auto_pull_on_launch = false,
-            (8, 0) => self.auto_pull_max_repos = 50,
-            (8, 1) => self.auto_pull_max_repos = 100,
-            (8, 2) => self.auto_pull_max_repos = 250,
-            (8, 3) => self.auto_pull_max_repos = 0,
-            (9, 0) => self.auto_pull_in_tree = true,
-            (9, 1) => self.auto_pull_in_tree = false,
-            (10, 0) => self.hover_effects = true,
-            (10, 1) => self.hover_effects = false,
+            (7, 0) => self.selection_style = SelectionStyle::Blue,
+            (7, 1) => self.selection_style = SelectionStyle::Subtle,
+            (8, 0) => self.auto_pull_on_launch = true,
+            (8, 1) => self.auto_pull_on_launch = false,
+            (9, 0) => self.auto_pull_max_repos = 50,
+            (9, 1) => self.auto_pull_max_repos = 100,
+            (9, 2) => self.auto_pull_max_repos = 250,
+            (9, 3) => self.auto_pull_max_repos = 0,
+            (10, 0) => self.auto_pull_in_tree = true,
+            (10, 1) => self.auto_pull_in_tree = false,
+            (11, 0) => self.hover_effects = true,
+            (11, 1) => self.hover_effects = false,
             _ => return,
         }
         self.save_state();
@@ -3236,7 +3263,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 11;
+    pub const SETTINGS_ROWS: usize = 12;
 
     /// Toggle/cycle the currently-selected settings row, persisting immediately.
     /// Row order (matches `render_settings` sections): 0 padding · 1 grouping · 2 tree (General),
@@ -3264,10 +3291,11 @@ impl AppState {
             4 => self.theme = self.theme.cycle(),
             5 => self.background = self.background.cycle(),
             6 => self.contrast = self.contrast.cycle(),
-            7 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
-            8 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
-            9 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
-            10 => self.hover_effects = !self.hover_effects,
+            7 => self.selection_style = self.selection_style.cycle(),
+            8 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            9 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            10 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            11 => self.hover_effects = !self.hover_effects,
             _ => {}
         }
         self.save_state();
