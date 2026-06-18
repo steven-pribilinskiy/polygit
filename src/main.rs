@@ -948,7 +948,16 @@ async fn run_event_loop(
                 None
             };
             app.status_hint = help_url.clone();
-            let dwell_text: Option<String> = help_url.or_else(|| {
+            let settings_tip = if app.show_settings {
+                app.hover.and_then(|(col, row)| {
+                    app.settings_hit_at(col, row)
+                        .and_then(|(setting_row, option)| AppState::settings_tip(setting_row, option))
+                        .map(str::to_string)
+                })
+            } else {
+                None
+            };
+            let dwell_text: Option<String> = settings_tip.or(help_url).or_else(|| {
                 app.hover
                     .and_then(|(col, row)| app.command_at(col, row))
                     .map(|cmd| cmd.tooltip().to_string())

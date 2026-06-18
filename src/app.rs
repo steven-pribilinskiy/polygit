@@ -3348,6 +3348,40 @@ impl AppState {
     /// Number of rows in the settings modal.
     pub const SETTINGS_ROWS: usize = 16;
 
+    /// One-line tooltip for a settings row (or a specific option, where it adds something) —
+    /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
+    /// index (see `SETTINGS_TABS`) and the hovered option, if any.
+    pub fn settings_tip(row: usize, option: Option<usize>) -> Option<&'static str> {
+        Some(match (row, option) {
+            (3, Some(0)) => {
+                "Unicode glyphs can be colorized per type (e.g. the branch icon gets its own \
+                 color); emoji use the font's own fixed colors"
+            }
+            (3, Some(1)) => "Emoji glyphs render 2 cells wide and use the font's fixed colors",
+            (0, _) => "A 1-cell inner padding inside every bordered panel and modal",
+            (1, _) => "Render the repo list as named group sections (from groups.json)",
+            (2, _) => "Render the repos as a collapsible directory tree",
+            (3, _) => "Glyph set for statuses, columns, and markers",
+            (4, _) => "Color theme: auto-detect the terminal, or force dark / light",
+            (5, _) => "Surface tone: normal, soft, or terminal (let the terminal background show)",
+            (6, _) => "Text + accent saturation (normal vs softer)",
+            (7, _) => "Selected-row highlight: a solid blue bar, or a subtle tint that keeps each \
+                       column's own color",
+            (8, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
+            (9, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
+            (10, _) => "Allow the launch auto-pull while the directory-tree view is active",
+            (11, _) => "Highlight actionable elements under the cursor (enables all-motion mouse \
+                        tracking, which takes over terminal text selection)",
+            (12, _) => "Pulse a row's changed cells after a pull. The status text column (t u) \
+                        also marks what changed.",
+            (13, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
+                        also marks what changed.",
+            (14, _) => "Draw the rounded borders around the two main panes",
+            (15, _) => "Draw the draggable splitter grip between the panes",
+            _ => return None,
+        })
+    }
+
     /// `(first global row, row count)` for settings tab `tab` (index into `SETTINGS_TABS`).
     pub fn settings_tab_range(tab: usize) -> (usize, usize) {
         let start: usize = SETTINGS_TABS.iter().take(tab).map(|(_, count)| count).sum();
