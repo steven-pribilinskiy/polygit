@@ -305,6 +305,13 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.info_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) = app
+            .pr_cell_click
+            .iter()
+            .find(|(r, s, e, _)| contains(*r, *s, *e))
+            .map(|&(row, start, end, _)| (row, start, end))
+        {
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(scroll) =
             scrollbar_col_hit()
         {
@@ -881,6 +888,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     let col_extra = usize::from(emoji);
     let dirty_w = 3 + col_extra; // glyph + up to 2 digits
     let count_w = 4 + col_extra; // glyph + count (worktrees / branches / stashes)
+    let pr_w = 6; // `#NNNNN` — fits a 5-digit PR number
     let columns_width = usize::from(columns.status) * (STATUS_COL_W + 1)
         + usize::from(columns.ahead_behind) * 10
         + (dirty_w + 1)
@@ -889,7 +897,8 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         + usize::from(columns.branches) * (count_w + 1)
         + usize::from(columns.stashes) * (count_w + 1)
         + usize::from(columns.pulled_commits) * (count_w + 1)
-        + usize::from(columns.pulled_files) * (count_w + 1);
+        + usize::from(columns.pulled_files) * (count_w + 1)
+        + usize::from(columns.pull_request) * (pr_w + 1);
 
     let inner_width = inner.width as usize;
     let branch_col_width = inner_width
@@ -1085,6 +1094,17 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             if columns.pulled_files {
                 spans.push(count_span(icons.changed, pulled_count(|r| r.files), Color::Cyan, false));
             }
+            if columns.pull_request {
+                // `#N` (a clickable link, region registered post-render) when an open PR exists;
+                // blank otherwise (unresolved or no PR).
+                let text = state.pr.as_ref().map(|pr| format!("#{}", pr.number)).unwrap_or_default();
+                let style = if state.pr.is_some() {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(format!(" {}", pad_display(&text, pr_w)), style));
+            }
 
             ListItem::new(Line::from(spans))
     };
@@ -1180,6 +1200,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             columns,
             count_w,
             dirty_w,
+            pr_w,
             app.sort_column,
             app.sort_dir,
         )
@@ -1217,6 +1238,31 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         false,
     );
 
+    // Capture clickable PR-cell regions: for each visible repo with an open PR, the `#N` cell's
+    // screen row + the PR column's x-range (taken from the header) opens the PR in the browser.
+    app.pr_cell_click.clear();
+    if columns.pull_request {
+        let pr_x = app
+            .header_click
+            .iter()
+            .find(|&&(_, _, column)| column == SortColumn::PullRequest)
+            .map(|&(start, end, _)| (start, end));
+        if let Some((start, end)) = pr_x {
+            let offset = list_state.offset();
+            let height = rows_area.height as usize;
+            let mut clicks = Vec::new();
+            for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
+                if let ListRow::Repo { repo_idx, .. } = *row {
+                    let url = app.repos[repo_idx].lock().unwrap().pr.as_ref().map(|pr| pr.url.clone());
+                    if let Some(url) = url {
+                        clicks.push((rows_area.y + visible as u16, start, end, url));
+                    }
+                }
+            }
+            app.pr_cell_click = clicks;
+        }
+    }
+
     app.list_rows_area = rows_area;
     list_state.offset()
 }
@@ -1232,6 +1278,7 @@ fn build_list_header(
     columns: ColumnFlags,
     count_w: usize,
     dirty_w: usize,
+    pr_w: usize,
     sort_column: SortColumn,
     sort_dir: SortDir,
 ) -> (Vec<Line<'static>>, Vec<(u16, u16, SortColumn)>) {
@@ -1273,6 +1320,9 @@ fn build_list_header(
     }
     if columns.pulled_files {
         cells.push(Cell { label: "chg", width: count_w, lead: true, sort: Some(SortColumn::PulledFiles) });
+    }
+    if columns.pull_request {
+        cells.push(Cell { label: "pr", width: pr_w, lead: true, sort: Some(SortColumn::PullRequest) });
     }
 
     let active_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
@@ -1868,6 +1918,15 @@ fn build_info_lines(
     if let Some(pr) = state.pr.as_ref() {
         let text = format!("#{} {}", pr.number, pr.title);
         push_link(&mut lines, &mut clicks, "Pull Request", &text, &pr.url);
+        // A dim "checked … ago" sub-line (per-entry cache timestamp).
+        if let Some(checked_at) = state.pr_checked_at {
+            let age = crate::app::format_cache_age(checked_at);
+            let when = if age == "now" { "just now".to_string() } else { format!("{age} ago") };
+            lines.push(Line::from(vec![
+                Span::raw(format!("{:<13}", "")),
+                Span::styled(format!("checked {when}"), dim),
+            ]));
+        }
     } else if state.pr_loading {
         lines.push(Line::from(vec![
             Span::styled(format!("{:<13}", "Pull Request"), label),
@@ -2849,6 +2908,7 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             } else {
                 disabled_item("c", "changed")
             },
+            toggle_item(columns.pull_request, "r", "pull request", Column::PullRequest),
         ];
         let mut chips: Vec<Vec<(String, Style, Option<Command>)>> =
             entries.into_iter().map(|entry| entry.to_vec()).collect();
@@ -2949,6 +3009,9 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         }
         if sort_vis(SortColumn::PulledFiles) {
             entries.push(sort_item("g", "changed", SortColumn::PulledFiles));
+        }
+        if sort_vis(SortColumn::PullRequest) {
+            entries.push(sort_item("r", "pull request", SortColumn::PullRequest));
         }
         for (index, entry) in entries.into_iter().enumerate() {
             if index > 0 {

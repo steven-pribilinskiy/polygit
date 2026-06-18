@@ -19,6 +19,7 @@ description: How the polygit Rust crate is organized.
 | `src/groups.rs` | Repo grouping — `groups.json` config (pattern/repos/command/url sources), the wildcard matcher, JSON extraction, the dynamic-membership cache, and the async resolution task. |
 | `src/persist.rs` | UI preferences saved to `~/.config/polygit/state.json` (columns, sort, icon style, padding, theme, background, contrast, help tab, splitter, grouping, collapsed groups, tree toggle, collapsed folders, repo-page columns, repo-page info panel). Per-field tolerant deserializers absorb removed enum values (old `sort_column: "discovery"` → `Name`) and a missing/corrupt file loads from `{}` so field defaults apply. |
 | `src/theme.rs` | Color palettes composed from two independent axes — **background** (surface tones) × **contrast** (text/accent saturation), each dark/light — the per-frame ANSI→RGB remap, and terminal background detection for the auto theme. |
+| `src/pr_cache.rs` | Persisted PR cache (`~/.config/polygit/pr-cache.json`): repo+branch → open PR + timestamp, with a 5-minute TTL, so the PR column/info panel don't re-hit `gh` every frame or launch. |
 | `src/profile.rs` | The optional `--profile` per-repo timing report. |
 
 ## How a pull flows

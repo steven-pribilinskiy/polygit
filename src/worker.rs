@@ -128,7 +128,7 @@ pub async fn pull_repo(
             state.pull_result = Some(result);
             state.details_stale = true;
             // A pull may have opened/closed/merged a PR or moved HEAD to a new branch — recheck.
-            state.pr_checked = false;
+            state.pr_checked_at = None;
         }
         PullOutcome::Throttled => {
             // Tell the shared gate to back off, mark the repo, and schedule a backoff retry.
@@ -419,12 +419,25 @@ pub async fn run_repo_details(repo: SharedRepoState) {
     // age) stays until an actual pull, so opening the info panel never fakes a fresh result.
 }
 
-/// Look up the open PR for one repo's current branch (via `gh`) and store it. The caller sets
-/// `pr_loading`/`pr_checked` before spawning; this clears `pr_loading`.
-pub async fn run_pull_request(repo: SharedRepoState) {
+/// Look up the open PR for one repo's current branch (via `gh`) and store it, stamping
+/// `pr_checked_at = now` so the cache TTL + info-panel age track it. The caller sets `pr_loading`
+/// before spawning; this clears it. `now` is Unix seconds passed in by the event loop.
+pub async fn run_pull_request(repo: SharedRepoState, now: i64) {
     let (path, branch) = {
         let state = repo.lock().unwrap();
         (state.path.clone(), state.branch.clone())
+    };
+    // PR detection needs the current branch; resolve (and record) it when not loaded yet so the
+    // column works even before a pull.
+    let branch = match branch {
+        Some(branch) => Some(branch),
+        None => {
+            let resolved = get_branch(&path).await.ok();
+            if let Some(branch) = &resolved {
+                repo.lock().unwrap().branch = Some(branch.clone());
+            }
+            resolved
+        }
     };
     let pr = match branch {
         Some(branch) => pull_request(&path, &branch).await,
@@ -432,7 +445,65 @@ pub async fn run_pull_request(repo: SharedRepoState) {
     };
     let mut state = repo.lock().unwrap();
     state.pr = pr;
+    state.pr_checked_at = Some(now);
     state.pr_loading = false;
+}
+
+/// Resolve open PRs for every repo whose cached entry is stale/missing, bounded by `max_jobs`
+/// concurrent `gh` calls — the background fill behind the Pull Request column. Repos already fresh
+/// (in-memory `pr_checked_at` or a fresh entry in the `cache` snapshot) are skipped, so a warm
+/// cache never re-hits the network. `now` is Unix seconds.
+pub async fn run_all_prs(
+    repos: Vec<SharedRepoState>,
+    max_jobs: usize,
+    now: i64,
+    cache: crate::pr_cache::PrCache,
+) {
+    let semaphore = Arc::new(Semaphore::new(max_jobs.max(1)));
+    let cache = Arc::new(cache);
+    let mut handles = Vec::new();
+    for repo in repos {
+        let semaphore = Arc::clone(&semaphore);
+        let cache = Arc::clone(&cache);
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
+            let (path, branch, fresh) = {
+                let state = repo.lock().unwrap();
+                let fresh = state.pr_checked_at.is_some_and(|at| crate::pr_cache::is_fresh(at, now));
+                (state.path.clone(), state.branch.clone(), fresh)
+            };
+            if fresh {
+                return; // already resolved this session within the TTL
+            }
+            // Resolve (and record) the branch when not loaded yet so the column works pre-pull.
+            let branch = match branch {
+                Some(branch) => branch,
+                None => match get_branch(&path).await.ok() {
+                    Some(branch) => {
+                        repo.lock().unwrap().branch = Some(branch.clone());
+                        branch
+                    }
+                    None => return,
+                },
+            };
+            // A fresh disk-cache entry seeds without a network call.
+            if let Some(entry) = cache.get(&crate::pr_cache::key(&path, &branch)) {
+                if crate::pr_cache::is_fresh(entry.checked_at, now) {
+                    let mut state = repo.lock().unwrap();
+                    state.pr = entry.pr.clone();
+                    state.pr_checked_at = Some(entry.checked_at);
+                    return;
+                }
+            }
+            let pr = pull_request(&path, &branch).await;
+            let mut state = repo.lock().unwrap();
+            state.pr = pr;
+            state.pr_checked_at = Some(now);
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
 }
 
 /// Fetch the diff for one repo (working-tree changes if dirty, else the last pull's diff)

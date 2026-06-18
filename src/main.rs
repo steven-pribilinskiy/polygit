@@ -5,6 +5,7 @@ mod groups;
 mod keymap;
 mod persist;
 mod plain;
+mod pr_cache;
 mod profile;
 mod render;
 mod theme;
@@ -41,7 +42,8 @@ use worker::{
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
-    run_pull_request, run_remove_worktree, run_repo_details, run_repo_diff, run_repo_page,
+    run_all_prs, run_pull_request, run_remove_worktree, run_repo_details, run_repo_diff,
+    run_repo_page,
 };
 
 /// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
@@ -698,6 +700,7 @@ async fn run_tui(
         let mut app = app_state.lock().unwrap();
         app.save_state();
         app.flush_cache(now_unix());
+        app.flush_pr_cache();
     }
 
     // Restore terminal
@@ -865,6 +868,7 @@ async fn run_event_loop(
                 app.finished_elapsed = Some(app.start.elapsed());
                 // Persist each repo's fresh terminal status so the next launch shows it instantly.
                 app.flush_cache(now_unix());
+                app.flush_pr_cache();
             }
         }
 
@@ -1505,6 +1509,16 @@ async fn run_event_loop(
                                 }
                                 InfoAction::ToggleExpand(field) => app.toggle_info_expanded(&field),
                             }
+                        } else if let Some(url) = app
+                            .pr_cell_click
+                            .iter()
+                            .find(|(row, start, end, _)| {
+                                mouse.row == *row && mouse.column >= *start && mouse.column < *end
+                            })
+                            .map(|(_, _, _, url)| url.clone())
+                        {
+                            // Click the PR column's `#N` to open the pull request in the browser.
+                            open_url(&url);
                         } else {
                             let on_divider = (i32::from(mouse.column)
                                 - i32::from(app.divider_col))
@@ -2293,6 +2307,7 @@ async fn run_event_loop(
                         KeyCode::Char('s') => toggle_or_warn(&mut app, Column::Stashes, "stashes"),
                         KeyCode::Char('p') => toggle_or_warn(&mut app, Column::PulledCommits, "pulled commits"),
                         KeyCode::Char('c') => toggle_or_warn(&mut app, Column::PulledFiles, "changed files"),
+                        KeyCode::Char('r') => app.toggle_column(Column::PullRequest),
                         KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::Enter => {
                             // Exit toggle mode and let the key run normally below.
                             app.pending_leader = None;
@@ -2345,6 +2360,7 @@ async fn run_event_loop(
                         KeyCode::Char('k') => Some(SortColumn::Stashes),
                         KeyCode::Char('p') => Some(SortColumn::PulledCommits),
                         KeyCode::Char('g') => Some(SortColumn::PulledFiles),
+                        KeyCode::Char('r') => Some(SortColumn::PullRequest),
                         _ => None,
                     };
                     if let Some(column) = picked {
@@ -2700,27 +2716,24 @@ async fn run_event_loop(
             let mut app = app_state.lock().unwrap();
             if let Some(idx) = app.repo_page {
                 let repo = Arc::clone(&app.repos[idx]);
-                let mut state = repo.lock().unwrap();
-                if state.page.is_none() && !state.page_loading {
-                    state.page_loading = true;
-                    drop(state);
-                    // Seed this repo's per-branch overrides from the persisted map so the stats
-                    // worker resolves each base correctly on first paint.
-                    app.seed_repo_base_overrides(idx);
-                    tokio::spawn(run_repo_page(repo));
-                } else if state.page.is_some() {
-                    drop(state);
-                    // Rows exist now — snap the selection to the current branch (once).
-                    app.focus_head_branch_if_pending();
+                {
+                    let mut state = repo.lock().unwrap();
+                    if state.page.is_none() && !state.page_loading {
+                        state.page_loading = true;
+                        drop(state);
+                        // Seed this repo's per-branch overrides from the persisted map so the stats
+                        // worker resolves each base correctly on first paint.
+                        app.seed_repo_base_overrides(idx);
+                        tokio::spawn(run_repo_page(Arc::clone(&repo)));
+                    } else if state.page.is_some() {
+                        drop(state);
+                        // Rows exist now — snap the selection to the current branch (once).
+                        app.focus_head_branch_if_pending();
+                    }
                 }
-                // The repo page's info panel shows the PR too — resolve it once for this repo.
-                let page_repo = Arc::clone(&app.repos[idx]);
-                let mut page_state = page_repo.lock().unwrap();
-                if !page_state.pr_checked && !page_state.pr_loading {
-                    page_state.pr_loading = true;
-                    page_state.pr_checked = true;
-                    drop(page_state);
-                    tokio::spawn(run_pull_request(page_repo));
+                // The repo page's info panel shows the PR too — resolve it (cache-aware).
+                if let Some(pr_repo) = app.maybe_resolve_pr(idx, now_unix()) {
+                    tokio::spawn(run_pull_request(pr_repo, now_unix()));
                 }
             }
         }
@@ -2737,6 +2750,21 @@ async fn run_event_loop(
             }
         }
 
+        // When the PR column is enabled, resolve PRs for all repos in the background — bounded and
+        // cache-aware (fresh entries are skipped, so a warm cache never re-hits `gh`). Network, so
+        // capped low to stay gentle on the GitHub API.
+        {
+            let mut app = app_state.lock().unwrap();
+            if app.columns.pull_request && !app.pr_pass_spawned {
+                app.pr_pass_spawned = true;
+                let repos = app.repos.clone();
+                let max_jobs = app.max_jobs.min(8);
+                let cache = app.pr_cache.clone();
+                drop(app);
+                tokio::spawn(run_all_prs(repos, max_jobs, now_unix(), cache));
+            }
+        }
+
         // Lazily fetch details/diff for the selected repo when those views are open.
         {
             let app = app_state.lock().unwrap();
@@ -2744,23 +2772,21 @@ async fn run_event_loop(
             if app.info_pinned {
                 if let Some(idx) = app.selected_repo_index() {
                     let repo = Arc::clone(&app.repos[idx]);
-                    let mut state = repo.lock().unwrap();
-                    // Fetch when never loaded, or re-fetch when a pull marked details stale so
-                    // the panel reflects the new HEAD (sha, ahead/behind, last commit).
-                    if (state.details.is_none() || state.details_stale) && !state.details_loading {
-                        state.details_loading = true;
-                        let details_repo = Arc::clone(&repo);
-                        drop(state);
-                        tokio::spawn(run_repo_details(details_repo));
-                        state = repo.lock().unwrap();
+                    {
+                        let mut state = repo.lock().unwrap();
+                        // Fetch when never loaded, or re-fetch when a pull marked details stale so
+                        // the panel reflects the new HEAD (sha, ahead/behind, last commit).
+                        if (state.details.is_none() || state.details_stale) && !state.details_loading
+                        {
+                            state.details_loading = true;
+                            drop(state);
+                            tokio::spawn(run_repo_details(Arc::clone(&repo)));
+                        }
                     }
-                    // Look up the open PR once per repo (cheap `gh` call) so the info panel can
-                    // show it below the branch. Re-runs after a pull (which clears `pr_checked`).
-                    if !state.pr_checked && !state.pr_loading {
-                        state.pr_loading = true;
-                        state.pr_checked = true;
-                        drop(state);
-                        tokio::spawn(run_pull_request(repo));
+                    // Resolve the open PR for the info panel, honoring the 5-min cache TTL (seeds
+                    // from a fresh entry; only hits `gh` when stale/missing).
+                    if let Some(pr_repo) = app.maybe_resolve_pr(idx, now_unix()) {
+                        tokio::spawn(run_pull_request(pr_repo, now_unix()));
                     }
                 }
             }
