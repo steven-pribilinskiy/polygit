@@ -1038,10 +1038,12 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     app.header_click = header_click;
 
     let total_items = items.len();
+    let selection_fg = app.palette().selection_fg;
     let list = List::new(items)
         .highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
+                .fg(selection_fg)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("");
@@ -4658,6 +4660,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let start = app.repo_page_scroll;
     let end = (start + inner_height).min(items.len());
 
+    let selection_fg = app.palette().selection_fg;
     app.repo_page_click.clear();
     app.base_cell_click.clear();
     app.repo_page_sort_click.clear();
@@ -4688,7 +4691,16 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
                 ));
             }
             if *sel_index == selected {
-                line.style = Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD);
+                line.style = Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(selection_fg)
+                    .add_modifier(Modifier::BOLD);
+                // Force every span to the selection fg + bold so the selected row reads uniformly
+                // (the per-column colors would otherwise win over the line style and fight the
+                // blue selection bg).
+                for span in &mut line.spans {
+                    span.style = span.style.fg(selection_fg).add_modifier(Modifier::BOLD);
+                }
             }
         }
         lines.push(line);

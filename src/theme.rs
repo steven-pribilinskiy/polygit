@@ -19,6 +19,9 @@ pub struct Palette {
     pub fg: Color,
     /// Selection / elevated-surface background (`Color::DarkGray` backgrounds).
     pub selection_bg: Color,
+    /// Text on the selected row — a near-white that reads on the saturated-blue `selection_bg`
+    /// in every theme (kept theme-independent on purpose, like lazygit's selection).
+    pub selection_fg: Color,
     /// Modal drop-shadow background (`Color::Black` backgrounds).
     pub shadow: Color,
     /// Primary accent — focused borders, links, active chips (`Color::Cyan`).
@@ -81,7 +84,8 @@ impl Palette {
 static DARK_NORMAL: Palette = Palette {
     bg: Color::Rgb(26, 27, 38),
     fg: Color::Rgb(192, 197, 206),
-    selection_bg: Color::Rgb(59, 66, 97),
+    selection_bg: Color::Rgb(48, 100, 208),
+    selection_fg: Color::Rgb(247, 248, 252),
     shadow: Color::Rgb(16, 16, 24),
     accent: Color::Rgb(125, 207, 255),
     ok: Color::Rgb(158, 206, 106),
@@ -98,7 +102,8 @@ static DARK_NORMAL: Palette = Palette {
 static DARK_SOFT: Palette = Palette {
     bg: Color::Rgb(35, 37, 48),
     fg: Color::Rgb(170, 176, 189),
-    selection_bg: Color::Rgb(62, 66, 84),
+    selection_bg: Color::Rgb(52, 92, 184),
+    selection_fg: Color::Rgb(247, 248, 252),
     shadow: Color::Rgb(27, 29, 38),
     accent: Color::Rgb(108, 178, 209),
     ok: Color::Rgb(143, 174, 115),
@@ -115,7 +120,8 @@ static DARK_SOFT: Palette = Palette {
 static LIGHT_NORMAL: Palette = Palette {
     bg: Color::Rgb(245, 246, 248),
     fg: Color::Rgb(40, 42, 48),
-    selection_bg: Color::Rgb(212, 214, 228),
+    selection_bg: Color::Rgb(37, 99, 235),
+    selection_fg: Color::Rgb(247, 248, 252),
     shadow: Color::Rgb(200, 202, 212),
     accent: Color::Rgb(0, 138, 173),
     ok: Color::Rgb(26, 127, 55),
@@ -132,7 +138,8 @@ static LIGHT_NORMAL: Palette = Palette {
 static LIGHT_SOFT: Palette = Palette {
     bg: Color::Rgb(235, 237, 240),
     fg: Color::Rgb(75, 80, 92),
-    selection_bg: Color::Rgb(215, 218, 226),
+    selection_bg: Color::Rgb(46, 96, 204),
+    selection_fg: Color::Rgb(247, 248, 252),
     shadow: Color::Rgb(197, 200, 209),
     accent: Color::Rgb(38, 148, 178),
     ok: Color::Rgb(45, 138, 75),
