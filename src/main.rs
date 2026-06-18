@@ -320,6 +320,19 @@ fn hint_key_event(hint: app::HintKey) -> KeyEvent {
     }
 }
 
+/// Wheel step for a scroll event, scaled by modifier keys: Ctrl/Alt → a full `page`, Shift → 5×
+/// the `base` step, otherwise `base`. (Some terminals don't report Shift on the wheel, hence Alt
+/// also stands in for a fast jump.)
+fn wheel_step(modifiers: KeyModifiers, base: usize, page: usize) -> usize {
+    if modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT) {
+        page.max(1)
+    } else if modifiers.contains(KeyModifiers::SHIFT) {
+        base.saturating_mul(5)
+    } else {
+        base
+    }
+}
+
 /// Pop the keyboard enhancement flags pushed by `push_key_enhancement`.
 fn pop_key_enhancement(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
     if supports_keyboard_enhancement().unwrap_or(false) {
@@ -1187,10 +1200,20 @@ async fn run_event_loop(
                 if app.repo_page.is_some() && !app.show_help {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
-                            app.repo_page_scroll = app.repo_page_scroll.saturating_add(3);
+                            let step = wheel_step(
+                                mouse.modifiers,
+                                3,
+                                app.repo_page_inner.height as usize,
+                            );
+                            app.repo_page_scroll = app.repo_page_scroll.saturating_add(step);
                         }
                         MouseEventKind::ScrollUp => {
-                            app.repo_page_scroll = app.repo_page_scroll.saturating_sub(3);
+                            let step = wheel_step(
+                                mouse.modifiers,
+                                3,
+                                app.repo_page_inner.height as usize,
+                            );
+                            app.repo_page_scroll = app.repo_page_scroll.saturating_sub(step);
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
@@ -1389,24 +1412,34 @@ async fn run_event_loop(
                     }
                     MouseEventKind::ScrollUp => {
                         if mouse.column < app.divider_col {
-                            app.nav_up();
+                            let step =
+                                wheel_step(mouse.modifiers, 1, app.list_rows_area.height as usize);
+                            for _ in 0..step {
+                                app.nav_up();
+                            }
                         } else if let Some(repo_idx) = app.selected_repo_index() {
+                            let step = wheel_step(mouse.modifiers, 3, app.preview_viewport);
                             let mut state = app.repos[repo_idx].lock().unwrap();
                             state.auto_scroll = false;
-                            state.preview_scroll = state.preview_scroll.saturating_sub(3);
+                            state.preview_scroll = state.preview_scroll.saturating_sub(step);
                         }
                     }
                     MouseEventKind::ScrollDown => {
                         if mouse.column < app.divider_col {
-                            app.nav_down();
+                            let step =
+                                wheel_step(mouse.modifiers, 1, app.list_rows_area.height as usize);
+                            for _ in 0..step {
+                                app.nav_down();
+                            }
                         } else if let Some(repo_idx) = app.selected_repo_index() {
                             // Clamp to the real content (works for log AND diff views) so wheel-up
                             // responds immediately instead of undoing invisible over-scroll.
+                            let step = wheel_step(mouse.modifiers, 3, app.preview_viewport);
                             let max_scroll =
                                 app.preview_total.saturating_sub(app.preview_viewport);
                             let mut state = app.repos[repo_idx].lock().unwrap();
                             state.auto_scroll = false;
-                            state.preview_scroll = (state.preview_scroll + 3).min(max_scroll);
+                            state.preview_scroll = (state.preview_scroll + step).min(max_scroll);
                         }
                     }
                     _ => {}
@@ -2483,5 +2516,26 @@ fn compute_exit_code(app_state: &Arc<Mutex<AppState>>) -> i32 {
         1
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wheel_step;
+    use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn wheel_step_scales_with_modifiers() {
+        // No modifier → base step.
+        assert_eq!(wheel_step(KeyModifiers::NONE, 1, 30), 1);
+        assert_eq!(wheel_step(KeyModifiers::NONE, 3, 30), 3);
+        // Shift → 5× base.
+        assert_eq!(wheel_step(KeyModifiers::SHIFT, 1, 30), 5);
+        assert_eq!(wheel_step(KeyModifiers::SHIFT, 3, 30), 15);
+        // Ctrl / Alt → a full page.
+        assert_eq!(wheel_step(KeyModifiers::CONTROL, 3, 30), 30);
+        assert_eq!(wheel_step(KeyModifiers::ALT, 1, 30), 30);
+        // Page never collapses to zero.
+        assert_eq!(wheel_step(KeyModifiers::CONTROL, 3, 0), 1);
     }
 }

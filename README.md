@@ -211,9 +211,11 @@ On the **Hotkeys** tab, `[K ⌨ keyboard]` (or pressing `K`) opens an interactiv
 
 Click a repo row to select it, scroll the wheel over the left pane to move the
 selection or over the right pane to scroll the preview, click or drag the preview
-scrollbar to jump/scroll, and drag the divider between the panes to resize. While
-the TUI is running it captures the mouse, so native terminal text-selection is
-suspended until you quit (same tradeoff as lazygit/htop).
+scrollbar to jump/scroll, and drag the divider between the panes to resize. Hold a
+modifier while scrolling to go faster: **Shift** jumps 5× the normal step, **Ctrl**
+or **Alt** scrolls a full page at a time (works on the list, the preview, and the
+repo page). While the TUI is running it captures the mouse, so native terminal
+text-selection is suspended until you quit (same tradeoff as lazygit/htop).
 
 Everything actionable is clickable like a web page:
 
