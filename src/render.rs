@@ -826,6 +826,12 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         .saturating_sub(icon_width + name_col_width + separator_width + 2 + columns_width);
 
     let tree = app.tree_active();
+    // Zero / still-loading count cells recede with an explicit blend toward the surface (DarkGray
+    // → faint isn't faint enough on the normal/soft backgrounds, and Modifier::DIM is unreliable).
+    let count_dim = {
+        let palette = app.palette();
+        crate::theme::blend_toward(palette.faint, palette.base_bg, 0.5)
+    };
     let repo_item = |repo_idx: usize, depth: u16| -> ListItem<'static> {
             let state = app.repos[repo_idx].lock().unwrap();
             let icons = app.icons();
@@ -968,7 +974,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             // Count cells render a dim `0` (not a blank) once loaded, and a dim `…` while pending.
             let count_span = |glyph: &str, count: Option<u32>, color: Color, flagged: bool| {
                 let (text, dim) = count_cell_text(glyph, count);
-                let base = if dim { Color::DarkGray } else { color };
+                let base = if dim { count_dim } else { color };
                 Span::styled(
                     format!(" {}", pad_display(&text, count_w)),
                     flash_style(Style::default().fg(base), flagged),
