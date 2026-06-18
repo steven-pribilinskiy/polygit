@@ -188,6 +188,15 @@ pub struct StashInfo {
     pub label: String,
 }
 
+/// A recent commit on the repo page's Commits tab (read-only).
+#[derive(Debug, Clone)]
+pub struct CommitInfo {
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    pub rel_date: String,
+}
+
 /// Which diff a dirty row's modal shows. (Stash rows ignore this.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffMode {
@@ -329,6 +338,8 @@ pub struct RepoPageData {
     pub branches: Vec<BranchInfo>,
     pub worktrees: Vec<WorktreeInfo>,
     pub stashes: Vec<StashInfo>,
+    /// Recent commits on the current branch (read-only Commits tab), newest first.
+    pub commits: Vec<CommitInfo>,
     /// Uncommitted-change count in the main worktree (0 = clean; >0 marks the HEAD row diff-able).
     pub head_dirty_count: u32,
     /// Worktree paths with uncommitted changes + their change count.
@@ -895,6 +906,28 @@ impl CliBuilder {
             }
         }
         parts.join(" ")
+    }
+}
+
+/// A repo-page tab. Branches/Worktrees/Stashes map to a `PageRowKind`; Commits is a read-only
+/// list rendered separately (it doesn't flow through the row machinery).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoTab {
+    Branches,
+    Worktrees,
+    Stashes,
+    Commits,
+}
+
+impl RepoTab {
+    /// The page-row kind this tab filters to, or `None` for Commits (rendered separately).
+    pub fn row_kind(self) -> Option<PageRowKind> {
+        match self {
+            RepoTab::Branches => Some(PageRowKind::Branch),
+            RepoTab::Worktrees => Some(PageRowKind::Worktree),
+            RepoTab::Stashes => Some(PageRowKind::Stash),
+            RepoTab::Commits => None,
+        }
     }
 }
 
@@ -1885,9 +1918,9 @@ pub struct AppState {
     /// Whether the repo page uses tabs for branches/worktrees/stashes (persisted).
     pub repo_page_tabs: RepoTabsMode,
     /// The active repo-page tab (when tabbed). Session-only.
-    pub repo_page_tab: PageRowKind,
-    /// Clickable repo-page tab chips: (row, col_start, col_end, kind). Rebuilt each render.
-    pub repo_page_tab_click: Vec<(u16, u16, u16, PageRowKind)>,
+    pub repo_page_tab: RepoTab,
+    /// Clickable repo-page tab chips: (row, col_start, col_end, tab). Rebuilt each render.
+    pub repo_page_tab_click: Vec<(u16, u16, u16, RepoTab)>,
     /// Pending one-shot: snap the repo-page selection to the HEAD branch once its rows load.
     pub repo_page_focus_head: bool,
     /// Scroll offset within the repo page.
@@ -2146,7 +2179,7 @@ impl AppState {
             repo_page_inner: Rect::default(),
             repo_page_selected: 0,
             repo_page_tabs: persisted.repo_page_tabs,
-            repo_page_tab: PageRowKind::Branch,
+            repo_page_tab: RepoTab::Branches,
             repo_page_tab_click: Vec::new(),
             repo_page_focus_head: false,
             repo_page_scroll: 0,
@@ -3848,7 +3881,7 @@ impl AppState {
             self.repo_page_scroll = 0;
             self.repo_page_message = None;
             self.repo_page_focus_head = true;
-            self.repo_page_tab = PageRowKind::Branch;
+            self.repo_page_tab = RepoTab::Branches;
             self.repos[idx].lock().unwrap().page = None;
         }
     }
@@ -3976,38 +4009,45 @@ impl AppState {
             rows[branch_count..branch_count + worktree_count].sort_by(order);
         }
         // Tabbed mode: keep only the active tab's rows (so selection / clicks / nav all scope to
-        // it). Computed from the locked `page` to avoid re-locking via the public helpers.
+        // it). Computed from the locked `page` to avoid re-locking via the public helpers. The
+        // Commits tab has no PageRows (it's rendered separately), so it filters to empty.
         let present = u8::from(!page.branches.is_empty())
             + u8::from(!page.worktrees.is_empty())
-            + u8::from(!page.stashes.is_empty());
+            + u8::from(!page.stashes.is_empty())
+            + u8::from(!page.commits.is_empty());
         if self.repo_page_tabs == RepoTabsMode::Auto && present >= 2 {
-            rows.retain(|row| row.kind == self.repo_page_tab);
+            match self.repo_page_tab.row_kind() {
+                Some(kind) => rows.retain(|row| row.kind == kind),
+                None => rows.clear(),
+            }
         }
         rows
     }
 
-    /// `(branches, worktrees, stashes)` counts for the open repo page (full, not tab-filtered).
-    pub fn repo_page_section_counts(&self) -> (usize, usize, usize) {
-        let Some(idx) = self.repo_page else { return (0, 0, 0) };
+    /// `(branches, worktrees, stashes, commits)` counts for the open repo page (full, not filtered).
+    pub fn repo_page_section_counts(&self) -> (usize, usize, usize, usize) {
+        let Some(idx) = self.repo_page else { return (0, 0, 0, 0) };
         let state = self.repos[idx].lock().unwrap();
-        state
-            .page
-            .as_ref()
-            .map_or((0, 0, 0), |page| (page.branches.len(), page.worktrees.len(), page.stashes.len()))
+        state.page.as_ref().map_or((0, 0, 0, 0), |page| {
+            (page.branches.len(), page.worktrees.len(), page.stashes.len(), page.commits.len())
+        })
     }
 
     /// The repo-page tabs that have rows, in display order.
-    pub fn repo_page_present_tabs(&self) -> Vec<PageRowKind> {
-        let (branches, worktrees, stashes) = self.repo_page_section_counts();
+    pub fn repo_page_present_tabs(&self) -> Vec<RepoTab> {
+        let (branches, worktrees, stashes, commits) = self.repo_page_section_counts();
         let mut tabs = Vec::new();
         if branches > 0 {
-            tabs.push(PageRowKind::Branch);
+            tabs.push(RepoTab::Branches);
         }
         if worktrees > 0 {
-            tabs.push(PageRowKind::Worktree);
+            tabs.push(RepoTab::Worktrees);
         }
         if stashes > 0 {
-            tabs.push(PageRowKind::Stash);
+            tabs.push(RepoTab::Stashes);
+        }
+        if commits > 0 {
+            tabs.push(RepoTab::Commits);
         }
         tabs
     }
@@ -4018,8 +4058,8 @@ impl AppState {
     }
 
     /// Switch the active repo-page tab, resetting the selection to its first row.
-    pub fn repo_page_select_tab(&mut self, kind: PageRowKind) {
-        self.repo_page_tab = kind;
+    pub fn repo_page_select_tab(&mut self, tab: RepoTab) {
+        self.repo_page_tab = tab;
         self.repo_page_selected = 0;
         self.repo_page_scroll = 0;
     }
@@ -4030,7 +4070,7 @@ impl AppState {
         if tabs.is_empty() {
             return;
         }
-        let current = tabs.iter().position(|&kind| kind == self.repo_page_tab).unwrap_or(0);
+        let current = tabs.iter().position(|&tab| tab == self.repo_page_tab).unwrap_or(0);
         let next = if forward {
             (current + 1) % tabs.len()
         } else {

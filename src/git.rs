@@ -5,7 +5,9 @@ use anyhow::Result;
 use tokio::process::Command;
 use tokio::sync::{mpsc, Semaphore};
 
-use crate::app::{BranchInfo, BranchStats, DiffFile, PullResult, RepoDetails, StashInfo, WorktreeInfo};
+use crate::app::{
+    BranchInfo, BranchStats, CommitInfo, DiffFile, PullResult, RepoDetails, StashInfo, WorktreeInfo,
+};
 
 /// Branches excluded from the feature-branch count.
 const EXCLUDED_BRANCHES: [&str; 2] = ["main", "dev"];
@@ -637,6 +639,33 @@ pub async fn list_stashes(dir: &Path) -> Vec<StashInfo> {
         .map(|(index, label)| StashInfo {
             index,
             label: label.to_string(),
+        })
+        .collect()
+}
+
+/// Recent commits on the current branch (newest first), for the repo page's Commits tab.
+/// Local-only (`git log`, no network). `\u{1f}`-separated fields: short sha, subject, author,
+/// relative date.
+pub async fn list_commits(dir: &Path, limit: usize) -> Vec<CommitInfo> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "log", &format!("-{limit}"), "--format=%h%x1f%s%x1f%an%x1f%cr"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\u{1f}');
+            Some(CommitInfo {
+                sha: fields.next()?.to_string(),
+                subject: fields.next().unwrap_or("").to_string(),
+                author: fields.next().unwrap_or("").to_string(),
+                rel_date: fields.next().unwrap_or("").to_string(),
+            })
         })
         .collect()
 }
