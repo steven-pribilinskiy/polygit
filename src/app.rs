@@ -2796,18 +2796,53 @@ impl AppState {
     }
 
     /// Returns indices of repos visible given the current filter, in the active sort order.
+    /// Whether a repo matches an `@token` filter — the token (lowercase, `@` stripped) tested
+    /// against the repo's status keyword and a few attributes (dirty/clean/ahead/behind). An
+    /// empty token (just `@`, still typing) matches everything.
+    pub fn status_token_matches(state: &RepoState, token: &str) -> bool {
+        if token.is_empty() {
+            return true;
+        }
+        let status_key = match state.status {
+            RepoStatus::Queued => "queued",
+            RepoStatus::Running { .. } => "running",
+            RepoStatus::UpToDate => "up-to-date",
+            RepoStatus::Updated => "updated",
+            RepoStatus::NoUpstream => "no-upstream",
+            RepoStatus::Skipped => "skipped",
+            RepoStatus::Throttled => "throttled",
+            RepoStatus::Failed => "failed",
+        };
+        let mut keys: Vec<&str> = vec![status_key];
+        if let Some(details) = &state.details {
+            keys.push(if details.dirty_count > 0 { "dirty" } else { "clean" });
+            if details.ahead.unwrap_or(0) > 0 {
+                keys.push("ahead");
+            }
+            if details.behind.unwrap_or(0) > 0 {
+                keys.push("behind");
+            }
+        }
+        keys.iter().any(|key| key.contains(token))
+    }
+
     pub fn visible_indices(&self) -> Vec<usize> {
-        let name_filter = self.filter.as_ref().map(|filter| filter.to_lowercase());
+        let filter = self.filter.as_ref().map(|filter| filter.to_lowercase());
         let mut indices: Vec<usize> = self
             .repos
             .iter()
             .enumerate()
             .filter(|(_, repo)| {
                 let state = repo.lock().unwrap();
-                let name_ok = name_filter
-                    .as_ref()
-                    .is_none_or(|needle| state.rel_path.to_lowercase().contains(needle));
-                name_ok && self.status_filter.matches(&state.status)
+                // A leading `@` switches the name filter to a status/attribute filter.
+                let filter_ok = match filter.as_deref() {
+                    None => true,
+                    Some(needle) => match needle.strip_prefix('@') {
+                        Some(token) => Self::status_token_matches(&state, token),
+                        None => state.rel_path.to_lowercase().contains(needle),
+                    },
+                };
+                filter_ok && self.status_filter.matches(&state.status)
             })
             .map(|(index, _)| index)
             .collect();
@@ -4266,6 +4301,34 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_token_filter_matches_status_and_attributes() {
+        let mut repo = RepoState::new("alpha", std::path::PathBuf::from("/tmp/alpha"));
+        repo.status = RepoStatus::Failed;
+        assert!(AppState::status_token_matches(&repo, "fail"));
+        assert!(AppState::status_token_matches(&repo, "failed"));
+        assert!(!AppState::status_token_matches(&repo, "updated"));
+        assert!(AppState::status_token_matches(&repo, "")); // bare '@' matches all
+        repo.status = RepoStatus::UpToDate;
+        repo.details = Some(RepoDetails {
+            ahead: Some(0),
+            behind: Some(3),
+            dirty_count: 2,
+            stash_count: 0,
+            branch_count: 0,
+            commit_hash: String::new(),
+            commit_subject: String::new(),
+            commit_author: String::new(),
+            commit_rel_date: String::new(),
+            commit_timestamp: 0,
+        });
+        assert!(AppState::status_token_matches(&repo, "dirty"));
+        assert!(!AppState::status_token_matches(&repo, "clean"));
+        assert!(AppState::status_token_matches(&repo, "behind"));
+        assert!(!AppState::status_token_matches(&repo, "ahead"));
+        assert!(AppState::status_token_matches(&repo, "up-to-date"));
+    }
 
     #[test]
     fn help_tab_about_is_not_persisted() {

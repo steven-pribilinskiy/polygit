@@ -2747,7 +2747,19 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let row1 = if let Some(lines) = toggle_lines.as_ref() {
         lines.first().cloned().unwrap_or_default()
     } else if filtering {
-        Line::from(format!("Filter: {filter_text}"))
+        // `@` switches name-matching to status/attribute matching; hint at it inline.
+        let in_status = filter_text.starts_with('@');
+        let label = if in_status { "Filter by status: " } else { "Filter: " };
+        let hint_text = if in_status {
+            "  (e.g. @failed · @dirty · @ahead · @behind)"
+        } else {
+            "  (prepend @ to filter by status)"
+        };
+        Line::from(vec![
+            Span::styled(label, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(format!("{filter_text}\u{2588}")),
+            Span::styled(hint_text, Style::default().fg(Color::DarkGray)),
+        ])
     } else if leader == Some(Leader::Filter) {
         let pick = |on: bool| if on { "●" } else { "○" };
         let filter_item = |letter: &str, label: &str, filter: StatusFilter| {

@@ -21,7 +21,7 @@ Interactive polyrepo git dashboard. Discovers every git repo under a directory a
 - Action hints dim when they'd be a no-op
 - Worktree discovery (`.worktrees/*/.git`)
 - Sort the list (`s` leader, or click a column header) by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes / pulled / changed — re-pick or re-click flips `▲`/`▼` (persisted; the list is always sorted, Name asc by default). The sort menu lists only the columns currently visible
-- Filter repos by name (`/`) or by status (`f` leader: updated / up-to-date / skipped / failed / issues)
+- Filter repos by name (`/`) — or **by status/attribute** by prepending `@` (e.g. `@failed`, `@dirty`, `@ahead`, `@behind`, `@updated`); the prompt hints at it. Also a quick status filter via the `f` leader (updated / up-to-date / skipped / failed / issues)
 - **Repo groups** (`z`): named list sections from `~/.config/polygit/groups.json` — membership by `*`-pattern, static list, shell command, or a fetched JSON document; sort/filter apply within each group, big groups collapse (`Enter`/`Space`/click on the header), dynamic memberships are cached and refreshed with `Z`
 - Clickable 2-row column header with the active sort indicator; an always-on dirty marker (`•`) with the count (`•N`) when the dirty column is toggled. Count columns render a **dim zero** (not a blank), and a column every repo lacks (no worktrees/stashes, ≤1 branch) auto-hides — its `t`-menu chip goes dim and inert
 - Lazygit-style panes: rounded borders, a bright border on the focused pane (`Tab` / `1` / `2`), and a draggable divider with a grip
