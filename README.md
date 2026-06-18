@@ -1,6 +1,6 @@
 # polygit
 
-Interactive polyrepo git dashboard. Discovers every git repo under a directory and shows their status in a two-pane TUI — pulling them in parallel with live per-repo logs, with retry/refetch support, a persisted status cache, and configurable auto-pull. This is the canonical Rust implementation; it also fronts the Go, Bun, and bash alternatives via subcommands.
+Interactive polyrepo git dashboard. Discovers every git repo under a directory and shows their status in a two-pane TUI — pulling them in parallel with live per-repo logs, with retry/refetch support, a persisted status cache, and configurable auto-pull. Built in Rust with ratatui.
 
 📖 **Documentation: https://steven-pribilinskiy.github.io/polygit**
 
@@ -105,6 +105,8 @@ polygit --no-worktrees [DIR]
 | `R` | Retry all repos with an issue (failed or skipped) |
 | `e` | Refetch selected repo (re-pull regardless of status, unless it's in progress) |
 | `E` | Refetch all repos that aren't currently in progress |
+| `u` | Refresh the selected repo's local git facts — branch, ahead/behind, dirty, stash (no pull) |
+| `U` | Refresh all repos' local git facts (no pull) |
 | `i` | Toggle the info panel — an additive block above the log/diff (status, branch, pulled delta, ahead/behind, remote, last commit, worktrees, changes, path) |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
 | `t` | Column-toggle leader: press `t` then `u`/`a`/`d`/`l`/`w`/`b`/`s`/`p`/`c` to show/hide a column (mode stays active until `Esc`) |

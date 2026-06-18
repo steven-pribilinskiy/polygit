@@ -226,6 +226,19 @@
       },
       {
         "keys": [
+          "u"
+        ],
+        "action": "Refresh the selected repo's local git facts (no pull)",
+        "note": "branch, ahead/behind, dirty, stash, branch count — network-free"
+      },
+      {
+        "keys": [
+          "U"
+        ],
+        "action": "Refresh all repos' local git facts (no pull)"
+      },
+      {
+        "keys": [
           "i"
         ],
         "action": "Toggle the info panel above the log/diff",
