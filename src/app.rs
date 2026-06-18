@@ -98,6 +98,15 @@ pub struct RepoDetails {
     pub commit_timestamp: i64,
 }
 
+/// An open pull request for a repo's current branch, detected via `gh`. Not persisted — it's
+/// network-fresh and re-resolved each session (and after a pull).
+#[derive(Debug, Clone)]
+pub struct PrInfo {
+    pub number: u32,
+    pub title: String,
+    pub url: String,
+}
+
 /// What the most recent pull delivered. `None` until a pull *updates* the repo; cleared at the
 /// start of every pull, so up-to-date repos carry no result. Serde-able for the status cache.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1366,6 +1375,14 @@ pub struct RepoState {
     pub details: Option<RepoDetails>,
     /// Guard so the details fetch is spawned at most once per repo.
     pub details_loading: bool,
+    /// Open PR for the current branch (via `gh`), fetched lazily for the selected repo only.
+    /// `None` when unchecked, when there's no open PR, or when `gh` is unavailable.
+    pub pr: Option<PrInfo>,
+    /// Guard: a `gh pr` lookup is in flight for this repo.
+    pub pr_loading: bool,
+    /// The `gh pr` lookup has already run this session — don't re-query on every render.
+    /// Reset after a pull so a newly-opened PR is picked up.
+    pub pr_checked: bool,
     /// Transient diff-view buffer (filled lazily when the Diff view is opened).
     pub diff: Option<Vec<String>>,
     /// Dedicated repo-page data (branches + worktrees), filled lazily when the page opens.
@@ -1432,6 +1449,9 @@ impl RepoState {
             elapsed: None,
             details: None,
             details_loading: false,
+            pr: None,
+            pr_loading: false,
+            pr_checked: false,
             diff: None,
             page: None,
             page_loading: false,

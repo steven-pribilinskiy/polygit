@@ -6,7 +6,8 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::app::{
-    BranchInfo, BranchStats, CommitInfo, DiffFile, PullResult, RepoDetails, StashInfo, WorktreeInfo,
+    BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PullResult, RepoDetails, StashInfo,
+    WorktreeInfo,
 };
 
 /// Branches excluded from the feature-branch count.
@@ -472,6 +473,40 @@ pub fn normalize_remote_url(raw: &str) -> Option<String> {
         return None;
     };
     Some(https.strip_suffix(".git").unwrap_or(&https).to_string())
+}
+
+/// Look up the open PR whose head is `branch` via the `gh` CLI, for the current repo at `dir`.
+/// Best-effort and network-touching — only ever called for the selected repo. Returns `None`
+/// when `gh` is absent, the repo isn't a GitHub repo, the command fails, or there's no open PR.
+pub async fn pull_request(dir: &Path, branch: &str) -> Option<PrInfo> {
+    if branch.is_empty() {
+        return None;
+    }
+    let output = Command::new("gh")
+        .args([
+            "pr", "list", "--head", branch, "--state", "open", "--json", "number,title,url",
+            "--limit", "1",
+        ])
+        .current_dir(dir)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_pr_list(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Parse `gh pr list --json number,title,url` output (a JSON array) into the first open PR.
+/// An empty array (`[]`) or any shape mismatch yields `None`.
+pub fn parse_pr_list(json: &str) -> Option<PrInfo> {
+    let parsed: serde_json::Value = serde_json::from_str(json).ok()?;
+    let first = parsed.as_array()?.first()?;
+    Some(PrInfo {
+        number: first.get("number")?.as_u64()? as u32,
+        title: first.get("title")?.as_str()?.trim().to_string(),
+        url: first.get("url")?.as_str()?.to_string(),
+    })
 }
 
 /// Parse the US (0x1f)-separated `git log -1 --format=%h%x1f%s%x1f%an%x1f%cr%x1f%ct` line
@@ -1920,6 +1955,20 @@ refs/heads/c\tc
         );
         // A throttle marker on a SUCCESSFUL pull is still Updated (exit 0 wins).
         assert_eq!(classify_pull_output("rate limit note\nFast-forward\n", true), PullOutcome::Updated);
+    }
+
+    #[test]
+    fn parse_pr_list_extracts_first_pr_and_handles_empty() {
+        let json = r#"[{"number":4242,"title":"  Fix the thing  ","url":"https://github.com/org/repo/pull/4242"}]"#;
+        let pr = parse_pr_list(json).expect("one PR");
+        assert_eq!(pr.number, 4242);
+        assert_eq!(pr.title, "Fix the thing");
+        assert_eq!(pr.url, "https://github.com/org/repo/pull/4242");
+        // No open PR → empty array → None.
+        assert!(parse_pr_list("[]").is_none());
+        // Garbage / non-array → None (never panics).
+        assert!(parse_pr_list("not json").is_none());
+        assert!(parse_pr_list("{}").is_none());
     }
 
     #[test]

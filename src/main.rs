@@ -41,7 +41,7 @@ use worker::{
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
-    run_remove_worktree, run_repo_details, run_repo_diff, run_repo_page,
+    run_pull_request, run_remove_worktree, run_repo_details, run_repo_diff, run_repo_page,
 };
 
 /// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
@@ -2689,6 +2689,15 @@ async fn run_event_loop(
                     // Rows exist now — snap the selection to the current branch (once).
                     app.focus_head_branch_if_pending();
                 }
+                // The repo page's info panel shows the PR too — resolve it once for this repo.
+                let page_repo = Arc::clone(&app.repos[idx]);
+                let mut page_state = page_repo.lock().unwrap();
+                if !page_state.pr_checked && !page_state.pr_loading {
+                    page_state.pr_loading = true;
+                    page_state.pr_checked = true;
+                    drop(page_state);
+                    tokio::spawn(run_pull_request(page_repo));
+                }
             }
         }
 
@@ -2716,8 +2725,18 @@ async fn run_event_loop(
                     // the panel reflects the new HEAD (sha, ahead/behind, last commit).
                     if (state.details.is_none() || state.details_stale) && !state.details_loading {
                         state.details_loading = true;
+                        let details_repo = Arc::clone(&repo);
                         drop(state);
-                        tokio::spawn(run_repo_details(repo));
+                        tokio::spawn(run_repo_details(details_repo));
+                        state = repo.lock().unwrap();
+                    }
+                    // Look up the open PR once per repo (cheap `gh` call) so the info panel can
+                    // show it below the branch. Re-runs after a pull (which clears `pr_checked`).
+                    if !state.pr_checked && !state.pr_loading {
+                        state.pr_loading = true;
+                        state.pr_checked = true;
+                        drop(state);
+                        tokio::spawn(run_pull_request(repo));
                     }
                 }
             }

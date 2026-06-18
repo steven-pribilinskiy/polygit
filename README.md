@@ -18,6 +18,7 @@ Interactive polyrepo git dashboard. Discovers every git repo under a directory a
 - **What the pull delivered**: optional **pulled** (`t p`, `⇣N` commits) and **changed** (`t c`, `±N` files) columns showing what each repo's pull landed this run; the info panel's **Pulled** row spells out the full delta — `oldsha → newsha · N commits · M files (+ins −del) · N new tags · N new branches` — and the panel re-fetches after a pull so its numbers reflect the new HEAD
 - **Optional auto-pull + status cache**: launches are useful instantly — the list is seeded from a persisted per-repo status cache (last-known status shown **dim with an age**, e.g. `up-to-date 2d`, until pulled). Auto-pull-on-launch is configurable in Settings (master on/off · a max-repos limit `50/100/250/∞` · suppress in tree view); by default it pulls small flat sets and **skips** large sets (>100) and the tree view. When auto-pull is suppressed, `E` pulls everything / `e` pulls the selected repo on demand
 - Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`e` / `E`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees)
+- **Open PR detection** (via the `gh` CLI): when a repo's current branch has an open pull request, the info panel shows a clickable **Pull Request** row (`#N title`) below the branch — resolved lazily for the selected repo only, re-checked after a pull. Silently absent when `gh` isn't installed or there's no PR
 - Action hints dim when they'd be a no-op
 - Worktree discovery (`.worktrees/*/.git`)
 - Sort the list (`s` leader, or click a column header) by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes / pulled / changed — re-pick or re-click flips `▲`/`▼` (persisted; the list is always sorted, Name asc by default). The sort menu lists only the columns currently visible
@@ -107,7 +108,7 @@ polygit --no-worktrees [DIR]
 | `E` | Refetch all repos that aren't currently in progress |
 | `u` | Refresh the selected repo's local git facts — branch, ahead/behind, dirty, stash (no pull) |
 | `U` | Refresh all repos' local git facts (no pull) |
-| `i` | Toggle the info panel — an additive block above the log/diff (status, branch, pulled delta, ahead/behind, remote, last commit, worktrees, changes, path) |
+| `i` | Toggle the info panel — an additive block above the log/diff (status, branch, pull request, pulled delta, ahead/behind, remote, last commit, worktrees, changes, path) |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
 | `t` | Column-toggle leader: press `t` then `u`/`a`/`d`/`l`/`w`/`b`/`s`/`p`/`c` to show/hide a column (mode stays active until `Esc`) |
 | `s` | Sort leader: press `s` then `n`/`c`/`s`/`a`/`d`/`l`/`w`/`b`/`k` to sort by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes — re-pick flips `▲`/`▼` (or click a column header); the list is always sorted (Name asc by default) |

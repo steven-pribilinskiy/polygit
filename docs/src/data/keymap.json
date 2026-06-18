@@ -249,7 +249,7 @@
           "i"
         ],
         "action": "Toggle the info panel above the log/diff",
-        "note": "additive block; tracks the selection. Bold labels; empty rows hidden; clickable branch/commit/remote links (branch & remote wrap on separators rather than truncate); ⧉ copies the path (and the log, from the log pane); truncated path/subject expand on click",
+        "note": "additive block; tracks the selection. Bold labels; empty rows hidden; clickable branch/commit/remote/pull-request links (branch & remote wrap on separators rather than truncate); the Pull Request row (#N title, via gh) shows when the current branch has an open PR; ⧉ copies the path (and the log, from the log pane); truncated path/subject expand on click",
         "keywords": [
           "info",
           "copy",
