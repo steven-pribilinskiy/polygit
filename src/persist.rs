@@ -90,6 +90,9 @@ pub struct PersistedState {
     /// Show the repo page as a docked bottom panel instead of full-screen (default off).
     #[serde(default)]
     pub dock_repo_panel: bool,
+    /// Docked repo-panel height as a fraction of the main area (0 = use the default).
+    #[serde(default)]
+    pub dock_ratio: f64,
 }
 
 fn default_true() -> bool {

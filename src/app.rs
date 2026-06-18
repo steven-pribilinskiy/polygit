@@ -1828,6 +1828,13 @@ pub struct AppState {
     pub max_jobs: usize,
     /// Left-pane width as a fraction of the main area (clamped MIN_SPLIT..MAX_SPLIT).
     pub split_ratio: f64,
+    /// Docked repo-panel height as a fraction of the main area (clamped DOCK_MIN..DOCK_MAX).
+    pub dock_ratio: f64,
+    /// Screen row of the docked-panel top boundary (the horizontal splitter), captured each
+    /// render for drag hit-testing. `None` when no dock is shown.
+    pub dock_divider_row: Option<u16>,
+    /// The full main area (panes + dock) the `dock_ratio` is measured against, captured each render.
+    pub dock_full_area: Rect,
     /// When true, the preview shows the Result summary regardless of selection.
     pub result_overlay: bool,
     /// Main content area (above the status bar) — captured each render for hit-testing.
@@ -2118,6 +2125,11 @@ impl AppState {
         } else {
             Self::DEFAULT_SPLIT
         };
+        let dock_ratio = if persisted.dock_ratio >= Self::DOCK_MIN {
+            persisted.dock_ratio.clamp(Self::DOCK_MIN, Self::DOCK_MAX)
+        } else {
+            Self::DOCK_DEFAULT
+        };
         AppState {
             repos,
             worktrees: Vec::new(),
@@ -2136,6 +2148,9 @@ impl AppState {
             all_done: false,
             max_jobs,
             split_ratio,
+            dock_ratio,
+            dock_divider_row: None,
+            dock_full_area: Rect::default(),
             result_overlay: false,
             main_area: Rect::default(),
             list_area: Rect::default(),
@@ -2531,6 +2546,7 @@ impl AppState {
             columns: self.columns,
             info_pinned: self.info_pinned,
             split_ratio: self.split_ratio,
+            dock_ratio: self.dock_ratio,
             panel_padding: self.panel_padding,
             icon_style: self.icon_style,
             theme: self.theme,
@@ -2855,6 +2871,22 @@ impl AppState {
         }
         let rel = f64::from(col.saturating_sub(self.main_area.x)) / f64::from(self.main_area.width);
         self.split_ratio = rel.clamp(Self::MIN_SPLIT, Self::MAX_SPLIT);
+    }
+
+    pub const DOCK_DEFAULT: f64 = 0.45;
+    pub const DOCK_MIN: f64 = 0.2;
+    pub const DOCK_MAX: f64 = 0.7;
+
+    /// Set the docked-panel height ratio from an absolute screen row (mouse drag on the dock's
+    /// top boundary): rows *below* the boundary become the dock.
+    pub fn set_dock_from_row(&mut self, row: u16) {
+        let area = self.dock_full_area;
+        if area.height == 0 {
+            return;
+        }
+        let below = (area.y + area.height).saturating_sub(row);
+        let rel = f64::from(below) / f64::from(area.height);
+        self.dock_ratio = rel.clamp(Self::DOCK_MIN, Self::DOCK_MAX);
     }
 
     /// Map mouse coordinates to a list selection index, or None for the separator row / header /
