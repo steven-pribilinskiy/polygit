@@ -87,6 +87,9 @@ pub struct PersistedState {
     /// Split the repo page into branches/worktrees/stashes tabs (off / auto). Default off.
     #[serde(default)]
     pub repo_page_tabs: RepoTabsMode,
+    /// Show the repo page as a docked bottom panel instead of full-screen (default off).
+    #[serde(default)]
+    pub dock_repo_panel: bool,
 }
 
 fn default_true() -> bool {
