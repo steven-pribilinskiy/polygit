@@ -804,7 +804,7 @@ async fn run_event_loop(
     let mut hover_tracking_on = false;
     // Dwell tracking for the footer-command tooltip: which command the cursor is resting on and
     // since when. The tooltip appears once it's been the same command for ~1s.
-    let mut hover_dwell_cmd: Option<app::Command> = None;
+    let mut hover_dwell_text: Option<String> = None;
     let mut hover_dwell_since = Instant::now();
 
     loop {
@@ -937,18 +937,31 @@ async fn run_event_loop(
                     app.hover = None;
                 }
             }
-            // Footer-command tooltip: reads last frame's click regions (the layout is stable
-            // frame-to-frame), so the tooltip it sets is drawn in this same render.
-            let cmd_now = app.hover.and_then(|(col, row)| app.command_at(col, row));
-            if cmd_now != hover_dwell_cmd {
-                hover_dwell_cmd = cmd_now;
+            // Hover affordances (reads last frame's click regions — the layout is stable
+            // frame-to-frame): a help-link URL shown bottom-left immediately (browser-style), and a
+            // dwell tooltip after 1s over either a help link (its URL) or a footer command.
+            let help_url = if app.show_help && app.help_tab == app::HelpTab::About {
+                app.hover.and_then(|(_, row)| {
+                    app.help_links.iter().find(|(link_row, _)| *link_row == row).map(|(_, url)| url.clone())
+                })
+            } else {
+                None
+            };
+            app.status_hint = help_url.clone();
+            let dwell_text: Option<String> = help_url.or_else(|| {
+                app.hover
+                    .and_then(|(col, row)| app.command_at(col, row))
+                    .map(|cmd| cmd.tooltip().to_string())
+            });
+            if dwell_text != hover_dwell_text {
+                hover_dwell_text = dwell_text.clone();
                 hover_dwell_since = Instant::now();
                 app.hover_tooltip = None;
-            } else if let (Some(cmd), Some((col, row))) = (cmd_now, app.hover) {
+            } else if let (Some(text), Some((col, row))) = (dwell_text, app.hover) {
                 if app.hover_tooltip.is_none()
                     && hover_dwell_since.elapsed() >= Duration::from_millis(1000)
                 {
-                    app.hover_tooltip = Some((cmd.tooltip(), col, row));
+                    app.hover_tooltip = Some((text, col, row));
                 }
             }
             app.divider_dragging = dragging_divider;
@@ -1312,6 +1325,9 @@ async fn run_event_loop(
                                 || !point_in(app.help_area, mouse.column, mouse.row)
                             {
                                 app.show_help = false;
+                            } else if app.help_notes_toggle_row == Some(mouse.row) {
+                                // Expand/collapse the Notes link group.
+                                app.help_notes_expanded = !app.help_notes_expanded;
                             } else if let Some(url) = app.help_link_at(mouse.row) {
                                 drop(app);
                                 open_url(&url);

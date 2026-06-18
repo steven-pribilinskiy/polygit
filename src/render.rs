@@ -149,7 +149,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.help_keyboard_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             hits.push(row_rect(row, start, end));
-        } else if app.help_links.iter().any(|&(row, _)| row == hrow) {
+        } else if app.help_links.iter().any(|&(row, _)| row == hrow)
+            || app.help_notes_toggle_row == Some(hrow)
+        {
             hits.push(inner_row(app.help_area));
         }
     } else if app.diff_modal.is_some() {
@@ -422,14 +424,15 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
 /// Render the footer-command tooltip (a small bordered popup above the hovered status-bar hint),
 /// when one has been set after a dwell. Drawn before the palette pass so its semantic colors remap.
 fn render_tooltip(frame: &mut Frame, app: &AppState) {
-    let Some((text, anchor_col, anchor_row)) = app.hover_tooltip else {
+    let Some((text, anchor_col, anchor_row)) = app.hover_tooltip.as_ref() else {
         return;
     };
+    let (anchor_col, anchor_row) = (*anchor_col, *anchor_row);
     let area = frame.area();
     if area.width < 6 || area.height < 3 {
         return;
     }
-    let text_width = UnicodeWidthStr::width(text) as u16;
+    let text_width = UnicodeWidthStr::width(text.as_str()) as u16;
     // border (2) + 1-cell horizontal padding (2) around the text.
     let width = (text_width + 4).min(area.width);
     let height = 3;
@@ -447,7 +450,7 @@ fn render_tooltip(frame: &mut Frame, app: &AppState) {
     cast_shadow(frame, rect);
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
-    frame.render_widget(Paragraph::new(text), inner);
+    frame.render_widget(Paragraph::new(text.clone()), inner);
 }
 
 /// Draw all widgets for the current state (colors still in the semantic ANSI palette).
@@ -3017,8 +3020,13 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 /// Render the `?` help modal: clickable links, subcommands, flags/env, grouped hotkeys,
 /// exit codes, and the repo list (each row clickable to open its remote). Records the
 /// screen row of every clickable line into `app.help_links` for mouse hit-testing.
-/// The content of the help modal's "About" tab — what polygit is, plus clickable links.
-fn help_items_about() -> Vec<(Line<'static>, Option<String>)> {
+/// Sentinel "url" for the collapsible Notes group header — `render_help` recognizes it and
+/// records the toggle row instead of treating it as an openable link.
+const TOGGLE_NOTES: &str = "\u{1f}toggle:notes";
+
+/// The content of the help modal's "About" tab — what polygit is, plus grouped, title-only links
+/// (the URL shows on hover). `notes_expanded` controls the collapsible Notes group.
+fn help_items_about(notes_expanded: bool) -> Vec<(Line<'static>, Option<String>)> {
     const GITHUB_URL: &str = "https://github.com/steven-pribilinskiy/polygit";
     const LAZYGIT_URL: &str = "https://github.com/jesseduffield/lazygit";
     const NOTES_BAKEOFF: &str =
@@ -3026,24 +3034,29 @@ fn help_items_about() -> Vec<(Line<'static>, Option<String>)> {
     const NOTES_FEATURES: &str =
         "https://notes.lvh.me/library/default/devtools/pull-all-tui-interaction-features-2026.md";
 
-    let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-    let label_style = Style::default().fg(Color::Gray);
+    let title_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let group_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
     let link_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED);
 
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let plain = |text: &str| (Line::from(text.to_string()), None);
-    let link = |label: &str, url: &str| {
-        let line = Line::from(vec![
-            Span::styled(format!("{label:<9}"), label_style),
-            Span::styled(url.to_string(), link_style),
-        ]);
-        (line, Some(url.to_string()))
+    let group = |text: &str| (Line::from(Span::styled(text.to_string(), group_style)), None);
+    // A title-only link, indented under its group. The URL rides along for hover/click but is not
+    // shown inline (browser-style: hover to see where it goes).
+    let link = |title: &str, url: &str| {
+        (
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(title.to_string(), link_style),
+            ]),
+            Some(url.to_string()),
+        )
     };
 
     items.push((
         Line::from(Span::styled(
             "polygit — interactive polyrepo git dashboard".to_string(),
-            header_style,
+            title_style,
         )),
         None,
     ));
@@ -3052,11 +3065,23 @@ fn help_items_about() -> Vec<(Line<'static>, Option<String>)> {
     items.push(plain("branch / worktree / stash management, inline diffs, and a jump into lazygit."));
     items.push(plain("Built with Rust · ratatui · tokio."));
     items.push(plain(""));
+    items.push(group("polygit"));
     items.push(link("Docs", DOCS_URL));
     items.push(link("GitHub", GITHUB_URL));
-    items.push(link("lazygit", LAZYGIT_URL));
-    items.push(link("Notes", NOTES_BAKEOFF));
-    items.push(link("", NOTES_FEATURES));
+    items.push(plain(""));
+    items.push(group("lazygit"));
+    items.push(link("GitHub repo", LAZYGIT_URL));
+    items.push(plain(""));
+    // Collapsible Notes group — the header toggles; the entries appear only when expanded.
+    let caret = if notes_expanded { "▾" } else { "▸" };
+    items.push((
+        Line::from(Span::styled(format!("{caret} Notes (2)"), group_style)),
+        Some(TOGGLE_NOTES.to_string()),
+    ));
+    if notes_expanded {
+        items.push(link("Three-way bake-off: Go vs Rust vs Bun", NOTES_BAKEOFF));
+        items.push(link("Interaction & features", NOTES_FEATURES));
+    }
     items
 }
 
@@ -3449,7 +3474,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let hotkeys = help_items_hotkeys(view);
     let cli = help_items_cli();
     let legend = help_items_legend();
-    let about = help_items_about();
+    let about = help_items_about(app.help_notes_expanded);
     let items = match app.help_tab {
         HelpTab::Hotkeys => &hotkeys,
         HelpTab::CliFlags => &cli,
@@ -3476,7 +3501,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let modal_area = centered_rect(modal_width, modal_height, area);
     app.help_area = modal_area;
 
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
@@ -3485,6 +3510,13 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .title_bottom(
             Line::from(" tab switch · ↑/↓ scroll · click a link · ?/Esc close ").right_aligned(),
         );
+    // Browser-style: while hovering a link, show its URL at the bottom-left of the modal.
+    if let Some(url) = app.status_hint.as_deref().filter(|_| app.help_tab == HelpTab::About) {
+        block = block.title_bottom(
+            Line::from(Span::styled(format!(" {url} "), Style::default().fg(Color::DarkGray)))
+                .left_aligned(),
+        );
+    }
     let inner = block.inner(modal_area);
 
     // Reserve the top inner row for a fixed (non-scrolling) tab bar, then a blank row, then the
@@ -3551,10 +3583,14 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let end = (start + content_height).min(items.len());
 
     app.help_links.clear();
+    app.help_notes_toggle_row = None;
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, url)) in items[start..end].iter().enumerate() {
-        if let Some(url) = url {
-            app.help_links.push((content_area.y + offset as u16, url.clone()));
+        let row = content_area.y + offset as u16;
+        match url.as_deref() {
+            Some(TOGGLE_NOTES) => app.help_notes_toggle_row = Some(row),
+            Some(url) => app.help_links.push((row, url.to_string())),
+            None => {}
         }
         lines.push(line.clone());
     }

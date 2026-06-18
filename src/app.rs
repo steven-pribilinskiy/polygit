@@ -1715,6 +1715,13 @@ pub struct AppState {
     pub help_scroll: usize,
     /// Clickable links in the help modal: (absolute screen row, url). Rebuilt each render.
     pub help_links: Vec<(u16, String)>,
+    /// Whether the collapsible "Notes" link group in the About tab is expanded. Session-only.
+    pub help_notes_expanded: bool,
+    /// Screen row of the clickable "Notes" group toggle in the About tab. Rebuilt each render.
+    pub help_notes_toggle_row: Option<u16>,
+    /// A browser-style status line shown at the bottom-left while hovering a link (its URL).
+    /// Set each frame by the hover handler; `None` clears it.
+    pub status_hint: Option<String>,
     /// Clickable help-modal tab chips: (row, col_start, col_end, tab). Rebuilt each render.
     pub help_tab_click: Vec<(u16, u16, u16, HelpTab)>,
     /// The clickable `[esc]` close region in the help modal: (row, col_start, col_end).
@@ -1902,7 +1909,7 @@ pub struct AppState {
     pub hover: Option<(u16, u16)>,
     /// A footer-command tooltip `(text, anchor_col, anchor_row)`, set after dwelling ~1s on a
     /// status-bar command; rendered as a small popup above the anchor. Never persisted.
-    pub hover_tooltip: Option<(&'static str, u16, u16)>,
+    pub hover_tooltip: Option<(String, u16, u16)>,
     /// Set once discovery completes and the launch decision skipped pulling — the run is then
     /// "settled" without any repo being pulled, and the footer offers a manual pull-everything.
     pub auto_pull_suppressed: bool,
@@ -1960,6 +1967,9 @@ impl AppState {
             help_tab: persisted.help_tab,
             help_scroll: 0,
             help_links: Vec::new(),
+            help_notes_expanded: false,
+            help_notes_toggle_row: None,
+            status_hint: None,
             help_tab_click: Vec::new(),
             help_close_click: None,
             show_keyboard: false,
