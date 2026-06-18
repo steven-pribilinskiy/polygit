@@ -75,6 +75,9 @@ pub struct PersistedState {
     /// Draw borders around the two main panes (default on). Off reclaims the border rows/cols.
     #[serde(default = "default_true")]
     pub show_borders: bool,
+    /// Draw the draggable splitter grip between the panes (default on).
+    #[serde(default = "default_true")]
+    pub show_splitter: bool,
 }
 
 fn default_true() -> bool {

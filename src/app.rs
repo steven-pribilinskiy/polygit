@@ -834,7 +834,7 @@ impl SettingsLayout {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 1), ("Layout", 1)];
+    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 1), ("Layout", 2)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -1943,6 +1943,8 @@ pub struct AppState {
     pub hover_effects: bool,
     /// Draw borders around the two main panes (persisted, default on).
     pub show_borders: bool,
+    /// Draw the draggable splitter grip between the panes (persisted, default on).
+    pub show_splitter: bool,
     /// Current mouse position `(col, row)` while `hover_effects` is on, else `None`. Drives the
     /// post-render hover highlight; never persisted.
     pub hover: Option<(u16, u16)>,
@@ -2113,6 +2115,7 @@ impl AppState {
             auto_pull_in_tree: persisted.auto_pull_in_tree,
             hover_effects: persisted.hover_effects,
             show_borders: persisted.show_borders,
+            show_splitter: persisted.show_splitter,
             hover: None,
             hover_tooltip: None,
             auto_pull_suppressed: false,
@@ -2387,6 +2390,7 @@ impl AppState {
             auto_pull_in_tree: self.auto_pull_in_tree,
             hover_effects: self.hover_effects,
             show_borders: self.show_borders,
+            show_splitter: self.show_splitter,
         });
     }
 
@@ -2653,6 +2657,8 @@ impl AppState {
             (11, 1) => self.hover_effects = false,
             (12, 0) => self.show_borders = true,
             (12, 1) => self.show_borders = false,
+            (13, 0) => self.show_splitter = true,
+            (13, 1) => self.show_splitter = false,
             _ => return,
         }
         self.save_state();
@@ -3322,7 +3328,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 13;
+    pub const SETTINGS_ROWS: usize = 14;
 
     /// `(first global row, row count)` for settings tab `tab` (index into `SETTINGS_TABS`).
     pub fn settings_tab_range(tab: usize) -> (usize, usize) {
@@ -3409,6 +3415,7 @@ impl AppState {
             10 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
             11 => self.hover_effects = !self.hover_effects,
             12 => self.show_borders = !self.show_borders,
+            13 => self.show_splitter = !self.show_splitter,
             _ => {}
         }
         self.save_state();
