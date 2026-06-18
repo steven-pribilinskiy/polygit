@@ -116,39 +116,46 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     // into shared vecs, so gathering them all lets a large modal's background bleed through. The
     // first match in each branch wins; for command/hint chrome we highlight every span that shares
     // the hovered one's action (so a key and its label light up together).
+    // Three buckets:
+    //  - `hits`        : row-type hovers (list rows, file/menu rows, scrollbars, divider, headers) —
+    //                    always a soft background tint, regardless of the button-hover setting.
+    //  - `strong_hits` : the selected row while hovered — the deeper selection tint.
+    //  - `button_hits` : button-type hovers (footer/modal hint chips, tabs, radio chips, close
+    //                    buttons, keyboard keys, info-panel links) — painted per `button_hover_style`
+    //                    (reverse-video when Inverted, the same soft tint when Subtle).
     let mut hits: Vec<Rect> = Vec::new();
-    // Rects that should get the stronger selected+hover tint instead of the plain hover tint.
     let mut strong_hits: Vec<Rect> = Vec::new();
+    let mut button_hits: Vec<Rect> = Vec::new();
     if app.confirm.is_some() {
         if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
-            hits.push(row_rect(region.row, region.col_start, region.col_end));
+            button_hits.push(row_rect(region.row, region.col_start, region.col_end));
         }
     } else if app.show_settings {
         if let Some(&(row, start, end, ..)) =
             app.settings_click.iter().find(|&&(r, s, e, ..)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, tab)) =
             app.settings_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             // The active tab keeps its highlight (no hover tint over it).
             if tab != app.settings_tab {
-                hits.push(row_rect(row, start, end));
+                button_hits.push(row_rect(row, start, end));
             }
         } else if let Some((row, start, end)) =
             app.settings_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         }
     } else if app.show_keyboard {
         if let Some(&(row, start, end, _)) =
             app.keyboard_key_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.keyboard_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         }
     } else if app.show_help {
         if let Some(&(row, start, end, tab)) =
@@ -156,38 +163,39 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         {
             // The active tab keeps its active color on hover (no hover tint over it).
             if tab != app.help_tab {
-                hits.push(row_rect(row, start, end));
+                button_hits.push(row_rect(row, start, end));
             }
         } else if let Some((row, start, end)) =
             app.help_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.help_keyboard_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.help_maximize_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.cli_copy_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if app.help_links.iter().any(|&(row, _)| row == hrow)
             || app.help_notes_toggle_row == Some(hrow)
             || app.cli_flag_click.iter().any(|&(row, _)| row == hrow)
         {
+            // A full-width in-text link row — a tint reads better here than reverse-video.
             hits.push(inner_row(app.help_area));
         }
     } else if app.diff_modal.is_some() {
         if let Some((row, start, end)) =
             app.diff_modal_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
-                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some(scroll) =
             scrollbar_col_hit()
@@ -204,56 +212,60 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     } else if app.copy_menu.is_some() {
         if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
-                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some((row, start, end)) =
             app.copy_menu_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if app.copy_menu_click.iter().any(|&(row, _)| row == hrow) {
             hits.push(inner_row(app.copy_menu_area));
         }
     } else if app.base_picker.is_some() {
         if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
-                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some((row, start, end)) =
             app.base_picker_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         }
     } else if app.show_build_info {
         if let Some((row, start, end)) =
             app.build_info_reload_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
         }
     } else if app.repo_page.is_some() {
         if let Some(&(row, start, end, _)) =
             app.repo_page_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, _)) =
             app.repo_page_sort_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, _)) =
             app.repo_page_toggle_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, _)) =
             app.base_cell_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
-                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some((row, start, end)) =
             app.repo_page_back_click.filter(|&(r, s, e)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(scroll) =
             scrollbar_col_hit()
         {
@@ -266,10 +278,11 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
             // Highlight every status-bar span that runs the same command (key + label together).
             for sibling in app.clickable.iter().filter(|c| c.command == region.command) {
-                hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some(column) = app.header_sort_at(hcol, hrow) {
-            // A sortable list column header cell — highlight it across the header's rows.
+            // A sortable list column header cell — highlight it across the header's rows (a wide,
+            // multi-row cell reads better tinted than reverse-video).
             if let Some(&(start, end, _)) =
                 app.header_click.iter().find(|&&(s, e, c)| c == column && hcol >= s && hcol < e)
             {
@@ -281,7 +294,7 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         } else if let Some(&(row, start, end, _)) =
             app.info_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            hits.push(row_rect(row, start, end));
+            button_hits.push(row_rect(row, start, end));
         } else if let Some(scroll) =
             scrollbar_col_hit()
         {
@@ -311,6 +324,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         }
     }
 
+    let button_style = match app.button_hover_style {
+        crate::app::ButtonHoverStyle::Inverted => Style::default().add_modifier(Modifier::REVERSED),
+        crate::app::ButtonHoverStyle::Subtle => Style::default().bg(hover_bg),
+    };
     let frame_area = frame.area();
     let buf = frame.buffer_mut();
     for rect in hits {
@@ -318,6 +335,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     }
     for rect in strong_hits {
         buf.set_style(rect.intersection(frame_area), Style::default().bg(selection_hover_bg));
+    }
+    for rect in button_hits {
+        buf.set_style(rect.intersection(frame_area), button_style);
     }
 }
 
@@ -5483,7 +5503,9 @@ fn settings_row_line(
 /// Render the settings modal (`,`): IDE-style vertical tabs (or a flat list — toggle with `v`).
 /// `↑↓` move, `←→`/`tab` switch tab, `space`/`enter` toggle, `esc` closes.
 fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
-    use crate::app::{Background, Contrast, SelectionStyle, SettingsLayout, Theme, SETTINGS_TABS};
+    use crate::app::{
+        Background, ButtonHoverStyle, Contrast, SelectionStyle, SettingsLayout, Theme, SETTINGS_TABS,
+    };
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     // Sections of (label, option chips). Global row indices run across sections and must
     // match `set_setting_option` / `toggle_selected_setting`:
@@ -5529,7 +5551,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                     ],
                 ),
                 (
-                    "Selection",
+                    "List selection",
                     vec![
                         ("blue", app.selection_style == SelectionStyle::Blue),
                         ("subtle", app.selection_style == SelectionStyle::Subtle),
@@ -5570,6 +5592,13 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (
                     "Changed-row highlight",
                     vec![("on", app.changed_row_highlight), ("off", !app.changed_row_highlight)],
+                ),
+                (
+                    "Button hover",
+                    vec![
+                        ("inverted", app.button_hover_style == ButtonHoverStyle::Inverted),
+                        ("subtle", app.button_hover_style == ButtonHoverStyle::Subtle),
+                    ],
                 ),
             ],
         ),
