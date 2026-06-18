@@ -203,11 +203,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
         {
             hits.push(scroll.track);
-        } else if app.repo_page_row_at(hrow).is_some() {
-            // A selectable branch/worktree/stash row — highlight it across the content width.
-            let inner = app.repo_page_inner;
-            hits.push(Rect { x: inner.x, y: hrow, width: inner.width, height: 1 });
         }
+        // No body-row hover tint on the repo page: a full-width row following the cursor reads as
+        // the whole page tinting. Only the controls above stay reactive.
     } else {
         // Main two-pane view.
         if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
