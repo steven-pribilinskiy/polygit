@@ -679,6 +679,12 @@ impl HelpTab {
             HelpTab::About => HelpTab::Legend,
         }
     }
+
+    /// The tab to persist. About (credits/links) is never remembered — reopening help should
+    /// land on a useful tab, so it collapses to Hotkeys.
+    pub fn persisted(self) -> Self {
+        if self == HelpTab::About { HelpTab::Hotkeys } else { self }
+    }
 }
 
 /// Filter the repo list by pull outcome. Applied on top of the `/` name filter.
@@ -2287,7 +2293,7 @@ impl AppState {
             background: Some(self.background),
             sort_column: self.sort_column,
             sort_dir: self.sort_dir,
-            help_tab: self.help_tab,
+            help_tab: self.help_tab.persisted(),
             grouping_enabled: self.grouping_enabled,
             collapsed_groups,
             tree_enabled: self.tree_enabled,
@@ -4058,6 +4064,14 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_tab_about_is_not_persisted() {
+        assert_eq!(HelpTab::About.persisted(), HelpTab::Hotkeys);
+        assert_eq!(HelpTab::Hotkeys.persisted(), HelpTab::Hotkeys);
+        assert_eq!(HelpTab::CliFlags.persisted(), HelpTab::CliFlags);
+        assert_eq!(HelpTab::Legend.persisted(), HelpTab::Legend);
+    }
 
     /// `AppState::new` restores the user's real persisted preferences (sort, grouping, …) —
     /// reset everything view-affecting so tests are hermetic regardless of state.json.
