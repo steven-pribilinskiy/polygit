@@ -4508,7 +4508,8 @@ fn build_repo_page_info_lines(row: &PageRow, base_branch: Option<&str>) -> Vec<L
 fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
     let tabbed = app.repo_page_tabbed();
     let active_tab = app.repo_page_tab;
-    let (full_branches, full_worktrees, full_stashes) = app.repo_page_section_counts();
+    let (full_branches, full_worktrees, full_stashes, full_commits) =
+        app.repo_page_section_counts();
     let rows = app.repo_page_rows();
     let Some(idx) = app.repo_page else {
         return;
@@ -4783,29 +4784,30 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     // None for headers/blanks/stash rows. The banner / fetch error render in a fixed bottom row.
     let mut items: Vec<PageItem> = Vec::new();
 
-    // Tabbed mode: a clickable tab bar (Branches/Worktrees/Stashes) replaces the section headers,
-    // and only the active tab's rows render (rows are already filtered to it).
+    // Tabbed mode: a clickable tab bar (Branches/Worktrees/Stashes/Commits) replaces the section
+    // headers, and only the active tab's rows render (rows are already filtered to it).
     app.repo_page_tab_click.clear();
     if tabbed {
         let tabs = [
-            (PageRowKind::Branch, icons.branches, "Branches", full_branches),
-            (PageRowKind::Worktree, icons.worktrees, "Worktrees", full_worktrees),
-            (PageRowKind::Stash, icons.stashes, "Stashes", full_stashes),
+            (crate::app::RepoTab::Branches, icons.branches, "Branches", full_branches),
+            (crate::app::RepoTab::Worktrees, icons.worktrees, "Worktrees", full_worktrees),
+            (crate::app::RepoTab::Stashes, icons.stashes, "Stashes", full_stashes),
+            (crate::app::RepoTab::Commits, "◴", "Commits", full_commits),
         ];
         let mut spans: Vec<Span> = Vec::new();
         let mut col = inner.x;
-        for (kind, icon, label, count) in tabs {
+        for (tab, icon, label, count) in tabs {
             if count == 0 {
                 continue;
             }
             let chip = format!(" {icon} {label} ({count}) ");
             let chip_w = UnicodeWidthStr::width(chip.as_str()) as u16;
-            let style = if kind == active_tab {
+            let style = if tab == active_tab {
                 Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Gray)
             };
-            app.repo_page_tab_click.push((inner.y, col, col + chip_w, kind));
+            app.repo_page_tab_click.push((inner.y, col, col + chip_w, tab));
             spans.push(Span::styled(chip, style));
             spans.push(Span::raw(" "));
             col += chip_w + 1;
@@ -4814,7 +4816,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         items.push((Line::from(String::new()), None, None));
     }
 
-    let render_branches = !tabbed || active_tab == PageRowKind::Branch;
+    let render_branches = !tabbed || active_tab == crate::app::RepoTab::Branches;
     let mut header_item_index = usize::MAX;
     let mut header_cells: Vec<(u16, u16, RepoPageSort)> = Vec::new();
     if render_branches {
@@ -4923,6 +4925,28 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
                     Span::styled(format!("  {}", truncate_str(&row.branch, 70)), value),
                 ]),
                 Some(sel_index),
+                None,
+            ));
+        }
+    }
+
+    // Commits tab: a read-only list of recent commits (sha · date · author · subject). Rendered
+    // here (not via the row machinery — commits aren't PageRows).
+    if tabbed && active_tab == crate::app::RepoTab::Commits {
+        let commits = app
+            .repos
+            .get(idx)
+            .and_then(|repo| repo.lock().unwrap().page.as_ref().map(|page| page.commits.clone()))
+            .unwrap_or_default();
+        for commit in &commits {
+            items.push((
+                Line::from(vec![
+                    Span::styled(format!("  {:<10}", commit.sha), Style::default().fg(Color::Yellow)),
+                    Span::styled(format!("{:<16}", truncate_str(&commit.rel_date, 15)), label),
+                    Span::styled(format!("{:<18}", truncate_str(&commit.author, 17)), cyan),
+                    Span::raw(truncate_str(&commit.subject, 60)),
+                ]),
+                None,
                 None,
             ));
         }

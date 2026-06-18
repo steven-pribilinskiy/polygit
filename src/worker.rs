@@ -17,7 +17,7 @@ use crate::git::{
     default_base_branch, delete_branch, dirty_count,
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
-    list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
+    list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
     pull_ff_only, remove_worktree, resolve_base, stash_file_diff, stash_file_list, stash_files,
     uncommitted_file_list, PullOutcome,
 };
@@ -436,6 +436,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
     let branches = list_local_branches(&path).await;
     let worktrees = list_worktrees(&path).await;
     let stashes = list_stashes(&path).await;
+    let commits = list_commits(&path, 50).await;
     let head_dirty_count = dirty_count(&path).await;
     let mut dirty_worktrees = Vec::new();
     for worktree in &worktrees {
@@ -450,6 +451,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
             branches,
             worktrees: worktrees.clone(),
             stashes: stashes.clone(),
+            commits: commits.clone(),
             head_dirty_count,
             dirty_worktrees: dirty_worktrees.clone(),
             fetched: false,
@@ -482,6 +484,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
             branches,
             worktrees,
             stashes,
+            commits,
             head_dirty_count,
             dirty_worktrees,
             fetched: true,
