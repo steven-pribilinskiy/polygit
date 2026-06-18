@@ -1321,6 +1321,8 @@ async fn run_event_loop(
                                 app.show_keyboard = true;
                                 app.keyboard_selected = None;
                                 app.keyboard_scroll = 0;
+                            } else if region_hit(app.help_maximize_click, mouse.column, mouse.row) {
+                                app.help_maximized = !app.help_maximized;
                             } else if app.help_close_at(mouse.column, mouse.row)
                                 || !point_in(app.help_area, mouse.column, mouse.row)
                             {
@@ -2029,6 +2031,8 @@ async fn run_event_loop(
                             app.keyboard_selected = None;
                             app.keyboard_scroll = 0;
                         }
+                        // `m` maximizes/restores the modal (same as clicking the button).
+                        KeyCode::Char('m') => app.help_maximized = !app.help_maximized,
                         KeyCode::Char('j') | KeyCode::Down => {
                             app.help_scroll = app.help_scroll.saturating_add(1);
                         }
