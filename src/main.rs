@@ -1430,6 +1430,25 @@ async fn run_event_loop(
                                             Some(app.cli_builder.values[idx].clone());
                                     }
                                 }
+                            } else if let Some((row_idx, option)) = app
+                                .help_design_click
+                                .iter()
+                                .find(|&&(row, start, end, ..)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., row_idx, option)| (row_idx, option))
+                            {
+                                // Design System radios reuse the settings dispatch: a different
+                                // value sets it; the active value or the row label cycles.
+                                match option {
+                                    Some(opt) if opt != app.settings_active_option(row_idx) => {
+                                        app.set_setting_option(row_idx, opt);
+                                    }
+                                    _ => {
+                                        app.settings_selected = row_idx;
+                                        app.toggle_selected_setting();
+                                    }
+                                }
                             } else if let Some(url) = app.help_link_at(mouse.row) {
                                 drop(app);
                                 open_url(&url);
