@@ -1367,6 +1367,10 @@ async fn run_event_loop(
 
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
+                        // Click-to-focus: a click inside the panes focuses whichever side it hit.
+                        if point_in(app.main_area, mouse.column, mouse.row) {
+                            app.preview_focused = mouse.column >= app.divider_col;
+                        }
                         // A clickable status-bar command takes precedence over list/divider hits.
                         let clicked = app
                             .clickable
