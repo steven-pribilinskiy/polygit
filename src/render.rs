@@ -38,6 +38,16 @@ fn pane_border_style(active: bool) -> Style {
     }
 }
 
+/// Borders for the two main panes (and the info panel): all sides, or none when the user turns
+/// borders off (the panes' inner areas then expand to reclaim the border cells).
+fn pane_borders(app: &AppState) -> Borders {
+    if app.show_borders {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    }
+}
+
 /// Remap every cell's ANSI-palette colors to the active theme + contrast RGB palette.
 /// Runs once per frame after all widgets are drawn — draw code keeps using the semantic
 /// ANSI colors (`Color::Cyan`, `Color::DarkGray`, …) and this pass resolves them, so the
@@ -766,7 +776,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
 
     let block = Block::default()
         .title(title)
-        .borders(Borders::ALL)
+        .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(pane_border_style(!app.preview_focused));
@@ -1499,7 +1509,7 @@ fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, _tick: u64)
 
     let mut block = Block::default()
         .title(format!(" [2]{header_text}"))
-        .borders(Borders::ALL)
+        .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(pane_border_style(app.preview_focused));
@@ -1981,7 +1991,7 @@ fn render_info_block(
 ) {
     let block = Block::default()
         .title(title)
-        .borders(Borders::ALL)
+        .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(pane_border_style(app.preview_focused));
@@ -5172,7 +5182,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // match `set_setting_option` / `toggle_selected_setting`:
     // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
     // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
-    // 11 hover (Mouse).
+    // 11 hover (Interaction), 12 borders (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5247,6 +5257,10 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 "Hover effects",
                 vec![("on", app.hover_effects), ("off", !app.hover_effects)],
             )],
+        ),
+        (
+            "Layout",
+            vec![("Borders", vec![("on", app.show_borders), ("off", !app.show_borders)])],
         ),
     ];
 
