@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    Background, ColumnFlags, Contrast, HelpTab, IconStyle, RepoPageColumns, SelectionStyle,
-    SettingsLayout, SortColumn, SortDir, Theme,
+    Background, ColumnFlags, Contrast, HelpTab, IconStyle, RepoPageColumns, RepoTabsMode,
+    SelectionStyle, SettingsLayout, SortColumn, SortDir, Theme,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -84,6 +84,9 @@ pub struct PersistedState {
     /// Steadily highlight a repo row's changed cells for the attention window (default off).
     #[serde(default)]
     pub changed_row_highlight: bool,
+    /// Split the repo page into branches/worktrees/stashes tabs (off / auto). Default off.
+    #[serde(default)]
+    pub repo_page_tabs: RepoTabsMode,
 }
 
 fn default_true() -> bool {

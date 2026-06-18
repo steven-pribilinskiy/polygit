@@ -898,13 +898,32 @@ impl CliBuilder {
     }
 }
 
+/// Whether the repo page splits its branches / worktrees / stashes into tabs instead of one
+/// scrolling list. `Auto` tabs only when at least two of those sections are non-empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoTabsMode {
+    #[default]
+    Off,
+    Auto,
+}
+
+impl RepoTabsMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            RepoTabsMode::Off => RepoTabsMode::Auto,
+            RepoTabsMode::Auto => RepoTabsMode::Off,
+        }
+    }
+}
+
 /// The settings sections, in global row order: `(tab label, number of rows)`. Single source of
 /// truth shared by the renderer (tab labels + which rows belong to each tab) and the navigation
 /// helpers (tab ranges). The row *data* (labels/options) is built in `render_settings`; the counts
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 3), ("Layout", 2)];
+    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 3), ("Layout", 3)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -1863,6 +1882,12 @@ pub struct AppState {
     pub repo_page_inner: Rect,
     /// Selected row within the repo page (index into its selectable branch/worktree rows).
     pub repo_page_selected: usize,
+    /// Whether the repo page uses tabs for branches/worktrees/stashes (persisted).
+    pub repo_page_tabs: RepoTabsMode,
+    /// The active repo-page tab (when tabbed). Session-only.
+    pub repo_page_tab: PageRowKind,
+    /// Clickable repo-page tab chips: (row, col_start, col_end, kind). Rebuilt each render.
+    pub repo_page_tab_click: Vec<(u16, u16, u16, PageRowKind)>,
     /// Pending one-shot: snap the repo-page selection to the HEAD branch once its rows load.
     pub repo_page_focus_head: bool,
     /// Scroll offset within the repo page.
@@ -2120,6 +2145,9 @@ impl AppState {
             repo_page: None,
             repo_page_inner: Rect::default(),
             repo_page_selected: 0,
+            repo_page_tabs: persisted.repo_page_tabs,
+            repo_page_tab: PageRowKind::Branch,
+            repo_page_tab_click: Vec::new(),
             repo_page_focus_head: false,
             repo_page_scroll: 0,
             repo_page_message: None,
@@ -2478,6 +2506,7 @@ impl AppState {
             collapsed_groups,
             tree_enabled: self.tree_enabled,
             collapsed_folders,
+            repo_page_tabs: self.repo_page_tabs,
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
             base_overrides: self.base_overrides.clone(),
@@ -2761,6 +2790,8 @@ impl AppState {
             (14, 1) => self.show_borders = false,
             (15, 0) => self.show_splitter = true,
             (15, 1) => self.show_splitter = false,
+            (16, 0) => self.repo_page_tabs = RepoTabsMode::Off,
+            (16, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
             _ => return,
         }
         self.save_state();
@@ -3465,7 +3496,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 16;
+    pub const SETTINGS_ROWS: usize = 17;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -3497,6 +3528,8 @@ impl AppState {
                         also marks what changed.",
             (14, _) => "Draw the rounded borders around the two main panes",
             (15, _) => "Draw the draggable splitter grip between the panes",
+            (16, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
+                        sections have rows)",
             _ => return None,
         })
     }
@@ -3589,6 +3622,7 @@ impl AppState {
             13 => self.changed_row_highlight = !self.changed_row_highlight,
             14 => self.show_borders = !self.show_borders,
             15 => self.show_splitter = !self.show_splitter,
+            16 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
             _ => {}
         }
         self.save_state();
@@ -3814,6 +3848,7 @@ impl AppState {
             self.repo_page_scroll = 0;
             self.repo_page_message = None;
             self.repo_page_focus_head = true;
+            self.repo_page_tab = PageRowKind::Branch;
             self.repos[idx].lock().unwrap().page = None;
         }
     }
@@ -3940,7 +3975,68 @@ impl AppState {
             rows[..branch_count].sort_by(order);
             rows[branch_count..branch_count + worktree_count].sort_by(order);
         }
+        // Tabbed mode: keep only the active tab's rows (so selection / clicks / nav all scope to
+        // it). Computed from the locked `page` to avoid re-locking via the public helpers.
+        let present = u8::from(!page.branches.is_empty())
+            + u8::from(!page.worktrees.is_empty())
+            + u8::from(!page.stashes.is_empty());
+        if self.repo_page_tabs == RepoTabsMode::Auto && present >= 2 {
+            rows.retain(|row| row.kind == self.repo_page_tab);
+        }
         rows
+    }
+
+    /// `(branches, worktrees, stashes)` counts for the open repo page (full, not tab-filtered).
+    pub fn repo_page_section_counts(&self) -> (usize, usize, usize) {
+        let Some(idx) = self.repo_page else { return (0, 0, 0) };
+        let state = self.repos[idx].lock().unwrap();
+        state
+            .page
+            .as_ref()
+            .map_or((0, 0, 0), |page| (page.branches.len(), page.worktrees.len(), page.stashes.len()))
+    }
+
+    /// The repo-page tabs that have rows, in display order.
+    pub fn repo_page_present_tabs(&self) -> Vec<PageRowKind> {
+        let (branches, worktrees, stashes) = self.repo_page_section_counts();
+        let mut tabs = Vec::new();
+        if branches > 0 {
+            tabs.push(PageRowKind::Branch);
+        }
+        if worktrees > 0 {
+            tabs.push(PageRowKind::Worktree);
+        }
+        if stashes > 0 {
+            tabs.push(PageRowKind::Stash);
+        }
+        tabs
+    }
+
+    /// Whether the repo page is currently rendered as tabs (mode Auto + ≥2 non-empty sections).
+    pub fn repo_page_tabbed(&self) -> bool {
+        self.repo_page_tabs == RepoTabsMode::Auto && self.repo_page_present_tabs().len() >= 2
+    }
+
+    /// Switch the active repo-page tab, resetting the selection to its first row.
+    pub fn repo_page_select_tab(&mut self, kind: PageRowKind) {
+        self.repo_page_tab = kind;
+        self.repo_page_selected = 0;
+        self.repo_page_scroll = 0;
+    }
+
+    /// Cycle to the next/previous present repo-page tab.
+    pub fn repo_page_cycle_tab(&mut self, forward: bool) {
+        let tabs = self.repo_page_present_tabs();
+        if tabs.is_empty() {
+            return;
+        }
+        let current = tabs.iter().position(|&kind| kind == self.repo_page_tab).unwrap_or(0);
+        let next = if forward {
+            (current + 1) % tabs.len()
+        } else {
+            (current + tabs.len() - 1) % tabs.len()
+        };
+        self.repo_page_select_tab(tabs[next]);
     }
 
     /// Set/flip the repo-page branch-table sort, keeping the selection on the same row.

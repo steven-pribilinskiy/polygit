@@ -1248,8 +1248,17 @@ async fn run_event_loop(
                             app.repo_page_scroll = app.repo_page_scroll.saturating_sub(step);
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
+                            let tab_click = app
+                                .repo_page_tab_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., kind)| kind);
                             if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
                                 app.close_repo_page();
+                            } else if let Some(kind) = tab_click {
+                                app.repo_page_select_tab(kind);
                             } else if let Some(column) =
                                 app.repo_page_toggle_at(mouse.column, mouse.row)
                             {
@@ -1932,6 +1941,9 @@ async fn run_event_loop(
                         KeyCode::Char('G') | KeyCode::End => {
                             app.repo_page_selected = len.saturating_sub(1)
                         }
+                        // Tab / Shift+Tab switch repo-page tabs (when tabbed).
+                        KeyCode::Tab => app.repo_page_cycle_tab(true),
+                        KeyCode::BackTab => app.repo_page_cycle_tab(false),
                         KeyCode::PageDown => {
                             app.repo_page_scroll = app.repo_page_scroll.saturating_add(10);
                         }
