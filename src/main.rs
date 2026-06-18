@@ -1132,8 +1132,16 @@ async fn run_event_loop(
                         {
                             app.settings_selected = row_idx;
                             app.settings_tab = AppState::settings_tab_of_row(row_idx);
-                            if let Some(option_idx) = option {
-                                app.set_setting_option(row_idx, option_idx);
+                            match option {
+                                // Clicking a different value sets it directly.
+                                Some(option_idx)
+                                    if option_idx != app.settings_active_option(row_idx) =>
+                                {
+                                    app.set_setting_option(row_idx, option_idx);
+                                }
+                                // Clicking the already-active value, or the row label, cycles to
+                                // the next value (left→right, wrapping — e.g. 3-radio theme).
+                                _ => app.toggle_selected_setting(),
                             }
                         } else if !point_in(app.settings_area, mouse.column, mouse.row) {
                             app.show_settings = false;

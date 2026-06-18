@@ -2928,6 +2928,66 @@ impl AppState {
         self.save_state();
     }
 
+    /// Index of the currently-active option for settings row `row_idx` (mirrors the render row
+    /// data + `set_setting_option`). Lets a click on the already-active chip cycle to the next
+    /// value instead of being a no-op. Out-of-range rows return 0.
+    pub fn settings_active_option(&self, row_idx: usize) -> usize {
+        match row_idx {
+            0 => usize::from(!self.panel_padding),
+            1 => usize::from(!self.grouping_enabled),
+            2 => usize::from(!self.tree_enabled),
+            3 => match self.icon_style {
+                IconStyle::Unicode => 0,
+                IconStyle::Emoji => 1,
+            },
+            4 => match self.theme {
+                Theme::Auto => 0,
+                Theme::Dark => 1,
+                Theme::Light => 2,
+            },
+            5 => match self.background {
+                Background::Normal => 0,
+                Background::Soft => 1,
+                Background::Terminal => 2,
+            },
+            6 => match self.contrast {
+                Contrast::Normal => 0,
+                Contrast::Soft => 1,
+            },
+            7 => match self.selection_style {
+                SelectionStyle::Blue => 0,
+                SelectionStyle::Subtle => 1,
+            },
+            8 => usize::from(!self.auto_pull_on_launch),
+            9 => match self.auto_pull_max_repos {
+                50 => 0,
+                100 => 1,
+                250 => 2,
+                _ => 3,
+            },
+            10 => usize::from(!self.auto_pull_in_tree),
+            11 => usize::from(!self.hover_effects),
+            12 => usize::from(!self.changed_row_flash),
+            13 => usize::from(!self.changed_row_highlight),
+            14 => match self.button_hover_style {
+                ButtonHoverStyle::Inverted => 0,
+                ButtonHoverStyle::Subtle => 1,
+            },
+            15 => usize::from(!self.show_borders),
+            16 => usize::from(!self.show_splitter),
+            17 => match self.repo_page_tabs {
+                RepoTabsMode::Off => 0,
+                RepoTabsMode::Auto => 1,
+            },
+            18 => usize::from(!self.dock_repo_panel),
+            19 => match self.branch_check {
+                BranchCheck::Off => 0,
+                BranchCheck::Auto => 1,
+            },
+            _ => 0,
+        }
+    }
+
     pub const DEFAULT_SPLIT: f64 = 0.4;
     pub const MIN_SPLIT: f64 = 0.2;
     pub const MAX_SPLIT: f64 = 0.7;
@@ -5608,6 +5668,32 @@ mod tests {
         state.set_setting_option(4, 9);
         state.set_setting_option(9, 0);
         assert_eq!(state.theme, theme);
+    }
+
+    #[test]
+    fn settings_active_option_tracks_current_values() {
+        let mut state = state_named(&["a"]);
+        // 2-radio: panel padding on → option 0, off → option 1.
+        state.set_setting_option(0, 0);
+        assert_eq!(state.settings_active_option(0), 0);
+        state.set_setting_option(0, 1);
+        assert_eq!(state.settings_active_option(0), 1);
+        // 3-radio: theme auto/dark/light → 0/1/2.
+        state.set_setting_option(4, 2);
+        assert_eq!(state.settings_active_option(4), 2);
+        // 4-radio: auto-pull limit 50/100/250/∞ → 0/1/2/3.
+        state.set_setting_option(9, 3);
+        assert_eq!(state.settings_active_option(9), 3);
+        // The new button-hover row (14): inverted/subtle → 0/1.
+        state.set_setting_option(14, 0);
+        assert_eq!(state.settings_active_option(14), 0);
+        state.set_setting_option(14, 1);
+        assert_eq!(state.settings_active_option(14), 1);
+        // A click on the active option then cycling lands on the next value.
+        state.settings_selected = 14;
+        let active = state.settings_active_option(14);
+        state.toggle_selected_setting();
+        assert_ne!(state.settings_active_option(14), active);
     }
 
     #[test]
