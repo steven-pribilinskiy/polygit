@@ -80,7 +80,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     //  - `selection_hover_bg`: the selected row while hovered (distinct — deeper than the selection,
     //                          so it never washes out into the plain hover tint).
     let hover_bg = palette.hover_bg();
-    let selection_hover_bg = palette.selection_hover_bg();
+    let selection_hover_bg = match app.selection_style {
+        crate::app::SelectionStyle::Subtle => palette.subtle_selection_hover_bg(),
+        crate::app::SelectionStyle::Blue => palette.selection_hover_bg(),
+    };
     let contains = |row: u16, start: u16, end: u16| hrow == row && hcol >= start && hcol < end;
     let row_rect =
         |row: u16, start: u16, end: u16| Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 };
@@ -283,6 +286,22 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     }
     for rect in strong_hits {
         buf.set_style(rect.intersection(frame_area), Style::default().bg(selection_hover_bg));
+    }
+}
+
+/// The background+text style for the selected row, per the user's `Selection` setting:
+/// **Blue** = a solid blue bar with white text (high contrast, overrides column colors);
+/// **Subtle** = a soft tint that keeps each column's own color readable. Bold either way.
+fn selection_highlight_style(app: &AppState) -> Style {
+    let palette = app.palette();
+    match app.selection_style {
+        crate::app::SelectionStyle::Blue => Style::default()
+            .bg(palette.selection_bg)
+            .fg(palette.selection_fg)
+            .add_modifier(Modifier::BOLD),
+        crate::app::SelectionStyle::Subtle => {
+            Style::default().bg(palette.subtle_selection_bg()).add_modifier(Modifier::BOLD)
+        }
     }
 }
 
@@ -1066,14 +1085,8 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     app.header_click = header_click;
 
     let total_items = items.len();
-    let selection_fg = app.palette().selection_fg;
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .fg(selection_fg)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(selection_highlight_style(app))
         .highlight_symbol("");
 
     frame.render_stateful_widget(list, rows_area, &mut list_state);
@@ -4085,6 +4098,7 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
         );
     } else {
         let path_width = file_content.width.saturating_sub(5) as usize;
+        let sel_style = selection_highlight_style(app);
         let rows: Vec<Line> = visible
             .iter()
             .skip(file_scroll)
@@ -4098,7 +4112,7 @@ fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 let path = Span::raw(truncate_str(&file.path, path_width.max(1)));
                 let line = Line::from(vec![status, path]);
                 if abs == selected {
-                    line.style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+                    line.style(sel_style)
                 } else {
                     line
                 }
@@ -4689,6 +4703,8 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let end = (start + inner_height).min(items.len());
 
     let selection_fg = app.palette().selection_fg;
+    let sel_style = selection_highlight_style(app);
+    let selection_is_blue = app.selection_style == crate::app::SelectionStyle::Blue;
     app.repo_page_click.clear();
     app.base_cell_click.clear();
     app.repo_page_sort_click.clear();
@@ -4719,15 +4735,16 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
                 ));
             }
             if *sel_index == selected {
-                line.style = Style::default()
-                    .bg(Color::DarkGray)
-                    .fg(selection_fg)
-                    .add_modifier(Modifier::BOLD);
-                // Force every span to the selection fg + bold so the selected row reads uniformly
-                // (the per-column colors would otherwise win over the line style and fight the
-                // blue selection bg).
+                line.style = sel_style;
+                // Blue style: force every span to white + bold so the row reads uniformly over the
+                // solid bar (column colors would otherwise win over the line style). Subtle style:
+                // keep each column's own color, just bold.
                 for span in &mut line.spans {
-                    span.style = span.style.fg(selection_fg).add_modifier(Modifier::BOLD);
+                    span.style = if selection_is_blue {
+                        span.style.fg(selection_fg).add_modifier(Modifier::BOLD)
+                    } else {
+                        span.style.add_modifier(Modifier::BOLD)
+                    };
                 }
             }
         }
@@ -5036,12 +5053,13 @@ fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {
 /// Render the settings modal (`,`): a small centered box with toggle rows for panel padding
 /// and the icon style. `↑↓` move, `space`/`enter` toggle, `esc` closes.
 fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
-    use crate::app::{Background, Contrast, Theme};
+    use crate::app::{Background, Contrast, SelectionStyle, Theme};
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     // Sections of (label, option chips). Global row indices run across sections and must
     // match `set_setting_option` / `toggle_selected_setting`:
-    // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast
-    // (Theming), 7 auto-pull · 8 auto-pull limit · 9 auto-pull-in-tree (Sync), 10 hover (Mouse).
+    // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
+    // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
+    // 11 hover (Mouse).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5077,6 +5095,13 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                     vec![
                         ("normal", app.contrast == Contrast::Normal),
                         ("soft", app.contrast == Contrast::Soft),
+                    ],
+                ),
+                (
+                    "Selection",
+                    vec![
+                        ("blue", app.selection_style == SelectionStyle::Blue),
+                        ("subtle", app.selection_style == SelectionStyle::Subtle),
                     ],
                 ),
             ],

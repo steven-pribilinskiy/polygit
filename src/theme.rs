@@ -96,6 +96,18 @@ impl Palette {
     pub fn selection_hover_bg(&self) -> Color {
         blend_toward(self.selection_bg, Color::Rgb(8, 12, 32), 0.22)
     }
+
+    /// Selected-row background in the **subtle** selection style — a soft tint that keeps each
+    /// column's own text color readable (for tables of color-coded values).
+    pub fn subtle_selection_bg(&self) -> Color {
+        blend_toward(self.selection_bg, self.base_bg, 0.80)
+    }
+
+    /// Selected *and* hovered background in the **subtle** selection style — a deeper tint than
+    /// `subtle_selection_bg`, so the hovered selection stays distinct.
+    pub fn subtle_selection_hover_bg(&self) -> Color {
+        blend_toward(self.selection_bg, self.base_bg, 0.64)
+    }
 }
 
 static DARK_NORMAL: Palette = Palette {
