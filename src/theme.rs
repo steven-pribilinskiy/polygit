@@ -15,6 +15,10 @@ use crate::app::{Background, Contrast};
 pub struct Palette {
     /// Base background (also what `Color::Reset` backgrounds resolve to).
     pub bg: Color,
+    /// The surface background as a real RGB value, even in `Terminal` mode (where `bg` is
+    /// `Color::Reset`). Used to derive subtle hover/selection tints by blending toward it, so
+    /// those tints stay subtle even when the terminal's own background shows through.
+    pub base_bg: Color,
     /// Base foreground (also what `Color::Reset` foregrounds resolve to).
     pub fg: Color,
     /// Selection / elevated-surface background (`Color::DarkGray` backgrounds).
@@ -79,10 +83,24 @@ impl Palette {
             other => self.map_fg(other),
         }
     }
+
+    /// Background for a hovered, *unselected* row — a faint wash of the selection color toward the
+    /// surface, derived (not stored) so it stays subtle in every theme and in `Terminal` mode.
+    pub fn hover_bg(&self) -> Color {
+        blend_toward(self.selection_bg, self.base_bg, 0.86)
+    }
+
+    /// Background for a row that is selected *and* hovered, in the **blue** selection style — a
+    /// darker shade of `selection_bg` so it stays distinct from a plain selection (which would
+    /// otherwise wash out under the hover tint).
+    pub fn selection_hover_bg(&self) -> Color {
+        blend_toward(self.selection_bg, Color::Rgb(8, 12, 32), 0.22)
+    }
 }
 
 static DARK_NORMAL: Palette = Palette {
     bg: Color::Rgb(26, 27, 38),
+    base_bg: Color::Rgb(26, 27, 38),
     fg: Color::Rgb(192, 197, 206),
     selection_bg: Color::Rgb(48, 100, 208),
     selection_fg: Color::Rgb(247, 248, 252),
@@ -101,6 +119,7 @@ static DARK_NORMAL: Palette = Palette {
 
 static DARK_SOFT: Palette = Palette {
     bg: Color::Rgb(35, 37, 48),
+    base_bg: Color::Rgb(35, 37, 48),
     fg: Color::Rgb(170, 176, 189),
     selection_bg: Color::Rgb(52, 92, 184),
     selection_fg: Color::Rgb(247, 248, 252),
@@ -119,6 +138,7 @@ static DARK_SOFT: Palette = Palette {
 
 static LIGHT_NORMAL: Palette = Palette {
     bg: Color::Rgb(245, 246, 248),
+    base_bg: Color::Rgb(245, 246, 248),
     fg: Color::Rgb(40, 42, 48),
     selection_bg: Color::Rgb(37, 99, 235),
     selection_fg: Color::Rgb(247, 248, 252),
@@ -137,6 +157,7 @@ static LIGHT_NORMAL: Palette = Palette {
 
 static LIGHT_SOFT: Palette = Palette {
     bg: Color::Rgb(235, 237, 240),
+    base_bg: Color::Rgb(235, 237, 240),
     fg: Color::Rgb(75, 80, 92),
     selection_bg: Color::Rgb(46, 96, 204),
     selection_fg: Color::Rgb(247, 248, 252),
@@ -188,6 +209,7 @@ pub fn palette(dark: bool, background: Background, contrast: Contrast) -> Palett
     let fg_src = base(dark, contrast == Contrast::Soft);
     Palette {
         bg: if background == Background::Terminal { Color::Reset } else { bg_src.bg },
+        base_bg: bg_src.bg,
         selection_bg: bg_src.selection_bg,
         shadow: bg_src.shadow,
         ..*fg_src
