@@ -1822,6 +1822,18 @@ fn build_info_lines(
         None => lines.push(plain("Branch", branch)),
     }
 
+    // Pull Request — the open PR for the current branch (via `gh`), clickable to the PR on the
+    // remote. Shown only when one exists; a dim "checking…" appears while the lookup is in flight.
+    if let Some(pr) = state.pr.as_ref() {
+        let text = format!("#{} {}", pr.number, pr.title);
+        push_link(&mut lines, &mut clicks, "Pull Request", &text, &pr.url);
+    } else if state.pr_loading {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<13}", "Pull Request"), label),
+            Span::styled("checking…", dim),
+        ]));
+    }
+
     // Pulled — what the most recent pull delivered: the old→new sha (the before/after the user
     // wants to see), commit/file counts, and best-effort new tags/branches. Shown only when a
     // pull updated this repo this session with a real delta.
@@ -4506,7 +4518,11 @@ fn ahead_behind_spans(
 
 /// Build the repo-page info panel lines for the selected row: branch/upstream/base, ahead-behind,
 /// change stats, last commit, and worktree/stash specifics. Pure (returns owned lines).
-fn build_repo_page_info_lines(row: &PageRow, base_branch: Option<&str>) -> Vec<Line<'static>> {
+fn build_repo_page_info_lines(
+    row: &PageRow,
+    base_branch: Option<&str>,
+    pr: Option<&crate::app::PrInfo>,
+) -> Vec<Line<'static>> {
     let key = Style::default().fg(Color::DarkGray);
     let val = Style::default().fg(Color::Gray);
     let pair = |label: &str, value: String| {
@@ -4526,6 +4542,12 @@ fn build_repo_page_info_lines(row: &PageRow, base_branch: Option<&str>) -> Vec<L
             let head = if row.is_head { "  (HEAD)" } else { "" };
             lines.push(pair("branch", format!("{}{head}", row.branch)));
             lines.push(pair("upstream", row.upstream.clone().unwrap_or_else(|| "(none)".to_string())));
+            // The open PR (resolved for the repo's current branch) shows on the HEAD row only.
+            if row.is_head {
+                if let Some(pr) = pr {
+                    lines.push(pair("pull request", format!("#{} {}", pr.number, pr.title)));
+                }
+            }
             let base = match (base_branch, row.merge_base_short.as_deref()) {
                 (Some(base), Some(point)) => format!("{base} @ {point}"),
                 (Some(base), None) => base.to_string(),
@@ -5027,11 +5049,12 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let selected_row = rows.get(selected);
     let info_lines = if app.repo_page_info {
         selected_row.map(|row| {
-            let base = {
+            let (base, pr) = {
                 let state = app.repos[idx].lock().unwrap();
-                state.page.as_ref().and_then(|page| page.base_branch.clone())
+                let base = state.page.as_ref().and_then(|page| page.base_branch.clone());
+                (base, state.pr.clone())
             };
-            build_repo_page_info_lines(row, base.as_deref())
+            build_repo_page_info_lines(row, base.as_deref(), pr.as_ref())
         })
     } else {
         None

@@ -31,7 +31,9 @@ branch leaves empty auto-hides and its chip goes dim and inert. Choices persist 
 
 `i` toggles a bottom **info panel** detailing the selected row: branch, upstream, base branch
 plus merge-base sha, ahead/behind, change stats, and the tip commit (sha · author · date ·
-subject). For a worktree it adds the path; for a stash, the stash ref and label. Persisted.
+subject). On the HEAD row it also shows the open **pull request** (`#N title`) when the current
+branch has one (via `gh`). For a worktree it adds the path; for a stash, the stash ref and label.
+Persisted.
 
 ## Acting on a row
 

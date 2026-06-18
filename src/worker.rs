@@ -18,7 +18,7 @@ use crate::git::{
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
-    pull_ff_only, remove_worktree, resolve_base, stash_file_diff, stash_file_list, stash_files,
+    pull_ff_only, pull_request, remove_worktree, resolve_base, stash_file_diff, stash_file_list, stash_files,
     uncommitted_file_list, PullOutcome,
 };
 
@@ -127,6 +127,8 @@ pub async fn pull_repo(
             state.status = RepoStatus::Updated;
             state.pull_result = Some(result);
             state.details_stale = true;
+            // A pull may have opened/closed/merged a PR or moved HEAD to a new branch — recheck.
+            state.pr_checked = false;
         }
         PullOutcome::Throttled => {
             // Tell the shared gate to back off, mark the repo, and schedule a backoff retry.
@@ -415,6 +417,22 @@ pub async fn run_repo_details(repo: SharedRepoState) {
     state.details_stale = false;
     // A lazy details load refreshes local facts only — the cached pull STATUS (and its `stale`
     // age) stays until an actual pull, so opening the info panel never fakes a fresh result.
+}
+
+/// Look up the open PR for one repo's current branch (via `gh`) and store it. The caller sets
+/// `pr_loading`/`pr_checked` before spawning; this clears `pr_loading`.
+pub async fn run_pull_request(repo: SharedRepoState) {
+    let (path, branch) = {
+        let state = repo.lock().unwrap();
+        (state.path.clone(), state.branch.clone())
+    };
+    let pr = match branch {
+        Some(branch) => pull_request(&path, &branch).await,
+        None => None,
+    };
+    let mut state = repo.lock().unwrap();
+    state.pr = pr;
+    state.pr_loading = false;
 }
 
 /// Fetch the diff for one repo (working-tree changes if dirty, else the last pull's diff)
