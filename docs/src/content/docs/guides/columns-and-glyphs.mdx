@@ -41,7 +41,8 @@ or `lock` — and a branch whose tracked remote ref was deleted shows `ref gone`
 generic `no upstream`. Same colors as the glyphs.
 
 Enabled columns persist across runs. Count columns render a **dim zero** (`⑃0`, `≡0`) rather
-than a blank, so the column stays recognizable. The dirty marker is **amber**, not red —
+than a blank in the Unicode set, so the column stays recognizable; in **emoji** mode a zero cell
+is hidden instead (a colorful emoji beside `0` is clutter). The dirty marker is **amber**, not red —
 uncommitted changes are a "modified" state, not an error (red stays for genuine failures). A column every repo leaves empty (no
 worktrees, no stashes, or `≤1` branch everywhere) auto-hides once its data has loaded, and its
 `t`-menu chip goes dim and inert until some repo has a value.
