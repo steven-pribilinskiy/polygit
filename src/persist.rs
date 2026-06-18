@@ -78,6 +78,12 @@ pub struct PersistedState {
     /// Draw the draggable splitter grip between the panes (default on).
     #[serde(default = "default_true")]
     pub show_splitter: bool,
+    /// Pulse (flash) a repo row's changed cells after a pull/refresh (default on).
+    #[serde(default = "default_true")]
+    pub changed_row_flash: bool,
+    /// Steadily highlight a repo row's changed cells for the attention window (default off).
+    #[serde(default)]
+    pub changed_row_highlight: bool,
 }
 
 fn default_true() -> bool {

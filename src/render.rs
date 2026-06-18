@@ -829,8 +829,11 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     let repo_item = |repo_idx: usize, depth: u16| -> ListItem<'static> {
             let state = app.repos[repo_idx].lock().unwrap();
             let icons = app.icons();
-            // Post-refetch attention flash: pulse REVERSED on the cells whose value changed.
-            let flash_on = state.flash_on();
+            // Post-change attention indicator on the cells whose value changed: pulse REVERSED
+            // ("flash") and/or steady REVERSED for the whole window ("highlight") — each toggled
+            // in settings. `flash_on` drives every flagged-cell style below.
+            let flash_on = (app.changed_row_flash && state.flash_on())
+                || (app.changed_row_highlight && state.flash_active());
             let flash = state.flash;
             let flash_style = |base: Style, flagged: bool| {
                 if flash_on && flagged {
@@ -5125,8 +5128,8 @@ fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Settings label column width — fits the longest label ("Auto-pull on launch" = 19).
-const SETTINGS_LABEL_W: u16 = 20;
+/// Settings label column width — fits the longest label ("Changed-row highlight" = 21).
+const SETTINGS_LABEL_W: u16 = 22;
 
 /// Render one settings row — `> Label   ● value  ○ value` — and capture its label/chip click
 /// regions (keyed by the global `row_idx`). `left_x` is the row's left edge.
@@ -5185,7 +5188,8 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // match `set_setting_option` / `toggle_selected_setting`:
     // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
     // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
-    // 11 hover (Interaction), 12 borders · 13 splitter (Layout).
+    // 11 hover · 12 changed-row flash · 13 changed-row highlight (Interaction),
+    // 14 borders · 15 splitter (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5255,11 +5259,18 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             ],
         ),
         (
-            "Mouse",
-            vec![(
-                "Hover effects",
-                vec![("on", app.hover_effects), ("off", !app.hover_effects)],
-            )],
+            "Interaction",
+            vec![
+                ("Hover effects", vec![("on", app.hover_effects), ("off", !app.hover_effects)]),
+                (
+                    "Changed-row flash",
+                    vec![("on", app.changed_row_flash), ("off", !app.changed_row_flash)],
+                ),
+                (
+                    "Changed-row highlight",
+                    vec![("on", app.changed_row_highlight), ("off", !app.changed_row_highlight)],
+                ),
+            ],
         ),
         (
             "Layout",
