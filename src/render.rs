@@ -148,10 +148,16 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             button_hits.push(row_rect(row, start, end));
         }
     } else if app.show_keyboard {
-        if let Some(&(row, start, end, _)) =
+        if let Some(&(_, _, _, code)) =
             app.keyboard_key_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            button_hits.push(row_rect(row, start, end));
+            // Highlight the whole key cell, not just the hovered row: a boxed key spans 3 screen
+            // rows (╭─╮ / │…│ / ╰─╯), each registered under the same key code.
+            for &(row, start, end, _) in
+                app.keyboard_key_click.iter().filter(|&&(_, _, _, c)| c == code)
+            {
+                button_hits.push(row_rect(row, start, end));
+            }
         } else if let Some((row, start, end)) =
             app.keyboard_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
