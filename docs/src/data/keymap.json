@@ -270,7 +270,7 @@
           "t"
         ],
         "action": "Column-toggle leader",
-        "note": "then u/a/d/l/w/b/s/p/c → status/ahead-behind/dirty/last/worktrees/branches/stashes/pulled/changed; stays active until Esc. The status column shows a short label with the failure kind (not found / auth / diverged / timeout / network / lock) on failed repos. The pulled (⇣) and changed (±) columns show what the last pull landed — commits and files — and auto-hide when nothing was pulled. Zeros render dim; a column every repo lacks (no worktrees/stashes, ≤1 branch) auto-hides and its menu chip is dim/inert",
+        "note": "then u/a/d/l/w/b/s/p/c/r → status/ahead-behind/dirty/last/worktrees/branches/stashes/pulled/changed/pull-request; stays active until Esc. The status column shows a short label with the failure kind (not found / auth / diverged / timeout / network / lock) on failed repos. The pulled (⇣) and changed (±) columns show what the last pull landed — commits and files — and auto-hide when nothing was pulled. The pull-request column shows a clickable #N (via gh, cached 5 min) for the current branch's open PR. Zeros render dim in the Unicode set and are hidden in emoji mode; a column every repo lacks (no worktrees/stashes, ≤1 branch) auto-hides and its menu chip is dim/inert",
         "keywords": [
           "columns",
           "status",
@@ -279,7 +279,9 @@
           "pulled",
           "changed",
           "commits",
-          "files"
+          "files",
+          "pull request",
+          "pr"
         ]
       },
       {
@@ -287,7 +289,7 @@
           "s"
         ],
         "action": "Sort leader",
-        "note": "then n/c/s/d (+a/l/w/b/k/p/g for visible columns) → name/branch/status/dirty/ahead-behind/last/worktrees/branches/stashes/pulled/changed; the menu lists only currently-visible columns. Re-pick flips ▲▼ (or click a header); the status-bar ⟪column ▲⟫ tag is clickable too and flips direction. The list is always sorted — Name asc is the default",
+        "note": "then n/c/s/d (+a/l/w/b/k/p/g/r for visible columns) → name/branch/status/dirty/ahead-behind/last/worktrees/branches/stashes/pulled/changed/pull-request; the menu lists only currently-visible columns. Re-pick flips ▲▼ (or click a header); the status-bar ⟪column ▲⟫ tag is clickable too and flips direction. The list is always sorted — Name asc is the default",
         "keywords": [
           "sort",
           "order",

@@ -98,9 +98,9 @@ pub struct RepoDetails {
     pub commit_timestamp: i64,
 }
 
-/// An open pull request for a repo's current branch, detected via `gh`. Not persisted — it's
-/// network-fresh and re-resolved each session (and after a pull).
-#[derive(Debug, Clone)]
+/// An open pull request for a repo's current branch, detected via `gh`. Cached (with a TTL) in
+/// `pr-cache.json` so the column + info panel don't re-hit the network every frame/launch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrInfo {
     pub number: u32,
     pub title: String,
@@ -431,6 +431,8 @@ pub enum Column {
     PulledCommits,
     /// Files the most recent pull changed.
     PulledFiles,
+    /// Open pull request for the current branch (via `gh`), shown as a clickable `#N`.
+    PullRequest,
 }
 
 /// Which optional list columns are enabled. `#[serde(default)]` keeps older state files
@@ -447,6 +449,7 @@ pub struct ColumnFlags {
     pub stashes: bool,
     pub pulled_commits: bool,
     pub pulled_files: bool,
+    pub pull_request: bool,
 }
 
 impl ColumnFlags {
@@ -621,6 +624,7 @@ pub enum SortColumn {
     Stashes,
     PulledCommits,
     PulledFiles,
+    PullRequest,
 }
 
 impl SortColumn {
@@ -638,6 +642,7 @@ impl SortColumn {
             SortColumn::PulledCommits => "pulled",
             SortColumn::PulledFiles => "changed",
             SortColumn::Stashes => "stashes",
+            SortColumn::PullRequest => "pull-request",
         }
     }
 }
@@ -1405,9 +1410,10 @@ pub struct RepoState {
     pub pr: Option<PrInfo>,
     /// Guard: a `gh pr` lookup is in flight for this repo.
     pub pr_loading: bool,
-    /// The `gh pr` lookup has already run this session — don't re-query on every render.
-    /// Reset after a pull so a newly-opened PR is picked up.
-    pub pr_checked: bool,
+    /// Unix seconds the current `pr` was resolved (drives the cache TTL, the re-query decision, and
+    /// the info-panel age). `None` until resolved this session or seeded from a fresh cache entry;
+    /// cleared after a pull so a newly-opened/closed PR is re-checked.
+    pub pr_checked_at: Option<i64>,
     /// Transient diff-view buffer (filled lazily when the Diff view is opened).
     pub diff: Option<Vec<String>>,
     /// Dedicated repo-page data (branches + worktrees), filled lazily when the page opens.
@@ -1476,7 +1482,7 @@ impl RepoState {
             details_loading: false,
             pr: None,
             pr_loading: false,
-            pr_checked: false,
+            pr_checked_at: None,
             diff: None,
             page: None,
             page_loading: false,
@@ -1908,6 +1914,9 @@ pub struct AppState {
     /// The exact rect the repo rows render into (inner, below the 2-row header) — used for
     /// click→row mapping so it's correct regardless of border/padding/header offsets.
     pub list_rows_area: Rect,
+    /// Clickable PR-cell regions in the list (PR column): (row, col_start, col_end, url). Rebuilt
+    /// each render; a click opens the PR in the browser.
+    pub pr_cell_click: Vec<(u16, u16, u16, String)>,
     /// The column-header rect (the 2 rows above the repo list) — for header click-to-sort.
     pub header_area: Rect,
     /// Header sort-cell hit map: (col_start, col_end, column). Rebuilt each render.
@@ -2184,6 +2193,12 @@ pub struct AppState {
     /// Persisted per-repo last-known state, loaded at startup to seed the list instantly and
     /// upserted as repos are pulled/refreshed. Flushed to disk on settle + quit.
     pub status_cache: crate::cache::StatusCache,
+    /// Persisted PR cache (repo+branch → open PR + timestamp, 5-min TTL). Consulted before a `gh`
+    /// lookup and upserted from resolved repos on flush.
+    pub pr_cache: crate::pr_cache::PrCache,
+    /// Set once the all-repos PR background pass has been spawned (when the PR column is enabled).
+    /// Reset when the column is toggled off so re-enabling re-arms it.
+    pub pr_pass_spawned: bool,
 }
 
 impl AppState {
@@ -2226,6 +2241,7 @@ impl AppState {
             main_area: Rect::default(),
             list_area: Rect::default(),
             list_rows_area: Rect::default(),
+            pr_cell_click: Vec::new(),
             header_area: Rect::default(),
             header_click: Vec::new(),
             preview_area: Rect::default(),
@@ -2372,6 +2388,8 @@ impl AppState {
             hover_tooltip: None,
             auto_pull_suppressed: false,
             status_cache: crate::cache::load(),
+            pr_cache: crate::pr_cache::load(),
+            pr_pass_spawned: false,
         }
     }
 
@@ -2681,6 +2699,52 @@ impl AppState {
         }
         #[cfg(not(test))]
         crate::cache::save(&self.status_cache);
+    }
+
+    /// Upsert resolved PRs (repos with a `pr_checked_at`) into the PR cache + persist. Mirrors
+    /// `flush_cache`; called alongside it on settle/quit so the network results survive a relaunch.
+    pub fn flush_pr_cache(&mut self) {
+        for repo in &self.repos {
+            let state = repo.lock().unwrap();
+            let (Some(checked_at), Some(branch)) = (state.pr_checked_at, state.branch.as_deref())
+            else {
+                continue; // not resolved this session — preserve any prior cached entry
+            };
+            self.pr_cache.insert(
+                crate::pr_cache::key(&state.path, branch),
+                crate::pr_cache::PrCacheEntry { pr: state.pr.clone(), checked_at },
+            );
+        }
+        #[cfg(not(test))]
+        crate::pr_cache::save(&self.pr_cache);
+    }
+
+    /// Decide whether the repo at `idx` needs a `gh` PR lookup. Consults the in-memory PR cache: if
+    /// a fresh entry exists (or the repo's in-memory `pr` is still within the TTL), seeds it and
+    /// returns `None`; otherwise marks `pr_loading` and returns the repo handle for the caller to
+    /// spawn `run_pull_request` on. `now` is Unix seconds.
+    pub fn maybe_resolve_pr(&self, idx: usize, now: i64) -> Option<SharedRepoState> {
+        let repo = &self.repos[idx];
+        let mut state = repo.lock().unwrap();
+        if state.pr_loading {
+            return None;
+        }
+        if state.pr_checked_at.is_some_and(|at| crate::pr_cache::is_fresh(at, now)) {
+            return None; // fresh in memory
+        }
+        // When the branch is known, a fresh cache entry seeds without a network call. (When it
+        // isn't loaded yet, fall through to spawn — the worker resolves the branch via `gh`.)
+        if let Some(branch) = state.branch.clone() {
+            if let Some(entry) = self.pr_cache.get(&crate::pr_cache::key(&state.path, &branch)) {
+                if crate::pr_cache::is_fresh(entry.checked_at, now) {
+                    state.pr = entry.pr.clone();
+                    state.pr_checked_at = Some(entry.checked_at);
+                    return None; // seeded from cache — no network call
+                }
+            }
+        }
+        state.pr_loading = true;
+        Some(std::sync::Arc::clone(repo))
     }
 
     /// The info-block action at `(col,row)`, if any (mouse hit-test).
@@ -3669,6 +3733,14 @@ impl AppState {
                 let key = |state: &RepoState| state.pull_result.as_ref().map_or(0, |p| p.files);
                 key(&left).cmp(&key(&right))
             }
+            SortColumn::PullRequest => {
+                // Repos with an open PR first (by number asc), PR-less repos last (in Asc).
+                let key = |state: &RepoState| {
+                    let number = state.pr.as_ref().map(|pr| pr.number);
+                    (number.is_none(), number.unwrap_or(0))
+                };
+                key(&left).cmp(&key(&right))
+            }
         }
     }
 
@@ -4632,6 +4704,13 @@ impl AppState {
             Column::Stashes => self.columns.stashes = !self.columns.stashes,
             Column::PulledCommits => self.columns.pulled_commits = !self.columns.pulled_commits,
             Column::PulledFiles => self.columns.pulled_files = !self.columns.pulled_files,
+            Column::PullRequest => {
+                self.columns.pull_request = !self.columns.pull_request;
+                // Re-arm the all-repos PR pass so re-enabling re-resolves stale entries.
+                if !self.columns.pull_request {
+                    self.pr_pass_spawned = false;
+                }
+            }
         }
     }
 
@@ -4682,6 +4761,9 @@ impl AppState {
             // running (data may yet arrive), then auto-hide once everything settled with nothing
             // pulled.
             Column::PulledCommits | Column::PulledFiles => !self.all_done || self.any_pull_result(),
+            // Self-fills via `gh` in the background; always available when enabled (cells are
+            // blank for repos without a PR or not yet resolved).
+            Column::PullRequest => true,
         }
     }
 
@@ -4698,6 +4780,7 @@ impl AppState {
             pulled_commits: self.columns.pulled_commits
                 && self.column_available(Column::PulledCommits),
             pulled_files: self.columns.pulled_files && self.column_available(Column::PulledFiles),
+            pull_request: self.columns.pull_request && self.column_available(Column::PullRequest),
         }
     }
 
@@ -4715,6 +4798,7 @@ impl AppState {
             SortColumn::Stashes => effective.stashes,
             SortColumn::PulledCommits => effective.pulled_commits,
             SortColumn::PulledFiles => effective.pulled_files,
+            SortColumn::PullRequest => effective.pull_request,
         }
     }
 }
