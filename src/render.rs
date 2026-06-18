@@ -236,7 +236,12 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             && hrow < app.main_area.y + app.main_area.height
         {
             hits.push(Rect { x: app.divider_col, y: app.main_area.y, width: 1, height: app.main_area.height });
-        } else if app.list_selection_at(hcol, hrow).is_some() {
+        } else if app
+            .list_selection_at(hcol, hrow)
+            .is_some_and(|idx| idx < app.visible_rows().len())
+        {
+            // A real repo/group row — not the Result/Errors summary rows (those read as the whole
+            // result pane tinting under the cursor, which is noise).
             hits.push(Rect {
                 x: app.list_area.x,
                 y: hrow,
