@@ -393,6 +393,12 @@ fn count_cell_text(glyph: &str, count: Option<u32>) -> (String, bool) {
     }
 }
 
+/// Whether a list count cell should be hidden entirely (rendered blank) — true only for a zero
+/// count in emoji mode, where a colorful glyph beside `0` is clutter. Unicode keeps a dim `0`.
+fn count_cell_hidden(emoji: bool, count: Option<u32>) -> bool {
+    emoji && count == Some(0)
+}
+
 /// A padded count-cell span: `color` when positive, dim gray when zero or still loading.
 /// Used where no flash animation applies (the repo page); the root list inlines
 /// `count_cell_text` so it can keep its flash wrapper.
@@ -886,12 +892,12 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         .saturating_sub(icon_width + name_col_width + separator_width + 2 + columns_width);
 
     let tree = app.tree_active();
-    // Zero / still-loading count cells recede with an explicit blend toward the surface (DarkGray
-    // → faint isn't faint enough on the normal/soft backgrounds, and Modifier::DIM is unreliable).
-    let count_dim = {
-        let palette = app.palette();
-        crate::theme::blend_toward(palette.faint, palette.base_bg, 0.5)
-    };
+    // Zero / still-loading count cells recede with the palette's `faint` tone (the same color
+    // `Color::DarkGray` maps to, so they match the ahead/behind zeros). NOT a near-surface blend:
+    // a too-faint, low-contrast gray trips terminal minimum-contrast correction (Tabby/xterm
+    // darkens it on a painted background), so `faint` is the floor — recessed but rendered
+    // consistently dim across terminals.
+    let count_dim = app.palette().faint;
     let repo_item = |repo_idx: usize, depth: u16| -> ListItem<'static> {
             let state = app.repos[repo_idx].lock().unwrap();
             let icons = app.icons();
@@ -1033,6 +1039,11 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             }
             // Count cells render a dim `0` (not a blank) once loaded, and a dim `…` while pending.
             let count_span = |glyph: &str, count: Option<u32>, color: Color, flagged: bool| {
+                // Emoji mode hides zero cells (a colorful glyph beside `0` is clutter); Unicode
+                // keeps a dim `0`.
+                if count_cell_hidden(emoji, count) {
+                    return Span::raw(format!(" {}", pad_display("", count_w)));
+                }
                 let (text, dim) = count_cell_text(glyph, count);
                 let base = if dim { count_dim } else { color };
                 Span::styled(
@@ -6159,6 +6170,15 @@ mod tests {
         assert_eq!(count_cell_text("⎇", None), ("…".to_string(), true));
         assert_eq!(count_cell_text("⎇", Some(0)), ("⎇0".to_string(), true));
         assert_eq!(count_cell_text("⎇", Some(3)), ("⎇3".to_string(), false));
+    }
+
+    #[test]
+    fn count_cell_hidden_only_for_emoji_zero() {
+        // Emoji mode hides a zero count entirely; everything else stays visible.
+        assert!(count_cell_hidden(true, Some(0)));
+        assert!(!count_cell_hidden(false, Some(0))); // Unicode keeps the dim 0
+        assert!(!count_cell_hidden(true, Some(2))); // non-zero always shows
+        assert!(!count_cell_hidden(true, None)); // loading "…" still shows
     }
 
     #[test]
