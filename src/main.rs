@@ -2473,6 +2473,21 @@ async fn run_event_loop(
                         drop(app);
                         retry_queue.extend(refetchable);
                     }
+                    // `u`/`U`: refresh local git facts (branch, ahead/behind, dirty, …) for the
+                    // selected repo / all repos WITHOUT pulling. Cheap, network-free.
+                    (KeyCode::Char('u'), _) => {
+                        if let Some(repo_idx) = app.selected_repo_index() {
+                            let repo = Arc::clone(&app.repos[repo_idx]);
+                            drop(app);
+                            tokio::spawn(run_repo_details(repo));
+                        }
+                    }
+                    (KeyCode::Char('U'), _) => {
+                        let repos = app.repos.clone();
+                        let max_jobs = app.max_jobs;
+                        drop(app);
+                        tokio::spawn(run_all_details(repos, max_jobs));
+                    }
 
                     _ => {}
                 }
