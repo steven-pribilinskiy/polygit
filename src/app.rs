@@ -834,7 +834,7 @@ impl SettingsLayout {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 1)];
+    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 1), ("Layout", 1)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -1941,6 +1941,8 @@ pub struct AppState {
     /// Highlight actionable elements under the cursor (persisted). Enabling it turns on all-motion
     /// mouse tracking (main.rs syncs the terminal mode to this flag).
     pub hover_effects: bool,
+    /// Draw borders around the two main panes (persisted, default on).
+    pub show_borders: bool,
     /// Current mouse position `(col, row)` while `hover_effects` is on, else `None`. Drives the
     /// post-render hover highlight; never persisted.
     pub hover: Option<(u16, u16)>,
@@ -2110,6 +2112,7 @@ impl AppState {
             auto_pull_max_repos: persisted.auto_pull_max_repos,
             auto_pull_in_tree: persisted.auto_pull_in_tree,
             hover_effects: persisted.hover_effects,
+            show_borders: persisted.show_borders,
             hover: None,
             hover_tooltip: None,
             auto_pull_suppressed: false,
@@ -2383,6 +2386,7 @@ impl AppState {
             auto_pull_max_repos: self.auto_pull_max_repos,
             auto_pull_in_tree: self.auto_pull_in_tree,
             hover_effects: self.hover_effects,
+            show_borders: self.show_borders,
         });
     }
 
@@ -2647,6 +2651,8 @@ impl AppState {
             (10, 1) => self.auto_pull_in_tree = false,
             (11, 0) => self.hover_effects = true,
             (11, 1) => self.hover_effects = false,
+            (12, 0) => self.show_borders = true,
+            (12, 1) => self.show_borders = false,
             _ => return,
         }
         self.save_state();
@@ -3316,7 +3322,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 12;
+    pub const SETTINGS_ROWS: usize = 13;
 
     /// `(first global row, row count)` for settings tab `tab` (index into `SETTINGS_TABS`).
     pub fn settings_tab_range(tab: usize) -> (usize, usize) {
@@ -3402,6 +3408,7 @@ impl AppState {
             9 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
             10 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
             11 => self.hover_effects = !self.hover_effects,
+            12 => self.show_borders = !self.show_borders,
             _ => {}
         }
         self.save_state();

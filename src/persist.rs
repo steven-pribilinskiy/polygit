@@ -72,6 +72,9 @@ pub struct PersistedState {
     /// mouse tracking, which takes over the terminal's own text selection / URL hover.
     #[serde(default)]
     pub hover_effects: bool,
+    /// Draw borders around the two main panes (default on). Off reclaims the border rows/cols.
+    #[serde(default = "default_true")]
+    pub show_borders: bool,
 }
 
 fn default_true() -> bool {
