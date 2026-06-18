@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    Background, BranchCheck, ColumnFlags, Contrast, HelpTab, IconStyle, RepoPageColumns, RepoTabsMode,
-    SelectionStyle, SettingsLayout, SortColumn, SortDir, Theme,
+    Background, BranchCheck, ButtonHoverStyle, ColumnFlags, Contrast, HelpTab, IconStyle,
+    RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn, SortDir, Theme,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -28,6 +28,9 @@ pub struct PersistedState {
     pub contrast: Contrast,
     /// Selected-row highlight style (blue bar vs subtle tint).
     pub selection_style: SelectionStyle,
+    /// Button hover style (reverse-video vs soft tint) for hints/tabs/chips/keys.
+    #[serde(default)]
+    pub button_hover_style: ButtonHoverStyle,
     /// Settings modal layout (tabbed vs flat).
     pub settings_layout: SettingsLayout,
     /// Background tone (normal / soft) — surface only. `None` in pre-split state files;

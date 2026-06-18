@@ -828,6 +828,28 @@ impl SelectionStyle {
     }
 }
 
+/// How a *button* (footer hint, modal hint, tab, radio chip, keyboard key, close button) is
+/// highlighted on hover. `Subtle` is the soft background tint (the original behavior); `Inverted`
+/// is reverse-video (swap fg/bg) — the punchier look the selected-row `Blue` style has. Independent
+/// of `SelectionStyle`, which governs the selected *row* in lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonHoverStyle {
+    #[default]
+    Subtle,
+    Inverted,
+}
+
+impl ButtonHoverStyle {
+    /// Toggle Subtle ↔ Inverted.
+    pub fn cycle(self) -> Self {
+        match self {
+            ButtonHoverStyle::Subtle => ButtonHoverStyle::Inverted,
+            ButtonHoverStyle::Inverted => ButtonHoverStyle::Subtle,
+        }
+    }
+}
+
 /// Layout of the settings modal: `Tabbed` shows IDE-style vertical tabs (one section at a time);
 /// `Flat` stacks every section in one scroll (the original layout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -984,7 +1006,7 @@ impl RepoTabsMode {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 3), ("Layout", 5)];
+    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 4), ("Layout", 5)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -2024,6 +2046,8 @@ pub struct AppState {
     pub contrast: Contrast,
     /// Selected-row highlight style (blue bar vs subtle tint that keeps column colors).
     pub selection_style: SelectionStyle,
+    /// Button hover style (reverse-video vs soft tint) for footer/modal hints, tabs, chips, keys.
+    pub button_hover_style: ButtonHoverStyle,
     /// Background tone for the active palette (surface only), independent of `Contrast`.
     pub background: Background,
     /// Whether the terminal background was detected as dark at startup (resolves `Theme::Auto`).
@@ -2270,6 +2294,7 @@ impl AppState {
             theme: persisted.theme,
             contrast: persisted.contrast,
             selection_style: persisted.selection_style,
+            button_hover_style: persisted.button_hover_style,
             background: crate::persist::resolve_background(persisted.background, persisted.contrast),
             auto_dark,
             show_settings: false,
@@ -2597,6 +2622,7 @@ impl AppState {
             theme: self.theme,
             contrast: self.contrast,
             selection_style: self.selection_style,
+            button_hover_style: self.button_hover_style,
             settings_layout: self.settings_layout,
             background: Some(self.background),
             sort_column: self.sort_column,
@@ -2888,16 +2914,18 @@ impl AppState {
             (12, 1) => self.changed_row_flash = false,
             (13, 0) => self.changed_row_highlight = true,
             (13, 1) => self.changed_row_highlight = false,
-            (14, 0) => self.show_borders = true,
-            (14, 1) => self.show_borders = false,
-            (15, 0) => self.show_splitter = true,
-            (15, 1) => self.show_splitter = false,
-            (16, 0) => self.repo_page_tabs = RepoTabsMode::Off,
-            (16, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
-            (17, 0) => self.dock_repo_panel = true,
-            (17, 1) => self.dock_repo_panel = false,
-            (18, 0) => self.branch_check = BranchCheck::Off,
-            (18, 1) => self.branch_check = BranchCheck::Auto,
+            (14, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
+            (14, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
+            (15, 0) => self.show_borders = true,
+            (15, 1) => self.show_borders = false,
+            (16, 0) => self.show_splitter = true,
+            (16, 1) => self.show_splitter = false,
+            (17, 0) => self.repo_page_tabs = RepoTabsMode::Off,
+            (17, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
+            (18, 0) => self.dock_repo_panel = true,
+            (18, 1) => self.dock_repo_panel = false,
+            (19, 0) => self.branch_check = BranchCheck::Off,
+            (19, 1) => self.branch_check = BranchCheck::Auto,
             _ => return,
         }
         self.save_state();
@@ -3618,7 +3646,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 19;
+    pub const SETTINGS_ROWS: usize = 20;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -3637,8 +3665,8 @@ impl AppState {
             (4, _) => "Color theme: auto-detect the terminal, or force dark / light",
             (5, _) => "Surface tone: normal, soft, or terminal (let the terminal background show)",
             (6, _) => "Text + accent saturation (normal vs softer)",
-            (7, _) => "Selected-row highlight: a solid blue bar, or a subtle tint that keeps each \
-                       column's own color",
+            (7, _) => "Selected list-row highlight: a solid blue bar, or a subtle tint that keeps \
+                       each column's own color",
             (8, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
             (9, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
             (10, _) => "Allow the launch auto-pull while the directory-tree view is active",
@@ -3648,13 +3676,15 @@ impl AppState {
                         also marks what changed.",
             (13, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
                         also marks what changed.",
-            (14, _) => "Draw the rounded borders around the two main panes",
-            (15, _) => "Draw the draggable splitter grip between the panes",
-            (16, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
+            (14, _) => "Button hover: reverse-video (inverted) or a soft tint, for footer/modal \
+                        hints, tabs, radio chips, and keyboard keys",
+            (15, _) => "Draw the rounded borders around the two main panes",
+            (16, _) => "Draw the draggable splitter grip between the panes",
+            (17, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
                         sections have rows)",
-            (17, _) => "Show the repo page as a docked bottom panel instead of full-screen \
+            (18, _) => "Show the repo page as a docked bottom panel instead of full-screen \
                         (toggle with b)",
-            (18, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
+            (19, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
                         scales the interval with the repo count",
             _ => return None,
         })
@@ -3746,11 +3776,12 @@ impl AppState {
             11 => self.hover_effects = !self.hover_effects,
             12 => self.changed_row_flash = !self.changed_row_flash,
             13 => self.changed_row_highlight = !self.changed_row_highlight,
-            14 => self.show_borders = !self.show_borders,
-            15 => self.show_splitter = !self.show_splitter,
-            16 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
-            17 => self.dock_repo_panel = !self.dock_repo_panel,
-            18 => self.branch_check = self.branch_check.cycle(),
+            14 => self.button_hover_style = self.button_hover_style.cycle(),
+            15 => self.show_borders = !self.show_borders,
+            16 => self.show_splitter = !self.show_splitter,
+            17 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
+            18 => self.dock_repo_panel = !self.dock_repo_panel,
+            19 => self.branch_check = self.branch_check.cycle(),
             _ => {}
         }
         self.save_state();
@@ -5565,11 +5596,27 @@ mod tests {
         assert_eq!(state.background, Background::Normal);
         state.set_setting_option(6, 1);
         assert_eq!(state.contrast, Contrast::Soft);
+        // Button hover (Interaction row 14): inverted / subtle.
+        state.set_setting_option(14, 0);
+        assert_eq!(state.button_hover_style, ButtonHoverStyle::Inverted);
+        state.set_setting_option(14, 1);
+        assert_eq!(state.button_hover_style, ButtonHoverStyle::Subtle);
+        // Layout rows shifted +1 after inserting button-hover: row 15 = borders, 19 = branch check.
+        state.set_setting_option(15, 1);
+        assert!(!state.show_borders);
+        state.set_setting_option(19, 1);
+        assert_eq!(state.branch_check, crate::app::BranchCheck::Auto);
         // Out-of-range pairs are a no-op.
         let theme = state.theme;
         state.set_setting_option(4, 9);
         state.set_setting_option(9, 0);
         assert_eq!(state.theme, theme);
+    }
+
+    #[test]
+    fn button_hover_style_cycles() {
+        assert_eq!(ButtonHoverStyle::Subtle.cycle(), ButtonHoverStyle::Inverted);
+        assert_eq!(ButtonHoverStyle::Inverted.cycle(), ButtonHoverStyle::Subtle);
     }
 
     #[test]
