@@ -1102,13 +1102,10 @@ async fn run_event_loop(
                     }
                 }
 
-                // Build-info modal: `[restart]` exec-restarts; any other click dismisses it.
+                // Build-info modal: footer hints (`r` restart / `esc` close) are handled by the
+                // hint-click injection above; any other click dismisses it.
                 if app.show_build_info {
                     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                        if region_hit(app.build_info_reload_click, mouse.column, mouse.row) {
-                            drop(app);
-                            return Ok(RELOAD_EXIT);
-                        }
                         app.show_build_info = false;
                     }
                     continue;

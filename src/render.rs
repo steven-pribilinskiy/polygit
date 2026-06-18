@@ -233,7 +233,7 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         }
     } else if app.show_build_info {
         if let Some((row, start, end)) =
-            app.build_info_reload_click.filter(|&(r, s, e)| contains(r, s, e))
+            app.build_info_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
         } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
@@ -2550,6 +2550,36 @@ fn build_hint_footer(
     Line::from(spans)
 }
 
+/// Build a clickable hint footer for a modal's **bottom border**: lays the styled hint out
+/// left-to-right just inside the left corner and registers each keyed segment's `HintClick` at the
+/// border row (so a click injects the key and runs the same handler as the keypress). Attach the
+/// returned `Line` via `.title_bottom(...)`. This is what makes every modal's footer clickable +
+/// hover-highlighted, instead of a plain `title_bottom(Line::from("…"))`.
+fn modal_border_footer(
+    segments: Vec<(String, Style, Option<HintKey>)>,
+    modal_area: Rect,
+    hint_click: &mut Vec<HintClick>,
+) -> Line<'static> {
+    let footer_row = modal_area.y + modal_area.height.saturating_sub(1);
+    build_hint_footer(segments, modal_area.x + 1, footer_row, hint_click)
+}
+
+/// A `key`-styled / `hint`-styled `[key, label]` segment pair for `modal_border_footer`, both
+/// clickable as `key`. The common shape for footer chips like `esc close` / `r restart`.
+fn footer_chip(key_text: &str, label: &str, key: HintKey) -> [(String, Style, Option<HintKey>); 2] {
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint_style = Style::default().fg(Color::DarkGray);
+    [
+        (key_text.to_string(), key_style, Some(key)),
+        (label.to_string(), hint_style, Some(key)),
+    ]
+}
+
+/// A non-clickable ` · ` separator segment for footer chips.
+fn footer_sep() -> (String, Style, Option<HintKey>) {
+    (" · ".to_string(), Style::default().fg(Color::DarkGray), None)
+}
+
 /// Pack `chips` (each an indivisible segment group) into as many rows as needed so each fits
 /// `area.width`, separated by ` · `. Row 0 starts with `prefix`; later rows start flush left.
 /// Click regions are registered per row at `base_y + row`. Used by the column picker, which has
@@ -3743,30 +3773,41 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let modal_area = centered_rect(modal_width, modal_height, area);
     app.help_area = modal_area;
 
+    // Clickable hint footer on the bottom border (tab + esc inject their keys; ↑/↓ and "click a
+    // link" are informational).
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint = Style::default().fg(Color::DarkGray);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("tab", " switch", HintKey::Tab));
+    footer.push(footer_sep());
+    footer.push(("↑/↓".to_string(), key, None));
+    footer.push((" scroll".to_string(), hint, None));
+    footer.push(footer_sep());
+    footer.push(("click a link".to_string(), hint, None));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("?/esc", " close", HintKey::Esc));
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(format!(" polygit — help · {} ", view.label()))
-        .title_bottom(
-            Line::from(" tab switch · ↑/↓ scroll · click a link · ?/Esc close ").right_aligned(),
-        );
-    // Browser-style: while hovering a link, show its URL at the bottom-left of the modal.
+        .title_bottom(modal_border_footer(footer, modal_area, &mut app.hint_click));
+    // Browser-style: while hovering a link, show its URL at the bottom-right of the modal.
     if let Some(url) = app.status_hint.as_deref().filter(|_| app.help_tab == HelpTab::About) {
         block = block.title_bottom(
             Line::from(Span::styled(format!(" {url} "), Style::default().fg(Color::DarkGray)))
-                .left_aligned(),
+                .right_aligned(),
         );
     }
-    // Hotkeys filter prompt at the bottom-left (browser-style; `@` prefix matches keys).
+    // Hotkeys filter prompt at the bottom-right (browser-style; `@` prefix matches keys).
     if let Some(query) = app.help_filter.as_deref().filter(|_| app.help_tab == HelpTab::Hotkeys) {
         block = block.title_bottom(
             Line::from(Span::styled(
                 format!(" filter: {query}\u{2588}  (prepend @ to match keys, esc clears) "),
                 Style::default().fg(Color::Cyan),
             ))
-            .left_aligned(),
+            .right_aligned(),
         );
     }
     let inner = block.inner(modal_area);
@@ -3909,13 +3950,22 @@ fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
 
     let (close_line, close_click) = modal_close_button(modal_area);
     app.keyboard_close_click = close_click;
+    // Clickable bottom-border footer — only `esc` injects a key; the rest is informational.
+    let hint = Style::default().fg(Color::DarkGray);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = vec![
+        ("press / click any key".to_string(), hint, None),
+        footer_sep(),
+        ("highlighted keys are bound".to_string(), hint, None),
+        footer_sep(),
+    ];
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(" keyboard — press any key to inspect it ")
-        .title_bottom(Line::from(" press / click any key · highlighted keys are bound · Esc close ").right_aligned());
+        .title_bottom(modal_border_footer(footer, modal_area, &mut app.hint_click));
     let inner = block.inner(modal_area);
 
     cast_shadow(frame, modal_area);
@@ -5303,11 +5353,12 @@ fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let height = (lines.len() as u16 + 4 + pad).min(area.height.saturating_sub(2).max(8));
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
-    // A `[restart]` button on the bottom border (exec-restarts the binary, same as the reload notice).
-    let restart = " [restart] ";
-    let restart_row = modal.y + modal.height.saturating_sub(1);
-    let restart_start = modal.x + 1;
-    let restart_end = restart_start + UnicodeWidthStr::width(restart) as u16;
+    // Clickable bottom-border footer: `r` exec-restarts the binary (same as the reload notice),
+    // `esc` closes.
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("r", " restart", HintKey::Char('r')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -5315,20 +5366,12 @@ fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .border_style(Style::default().fg(Color::Cyan))
         .title(" Build info ")
         .title_top(close_line)
-        .title_bottom(
-            Line::from(Span::styled(
-                restart,
-                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ))
-            .left_aligned(),
-        )
-        .title_bottom(Line::from(" r restart · esc closes ").right_aligned());
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
     let inner = block.inner(modal);
     cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     app.build_info_close_click = close_click;
-    app.build_info_reload_click = Some((restart_row, restart_start, restart_end));
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
@@ -5653,21 +5696,38 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let groups_hint = usize::from(app.groups.is_empty());
 
     let pad = if app.panel_padding { 2 } else { 0 };
+    // The hint footer now lives on the bottom border, not an in-content row, so the content
+    // height no longer reserves a trailing row for it.
     let (width, content_rows) = if tabbed {
-        (tab_col_w + 1 + content_w, max_tab_rows.max(SETTINGS_TABS.len() as u16) + 2)
+        (tab_col_w + 1 + content_w, max_tab_rows.max(SETTINGS_TABS.len() as u16) + 1)
     } else {
         let row_count = all_rows.len() as u16;
-        (
-            content_w.max(40),
-            row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16 + 1,
-        )
+        (content_w.max(40), row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16)
     };
     let width = (width + 2 + pad).min(area.width.saturating_sub(2)).max(20);
     let height = (content_rows + 2 + pad).min(area.height.saturating_sub(2).max(6));
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
-    let toggle_hint =
-        if tabbed { " v flat view · esc close " } else { " v tabbed view · esc close " };
+    // One clickable footer on the bottom border — the single source of every settings hint (the
+    // old layout doubled them: an in-content key row AND a plain border line). `move` is
+    // informational; tab / space / enter / v / esc inject their keys.
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint = Style::default().fg(Color::DarkGray);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> =
+        vec![("↑↓".to_string(), key, None), (" move".to_string(), hint, None), footer_sep()];
+    if tabbed {
+        footer.push(("←→/tab".to_string(), key, Some(HintKey::Tab)));
+        footer.push((" tab".to_string(), hint, Some(HintKey::Tab)));
+        footer.push(footer_sep());
+    }
+    footer.push(("space".to_string(), key, Some(HintKey::Char(' '))));
+    footer.push(("/".to_string(), hint, None));
+    footer.push(("enter".to_string(), key, Some(HintKey::Enter)));
+    footer.push((" toggle".to_string(), hint, Some(HintKey::Enter)));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("v", if tabbed { " flat view" } else { " tabbed view" }, HintKey::Char('v')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -5675,7 +5735,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .border_style(Style::default().fg(Color::Cyan))
         .title(" Settings ")
         .title_top(close_line)
-        .title_bottom(Line::from(toggle_hint).right_aligned());
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
     let inner = block.inner(modal);
     cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
@@ -5759,33 +5819,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         }
         frame.render_widget(Paragraph::new(lines), inner);
     }
-
-    // Clickable move/toggle/close footer on the last inner row.
-    let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let footer_hint = Style::default().fg(Color::DarkGray);
-    let footer_row = inner.y + inner.height.saturating_sub(1);
-    let mut footer = vec![
-        ("  ".to_string(), footer_hint, None),
-        ("↑↓".to_string(), footer_key, None),
-        (" move · ".to_string(), footer_hint, None),
-    ];
-    if tabbed {
-        footer.push(("←→".to_string(), footer_key, None));
-        footer.push((" tab · ".to_string(), footer_hint, None));
-    }
-    footer.extend([
-        ("space".to_string(), footer_key, Some(HintKey::Char(' '))),
-        ("/".to_string(), footer_hint, None),
-        ("enter".to_string(), footer_key, Some(HintKey::Enter)),
-        (" toggle · ".to_string(), footer_hint, Some(HintKey::Enter)),
-        ("v".to_string(), footer_key, Some(HintKey::Char('v'))),
-        (" layout".to_string(), footer_hint, Some(HintKey::Char('v'))),
-    ]);
-    let footer_line = build_hint_footer(footer, inner.x, footer_row, &mut app.hint_click);
-    frame.render_widget(
-        Paragraph::new(footer_line),
-        Rect { y: footer_row, height: 1, ..inner },
-    );
+    // The settings hint footer lives on the bottom border (built above); no in-content row.
 }
 
 /// Render the persistent new-build notice (top-right): shown when a newer binary replaced the

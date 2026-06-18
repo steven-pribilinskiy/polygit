@@ -2125,8 +2125,6 @@ pub struct AppState {
     pub show_build_info: bool,
     /// The build-info modal's `[x]` close button region.
     pub build_info_close_click: Option<(u16, u16, u16)>,
-    /// The build-info modal's `[restart]` button region (exec-restarts the binary).
-    pub build_info_reload_click: Option<(u16, u16, u16)>,
     // Grouping (`z`, groups from ~/.config/polygit/groups.json):
     /// Render the list grouped (`z` toggles; persisted). Inert while `groups` is empty.
     pub grouping_enabled: bool,
@@ -2345,7 +2343,6 @@ impl AppState {
                 .unwrap_or_else(|_| "polygit".to_string()),
             show_build_info: false,
             build_info_close_click: None,
-            build_info_reload_click: None,
             grouping_enabled: persisted.grouping_enabled,
             groups: Vec::new(),
             repo_group_map: Vec::new(),
