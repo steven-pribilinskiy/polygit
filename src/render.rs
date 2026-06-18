@@ -555,8 +555,11 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // Render status bar
     render_status_bar(frame, app, status_bar_area);
 
-    // Draw the draggable divider grip (and a live highlight while it's being dragged).
-    render_divider(frame, app);
+    // Draw the draggable divider grip (and a live highlight while it's being dragged), unless the
+    // user hid the splitter.
+    if app.show_splitter {
+        render_divider(frame, app);
+    }
 
     // Throttle warning (top-center) while a remote is rate-limiting us.
     render_throttle_banner(frame, app, area);
@@ -5182,7 +5185,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // match `set_setting_option` / `toggle_selected_setting`:
     // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
     // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
-    // 11 hover (Interaction), 12 borders (Layout).
+    // 11 hover (Interaction), 12 borders · 13 splitter (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5260,7 +5263,10 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ),
         (
             "Layout",
-            vec![("Borders", vec![("on", app.show_borders), ("off", !app.show_borders)])],
+            vec![
+                ("Borders", vec![("on", app.show_borders), ("off", !app.show_borders)]),
+                ("Splitter", vec![("on", app.show_splitter), ("off", !app.show_splitter)]),
+            ],
         ),
     ];
 
