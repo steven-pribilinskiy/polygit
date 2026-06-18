@@ -187,6 +187,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.cli_copy_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, ..)) =
+            app.help_design_click.iter().find(|&&(r, s, e, ..)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
         } else if app.help_links.iter().any(|&(row, _)| row == hrow)
             || app.help_notes_toggle_row == Some(hrow)
             || app.cli_flag_click.iter().any(|&(row, _)| row == hrow)
@@ -3290,6 +3294,98 @@ fn help_items_about(notes_expanded: bool) -> Vec<(Line<'static>, Option<String>)
     items
 }
 
+/// Sentinel carried in a Design System radio row's URL slot: `…designradio:{settings_row_idx}`.
+/// `render_help` re-runs the row at the real screen position to register its click regions.
+const DESIGN_RADIO_PREFIX: &str = "\u{1f}designradio:";
+
+/// The label + options (text, is-active) for a Design System radio, by the **settings** global row
+/// index it mirrors (Theme=4 · Background=5 · Contrast=6 · Selection=7). Owned/`'static` so the
+/// `&AppState` read ends before the caller mutably borrows `app.help_design_click`.
+fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str, Vec<(&'static str, bool)>) {
+    use crate::app::{Background, Contrast, SelectionStyle, Theme};
+    match row_idx {
+        4 => (
+            "Theme",
+            vec![
+                ("auto", app.theme == Theme::Auto),
+                ("dark", app.theme == Theme::Dark),
+                ("light", app.theme == Theme::Light),
+            ],
+        ),
+        5 => (
+            "Background",
+            vec![
+                ("normal", app.background == Background::Normal),
+                ("soft", app.background == Background::Soft),
+                ("terminal", app.background == Background::Terminal),
+            ],
+        ),
+        6 => (
+            "Contrast",
+            vec![
+                ("normal", app.contrast == Contrast::Normal),
+                ("soft", app.contrast == Contrast::Soft),
+            ],
+        ),
+        _ => (
+            "Selection",
+            vec![
+                ("blue", app.selection_style == crate::app::SelectionStyle::Blue),
+                ("subtle", app.selection_style == SelectionStyle::Subtle),
+            ],
+        ),
+    }
+}
+
+/// The content of the help modal's "Design System" tab: the theming radios (Theme / Background /
+/// Contrast / Selection — Icons live in the Legend tab) reusing `settings_row_line`, plus a live
+/// swatch showcase of the palette's semantic colors (drawn in their semantic ANSI colors so
+/// `apply_palette` themes them, updating as the radios change).
+fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Option<String>)> {
+    let title_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let group_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
+    let mut throwaway: Vec<(u16, u16, u16, usize, Option<usize>)> = Vec::new();
+
+    items.push((Line::from(Span::styled("Design System".to_string(), title_style)), None));
+    items.push((Line::from(""), None));
+    items.push((Line::from(Span::styled("Theming".to_string(), group_style)), None));
+    for row_idx in [4usize, 5, 6, 7] {
+        let (label, options) = design_radio_data(app, row_idx);
+        // The Line is position-independent; real click regions are registered by render_help at the
+        // row's actual screen position via the sentinel. Discard the dummy-position clicks here.
+        let line = settings_row_line(row_idx, false, label, &options, (0, 0), false, &mut throwaway);
+        items.push((line, Some(format!("{DESIGN_RADIO_PREFIX}{row_idx}"))));
+    }
+    items.push((Line::from(""), None));
+    items.push((Line::from(Span::styled("Palette — semantic colors (live)".to_string(), group_style)), None));
+    let swatch = |name: &str, color: Color, purpose: &str| {
+        (
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("███ ".to_string(), Style::default().fg(color)),
+                Span::styled(
+                    format!("{name:<8}"),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!(" {purpose}"), dim),
+            ]),
+            None,
+        )
+    };
+    items.push(swatch("accent", Color::Cyan, "primary accent · links · active option"));
+    items.push(swatch("ok", Color::Green, "success · up-to-date · pulled / added"));
+    items.push(swatch("warn", Color::Yellow, "warning · running · dirty marker"));
+    items.push(swatch("error", Color::Red, "failure · deleted"));
+    items.push(swatch("info", Color::Magenta, "secondary accent · stashes · throttled"));
+    items.push(swatch("blue", Color::Blue, "tertiary accent"));
+    items.push(swatch("muted", Color::Gray, "secondary text"));
+    items.push(swatch("faint", Color::DarkGray, "tertiary text · dim zero counts"));
+    items.push(swatch("bright", Color::White, "strongest text"));
+    items
+}
+
 /// Click sentinels carried in the CLI tab's URL slot (recognized by `render_help`).
 const CLI_FLAG_PREFIX: &str = "\u{1f}cliflag:";
 const CLI_COPY: &str = "\u{1f}clicopy";
@@ -3729,6 +3825,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let cli = help_items_cli(&app.cli_builder);
     let legend = help_items_legend();
     let about = help_items_about(app.help_notes_expanded);
+    let design = help_items_design_system(app);
     // Filter the Hotkeys tab when a `/` filter is active: keep binding lines whose text matches
     // (a leading `@` matches the keys column specifically); section headers/blanks drop out.
     let hotkeys_filtered: Vec<(Line<'static>, Option<String>)> = match app.help_filter.as_deref() {
@@ -3762,6 +3859,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         HelpTab::CliFlags => &cli,
         HelpTab::Legend => &legend,
         HelpTab::About => &about,
+        HelpTab::DesignSystem => &design,
     };
 
     // Size the box to the widest/tallest tab (capped to the screen) so switching doesn't resize it.
@@ -3771,11 +3869,17 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .chain(cli.iter())
         .chain(legend.iter())
         .chain(about.iter())
+        .chain(design.iter())
         .map(|(line, _)| line.width())
         .max()
         .unwrap_or(0) as u16;
-    let tallest =
-        hotkeys.len().max(cli.len()).max(legend.len()).max(about.len()) as u16 + 1; // +1 tab bar
+    let tallest = hotkeys
+        .len()
+        .max(cli.len())
+        .max(legend.len())
+        .max(about.len())
+        .max(design.len()) as u16
+        + 1; // +1 tab bar
     let max_width = area.width.saturating_sub(2);
     let max_height = area.height.saturating_sub(2);
     let (modal_width, modal_height) = if app.help_maximized {
@@ -3846,6 +3950,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ("CLI & Flags", HelpTab::CliFlags),
         ("Legend", HelpTab::Legend),
         ("About", HelpTab::About),
+        ("Design System", HelpTab::DesignSystem),
     ];
     let mut tab_spans: Vec<Span> = Vec::new();
     let mut tab_col = tab_bar_area.x;
@@ -3904,10 +4009,27 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.help_notes_toggle_row = None;
     app.cli_flag_click.clear();
     app.cli_copy_click = None;
+    app.help_design_click.clear();
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, url)) in items[start..end].iter().enumerate() {
         let row = content_area.y + offset as u16;
         match url.as_deref() {
+            Some(sentinel) if sentinel.starts_with(DESIGN_RADIO_PREFIX) => {
+                // Re-run the radio at its real screen row to capture the chip click regions (the
+                // pre-built Line is position-independent; only the click columns need the row).
+                if let Ok(row_idx) = sentinel[DESIGN_RADIO_PREFIX.len()..].parse::<usize>() {
+                    let (label, options) = design_radio_data(app, row_idx);
+                    let _ = settings_row_line(
+                        row_idx,
+                        false,
+                        label,
+                        &options,
+                        (content_area.x, row),
+                        true,
+                        &mut app.help_design_click,
+                    );
+                }
+            }
             Some(TOGGLE_NOTES) => app.help_notes_toggle_row = Some(row),
             Some(CLI_COPY) => {
                 app.cli_copy_click = Some((row, content_area.x, content_area.x + content_area.width));

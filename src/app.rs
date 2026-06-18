@@ -677,26 +677,29 @@ pub enum HelpTab {
     CliFlags,
     Legend,
     About,
+    DesignSystem,
 }
 
 impl HelpTab {
-    /// Next tab (Tab key), cycling Hotkeys → CLI & Flags → Legend → About → Hotkeys.
+    /// Next tab (Tab key): Hotkeys → CLI & Flags → Legend → About → Design System → Hotkeys.
     pub fn next(self) -> Self {
         match self {
             HelpTab::Hotkeys => HelpTab::CliFlags,
             HelpTab::CliFlags => HelpTab::Legend,
             HelpTab::Legend => HelpTab::About,
-            HelpTab::About => HelpTab::Hotkeys,
+            HelpTab::About => HelpTab::DesignSystem,
+            HelpTab::DesignSystem => HelpTab::Hotkeys,
         }
     }
 
     /// Previous tab (Shift+Tab).
     pub fn prev(self) -> Self {
         match self {
-            HelpTab::Hotkeys => HelpTab::About,
+            HelpTab::Hotkeys => HelpTab::DesignSystem,
             HelpTab::CliFlags => HelpTab::Hotkeys,
             HelpTab::Legend => HelpTab::CliFlags,
             HelpTab::About => HelpTab::Legend,
+            HelpTab::DesignSystem => HelpTab::About,
         }
     }
 
@@ -1965,6 +1968,9 @@ pub struct AppState {
     pub help_tab_click: Vec<(u16, u16, u16, HelpTab)>,
     /// The clickable `[esc]` close region in the help modal: (row, col_start, col_end).
     pub help_close_click: Option<(u16, u16, u16)>,
+    /// Clickable radio regions on the Design System help tab: (row, col_start, col_end, settings
+    /// row_idx, Option<option_idx>) — same shape as `settings_click`, dispatched the same way.
+    pub help_design_click: Vec<(u16, u16, u16, usize, Option<usize>)>,
     // Keyboard viewer (a button on the Hotkeys help tab opens it):
     /// The interactive keyboard modal is open. While open it captures every keypress (Esc closes).
     pub show_keyboard: bool,
@@ -2253,6 +2259,7 @@ impl AppState {
             cli_copy_click: None,
             help_tab_click: Vec::new(),
             help_close_click: None,
+            help_design_click: Vec::new(),
             show_keyboard: false,
             keyboard_selected: None,
             keyboard_scroll: 0,
