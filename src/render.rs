@@ -5429,7 +5429,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
     // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
     // 11 hover · 12 changed-row flash · 13 changed-row highlight (Interaction),
-    // 14 borders · 15 splitter · 16 repo-page tabs · 17 dock repo page (Layout).
+    // 14 borders · 15 splitter · 16 repo-page tabs · 17 dock repo page · 18 auto branch-check (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5527,6 +5527,13 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (
                     "Dock repo page",
                     vec![("on", app.dock_repo_panel), ("off", !app.dock_repo_panel)],
+                ),
+                (
+                    "Auto branch-check",
+                    vec![
+                        ("off", app.branch_check == crate::app::BranchCheck::Off),
+                        ("auto", app.branch_check == crate::app::BranchCheck::Auto),
+                    ],
                 ),
             ],
         ),

@@ -791,6 +791,7 @@ async fn run_event_loop(
     // Whether the divider is currently being dragged with the mouse.
     let mut dragging_divider = false;
     let mut dragging_dock = false;
+    let mut last_branch_check = Instant::now();
     // Which scrollbar (if any) is currently being dragged.
     let mut scroll_drag: Option<app::ScrollKind> = None;
 
@@ -978,6 +979,19 @@ async fn run_event_loop(
                     && hover_dwell_since.elapsed() >= Duration::from_millis(1000)
                 {
                     app.hover_tooltip = Some((text, col, row));
+                }
+            }
+            // Periodic local branch/status refresh (no pull) when enabled — interval scales with
+            // the repo count; held off while any pull is in flight.
+            if app.branch_check == app::BranchCheck::Auto
+                && app.discovery_done
+                && !app.any_pull_running()
+            {
+                let interval =
+                    Duration::from_secs(AppState::branch_check_interval_secs(app.repos.len()));
+                if last_branch_check.elapsed() >= interval {
+                    last_branch_check = Instant::now();
+                    tokio::spawn(run_all_details(app.repos.clone(), app.max_jobs));
                 }
             }
             app.divider_dragging = dragging_divider;

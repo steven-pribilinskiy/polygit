@@ -909,6 +909,25 @@ impl CliBuilder {
     }
 }
 
+/// Periodic local branch/status refresh (no network). `Auto` re-checks every repo on an interval
+/// that scales with the repo count (~repo_count/10 seconds, clamped 1..60).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BranchCheck {
+    #[default]
+    Off,
+    Auto,
+}
+
+impl BranchCheck {
+    pub fn cycle(self) -> Self {
+        match self {
+            BranchCheck::Off => BranchCheck::Auto,
+            BranchCheck::Auto => BranchCheck::Off,
+        }
+    }
+}
+
 /// A repo-page tab. Branches/Worktrees/Stashes map to a `PageRowKind`; Commits is a read-only
 /// list rendered separately (it doesn't flow through the row machinery).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -956,7 +975,7 @@ impl RepoTabsMode {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 3), ("Layout", 4)];
+    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 3), ("Layout", 5)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -1929,6 +1948,8 @@ pub struct AppState {
     pub repo_page_tabs: RepoTabsMode,
     /// Show the repo page as a docked bottom panel instead of full-screen (persisted).
     pub dock_repo_panel: bool,
+    /// Periodic local branch/status refresh mode (persisted).
+    pub branch_check: BranchCheck,
     /// The active repo-page tab (when tabbed). Session-only.
     pub repo_page_tab: RepoTab,
     /// Clickable repo-page tab chips: (row, col_start, col_end, tab). Rebuilt each render.
@@ -2200,6 +2221,7 @@ impl AppState {
             repo_page_selected: 0,
             repo_page_tabs: persisted.repo_page_tabs,
             dock_repo_panel: persisted.dock_repo_panel,
+            branch_check: persisted.branch_check,
             repo_page_tab: RepoTab::Branches,
             repo_page_tab_click: Vec::new(),
             repo_page_focus_head: false,
@@ -2563,6 +2585,7 @@ impl AppState {
             collapsed_folders,
             repo_page_tabs: self.repo_page_tabs,
             dock_repo_panel: self.dock_repo_panel,
+            branch_check: self.branch_check,
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
             base_overrides: self.base_overrides.clone(),
@@ -2850,6 +2873,8 @@ impl AppState {
             (16, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
             (17, 0) => self.dock_repo_panel = true,
             (17, 1) => self.dock_repo_panel = false,
+            (18, 0) => self.branch_check = BranchCheck::Off,
+            (18, 1) => self.branch_check = BranchCheck::Auto,
             _ => return,
         }
         self.save_state();
@@ -3570,7 +3595,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 18;
+    pub const SETTINGS_ROWS: usize = 19;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -3606,6 +3631,8 @@ impl AppState {
                         sections have rows)",
             (17, _) => "Show the repo page as a docked bottom panel instead of full-screen \
                         (toggle with b)",
+            (18, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
+                        scales the interval with the repo count",
             _ => return None,
         })
     }
@@ -3700,6 +3727,7 @@ impl AppState {
             15 => self.show_splitter = !self.show_splitter,
             16 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
             17 => self.dock_repo_panel = !self.dock_repo_panel,
+            18 => self.branch_check = self.branch_check.cycle(),
             _ => {}
         }
         self.save_state();
@@ -3793,6 +3821,17 @@ impl AppState {
         self.auto_pull_on_launch
             && (self.auto_pull_max_repos == 0 || repo_count <= self.auto_pull_max_repos as usize)
             && (self.auto_pull_in_tree || !self.tree_active())
+    }
+
+    /// The adaptive auto-branch-check interval in seconds: ~`repo_count / 10`, clamped to 1..60
+    /// (10 repos → ~1s, 100 → ~10s, 600+ → 60s).
+    pub fn branch_check_interval_secs(repo_count: usize) -> u64 {
+        ((repo_count as u64) / 10).clamp(1, 60)
+    }
+
+    /// Whether any repo is mid-pull (so the periodic branch-check holds off).
+    pub fn any_pull_running(&self) -> bool {
+        self.repos.iter().any(|repo| repo.lock().unwrap().status.is_running())
     }
 
     /// The hint key whose footer click-region contains `(col,row)`, if any.
@@ -4565,6 +4604,15 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_check_interval_scales_and_clamps() {
+        assert_eq!(AppState::branch_check_interval_secs(0), 1); // floor 1s
+        assert_eq!(AppState::branch_check_interval_secs(10), 1);
+        assert_eq!(AppState::branch_check_interval_secs(100), 10);
+        assert_eq!(AppState::branch_check_interval_secs(250), 25);
+        assert_eq!(AppState::branch_check_interval_secs(10_000), 60); // ceiling 60s
+    }
 
     #[test]
     fn cli_builder_command_assembles_flags() {
