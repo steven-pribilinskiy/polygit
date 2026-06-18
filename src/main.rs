@@ -1349,6 +1349,28 @@ async fn run_event_loop(
                             } else if app.help_notes_toggle_row == Some(mouse.row) {
                                 // Expand/collapse the Notes link group.
                                 app.help_notes_expanded = !app.help_notes_expanded;
+                            } else if region_hit(app.cli_copy_click, mouse.column, mouse.row) {
+                                let command = app.cli_builder.command();
+                                app.show_toast("command copied");
+                                drop(app);
+                                copy_to_clipboard(&command);
+                            } else if let Some(idx) = app
+                                .cli_flag_click
+                                .iter()
+                                .find(|&&(row, _)| row == mouse.row)
+                                .map(|&(_, idx)| idx)
+                            {
+                                // Click a CLI-builder flag row: select + toggle (boolean) or edit.
+                                app.cli_builder.selected = idx;
+                                match app::CLI_FLAGS[idx].kind {
+                                    app::CliFlagKind::Toggle => {
+                                        app.cli_builder.on[idx] = !app.cli_builder.on[idx];
+                                    }
+                                    _ => {
+                                        app.cli_builder.editing =
+                                            Some(app.cli_builder.values[idx].clone());
+                                    }
+                                }
                             } else if let Some(url) = app.help_link_at(mouse.row) {
                                 drop(app);
                                 open_url(&url);
@@ -2035,6 +2057,65 @@ async fn run_event_loop(
                     {
                         drop(app);
                         return Ok(130);
+                    }
+                    // Interactive CLI builder (CLI & Flags tab) intercepts its own keys.
+                    if app.help_tab == app::HelpTab::CliFlags {
+                        if app.cli_builder.editing.is_some() {
+                            match key.code {
+                                KeyCode::Esc => app.cli_builder.editing = None,
+                                KeyCode::Enter => {
+                                    let idx = app.cli_builder.selected;
+                                    if let Some(buffer) = app.cli_builder.editing.take() {
+                                        app.cli_builder.values[idx] = buffer.trim().to_string();
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    if let Some(buffer) = app.cli_builder.editing.as_mut() {
+                                        buffer.pop();
+                                    }
+                                }
+                                KeyCode::Char(ch) => {
+                                    if let Some(buffer) = app.cli_builder.editing.as_mut() {
+                                        buffer.push(ch);
+                                    }
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+                        match key.code {
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                let last = app::CLI_FLAGS.len().saturating_sub(1);
+                                app.cli_builder.selected = (app.cli_builder.selected + 1).min(last);
+                                continue;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.cli_builder.selected =
+                                    app.cli_builder.selected.saturating_sub(1);
+                                continue;
+                            }
+                            KeyCode::Char(' ') | KeyCode::Enter => {
+                                let idx = app.cli_builder.selected;
+                                match app::CLI_FLAGS[idx].kind {
+                                    app::CliFlagKind::Toggle => {
+                                        app.cli_builder.on[idx] = !app.cli_builder.on[idx];
+                                    }
+                                    _ => {
+                                        app.cli_builder.editing =
+                                            Some(app.cli_builder.values[idx].clone());
+                                    }
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('y') => {
+                                let command = app.cli_builder.command();
+                                app.show_toast("command copied");
+                                drop(app);
+                                copy_to_clipboard(&command);
+                                continue;
+                            }
+                            _ => {}
+                        }
                     }
                     match key.code {
                         KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {

@@ -53,3 +53,11 @@ polygit --no-tui ~/projects          # plain output for scripts/CI
 polygit --timeout 60 ~/work          # allow slow remotes 60s each
 polygit --profile --profile-out /tmp/pull.prof ~/projects
 ```
+
+## Build a command interactively
+
+You don't have to memorize the flags: open the help modal (`?`) and switch to the
+**CLI & Flags** tab for an interactive builder. Each flag is a row — `↑`/`↓` to move,
+`Space`/`Enter` to toggle a boolean flag or start editing a value (type it, `Enter` to
+set), or click a row directly. The constructed `polygit …` command updates live below the
+flag list; press `y` or click **[ copy ]** to copy it to the clipboard.
