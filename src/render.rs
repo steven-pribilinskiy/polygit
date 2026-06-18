@@ -74,13 +74,13 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     if app.divider_dragging || app.scrollbar_dragging.is_some() {
         return;
     }
-    // A hover tint, distinct from selection: the selection background pulled halfway to the surface
-    // so it reads as "under the cursor", not "selected". Terminal-bg mode has no RGB surface to
-    // blend toward, so use the selection background directly.
-    let hover_bg = match palette.bg {
-        Color::Rgb(..) => crate::theme::blend_toward(palette.selection_bg, palette.bg, 0.5),
-        _ => palette.selection_bg,
-    };
+    // Three hover tints, all derived from the palette so one edit propagates everywhere (and they
+    // stay correct in Terminal-bg mode, which has no live RGB surface):
+    //  - `hover_bg`         : a hovered, unselected row (subtle).
+    //  - `selection_hover_bg`: the selected row while hovered (distinct — deeper than the selection,
+    //                          so it never washes out into the plain hover tint).
+    let hover_bg = palette.hover_bg();
+    let selection_hover_bg = palette.selection_hover_bg();
     let contains = |row: u16, start: u16, end: u16| hrow == row && hcol >= start && hcol < end;
     let row_rect =
         |row: u16, start: u16, end: u16| Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 };
@@ -104,6 +104,8 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     // first match in each branch wins; for command/hint chrome we highlight every span that shares
     // the hovered one's action (so a key and its label light up together).
     let mut hits: Vec<Rect> = Vec::new();
+    // Rects that should get the stronger selected+hover tint instead of the plain hover tint.
+    let mut strong_hits: Vec<Rect> = Vec::new();
     if app.confirm.is_some() {
         if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
             hits.push(row_rect(region.row, region.col_start, region.col_end));
@@ -160,8 +162,13 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             scrollbar_col_hit()
         {
             hits.push(scroll);
-        } else if app.diff_modal_file_at(hrow).is_some() {
-            hits.push(inner_row(app.diff_modal_area));
+        } else if let Some(idx) = app.diff_modal_file_at(hrow) {
+            let rect = inner_row(app.diff_modal_area);
+            if app.diff_modal.as_ref().is_some_and(|modal| modal.selected == idx) {
+                strong_hits.push(rect);
+            } else {
+                hits.push(rect);
+            }
         }
     } else if app.copy_menu.is_some() {
         if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
@@ -249,18 +256,23 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             && hrow < app.main_area.y + app.main_area.height
         {
             hits.push(Rect { x: app.divider_col, y: app.main_area.y, width: 1, height: app.main_area.height });
-        } else if app
-            .list_selection_at(hcol, hrow)
-            .is_some_and(|idx| idx < app.visible_rows().len())
+        } else if let Some(idx) =
+            app.list_selection_at(hcol, hrow).filter(|&idx| idx < app.visible_rows().len())
         {
             // A real repo/group row — not the Result/Errors summary rows (those read as the whole
-            // result pane tinting under the cursor, which is noise).
-            hits.push(Rect {
+            // result pane tinting under the cursor, which is noise). Hovering the *selected* row
+            // gets the stronger tint so it stays distinct instead of washing out.
+            let rect = Rect {
                 x: app.list_area.x,
                 y: hrow,
                 width: app.divider_col.saturating_sub(app.list_area.x),
                 height: 1,
-            });
+            };
+            if idx == app.selected {
+                strong_hits.push(rect);
+            } else {
+                hits.push(rect);
+            }
         }
     }
 
@@ -268,6 +280,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let buf = frame.buffer_mut();
     for rect in hits {
         buf.set_style(rect.intersection(frame_area), Style::default().bg(hover_bg));
+    }
+    for rect in strong_hits {
+        buf.set_style(rect.intersection(frame_area), Style::default().bg(selection_hover_bg));
     }
 }
 
