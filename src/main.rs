@@ -790,6 +790,7 @@ async fn run_event_loop(
 
     // Whether the divider is currently being dragged with the mouse.
     let mut dragging_divider = false;
+    let mut dragging_dock = false;
     // Which scrollbar (if any) is currently being dragged.
     let mut scroll_drag: Option<app::ScrollKind> = None;
 
@@ -1007,6 +1008,29 @@ async fn run_event_loop(
                 // Bare cursor motion carries no action.
                 if matches!(mouse.kind, MouseEventKind::Moved) {
                     continue;
+                }
+
+                // Dragging the docked-panel's top boundary resizes it (a horizontal splitter).
+                // Handled before the repo-page/modal dispatch so a grab on the boundary wins.
+                let on_dock_boundary = app
+                    .dock_divider_row
+                    .is_some_and(|row| mouse.row == row || mouse.row + 1 == row);
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) if on_dock_boundary => {
+                        dragging_dock = true;
+                        app.set_dock_from_row(mouse.row);
+                        continue;
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) if dragging_dock => {
+                        app.set_dock_from_row(mouse.row);
+                        continue;
+                    }
+                    MouseEventKind::Up(MouseButton::Left) if dragging_dock => {
+                        dragging_dock = false;
+                        app.save_state();
+                        continue;
+                    }
+                    _ => {}
                 }
 
                 // Draggable scrollbars (preview, diff panels, help, repo page) are handled here,

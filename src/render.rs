@@ -539,13 +539,17 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     let status_bar_area = vertical_chunks[1];
 
     // Docked repo page: carve a bottom panel off the main area; the two panes share what's left.
+    // The boundary is a draggable horizontal splitter (height = dock_ratio of the main area).
+    app.dock_full_area = full_main_area;
+    app.dock_divider_row = None;
     let dock_area = if app.repo_page.is_some() && app.dock_repo_panel {
-        let dock_height =
-            (full_main_area.height * 9 / 20).clamp(6, full_main_area.height.saturating_sub(6));
+        let dock_height = (f64::from(full_main_area.height) * app.dock_ratio).round() as u16;
+        let dock_height = dock_height.clamp(6, full_main_area.height.saturating_sub(6).max(6));
         let split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(dock_height)])
             .split(full_main_area);
+        app.dock_divider_row = Some(split[1].y);
         Some((split[0], split[1]))
     } else {
         None
