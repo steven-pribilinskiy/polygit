@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{
     Background, ColumnFlags, Contrast, HelpTab, IconStyle, RepoPageColumns, SelectionStyle,
-    SortColumn, SortDir, Theme,
+    SettingsLayout, SortColumn, SortDir, Theme,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -28,6 +28,8 @@ pub struct PersistedState {
     pub contrast: Contrast,
     /// Selected-row highlight style (blue bar vs subtle tint).
     pub selection_style: SelectionStyle,
+    /// Settings modal layout (tabbed vs flat).
+    pub settings_layout: SettingsLayout,
     /// Background tone (normal / soft) — surface only. `None` in pre-split state files;
     /// `resolve_background` derives it from `contrast` for backward compatibility.
     pub background: Option<Background>,

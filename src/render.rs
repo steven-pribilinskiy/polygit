@@ -118,6 +118,13 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.settings_click.iter().find(|&&(r, s, e, ..)| contains(r, s, e))
         {
             hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, tab)) =
+            app.settings_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            // The active tab keeps its highlight (no hover tint over it).
+            if tab != app.settings_tab {
+                hits.push(row_rect(row, start, end));
+            }
         } else if let Some((row, start, end)) =
             app.settings_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
@@ -5105,10 +5112,61 @@ fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Render the settings modal (`,`): a small centered box with toggle rows for panel padding
-/// and the icon style. `↑↓` move, `space`/`enter` toggle, `esc` closes.
+/// Settings label column width — fits the longest label ("Auto-pull on launch" = 19).
+const SETTINGS_LABEL_W: u16 = 20;
+
+/// Render one settings row — `> Label   ● value  ○ value` — and capture its label/chip click
+/// regions (keyed by the global `row_idx`). `left_x` is the row's left edge.
+fn settings_row_line(
+    row_idx: usize,
+    selected: bool,
+    label: &str,
+    options: &[(&str, bool)],
+    pos: (u16, u16),
+    in_view: bool,
+    clicks: &mut Vec<(u16, u16, u16, usize, Option<usize>)>,
+) -> Line<'static> {
+    let (left_x, row_y) = pos;
+    let cursor = if selected { "> " } else { "  " };
+    let label_style = if selected {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    let mut spans = vec![
+        Span::styled(format!("  {cursor}"), label_style),
+        Span::styled(format!("{label:<width$}", width = SETTINGS_LABEL_W as usize), label_style),
+    ];
+    let mut col = left_x + 4;
+    if in_view {
+        clicks.push((row_y, col, col + SETTINGS_LABEL_W, row_idx, None));
+    }
+    col += SETTINGS_LABEL_W;
+    for (option_idx, (text, active)) in options.iter().enumerate() {
+        if option_idx > 0 {
+            spans.push(Span::raw("  "));
+            col += 2;
+        }
+        let style = if *active {
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let chip = format!("{} {text}", if *active { "●" } else { "○" });
+        let chip_width = UnicodeWidthStr::width(chip.as_str()) as u16;
+        if in_view {
+            clicks.push((row_y, col, col + chip_width, row_idx, Some(option_idx)));
+        }
+        col += chip_width;
+        spans.push(Span::styled(chip, style));
+    }
+    Line::from(spans)
+}
+
+/// Render the settings modal (`,`): IDE-style vertical tabs (or a flat list — toggle with `v`).
+/// `↑↓` move, `←→`/`tab` switch tab, `space`/`enter` toggle, `esc` closes.
 fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
-    use crate::app::{Background, Contrast, SelectionStyle, Theme};
+    use crate::app::{Background, Contrast, SelectionStyle, SettingsLayout, Theme, SETTINGS_TABS};
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     // Sections of (label, option chips). Global row indices run across sections and must
     // match `set_setting_option` / `toggle_selected_setting`:
@@ -5192,31 +5250,53 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ),
     ];
 
-    // Size the modal before building lines: setting rows + section titles + blank between
-    // sections + optional groups hint + blank + footer (+ a leading blank when border padding
-    // doesn't already provide the gap).
+    // Flatten the sections into the global row order (`SETTINGS_TABS` defines the grouping).
+    let all_rows: Vec<SettingsRow> = sections.into_iter().flat_map(|(_, rows)| rows).collect();
+    let row_width = |options: &[(&str, bool)]| -> u16 {
+        let chips: u16 = options
+            .iter()
+            .enumerate()
+            .map(|(idx, (text, _))| {
+                UnicodeWidthStr::width(format!("● {text}").as_str()) as u16 + u16::from(idx > 0) * 2
+            })
+            .sum();
+        4 + SETTINGS_LABEL_W + chips
+    };
+    let content_w = all_rows.iter().map(|(_, opts)| row_width(opts)).max().unwrap_or(40);
+    let tabbed = app.settings_layout == SettingsLayout::Tabbed;
+    let tab_col_w = SETTINGS_TABS
+        .iter()
+        .map(|(name, _)| UnicodeWidthStr::width(*name) as u16 + 4)
+        .max()
+        .unwrap_or(12);
+    let max_tab_rows =
+        SETTINGS_TABS.iter().map(|(_, count)| *count).max().unwrap_or(1) as u16 + 1; // +1 groups hint
+    let groups_hint = usize::from(app.groups.is_empty());
+
     let pad = if app.panel_padding { 2 } else { 0 };
-    let row_count: usize = sections.iter().map(|(_, rows)| rows.len()).sum();
-    let hint_rows = usize::from(app.groups.is_empty());
-    let content_rows = usize::from(!app.panel_padding)
-        + row_count
-        + sections.len()
-        + (sections.len() - 1)
-        + hint_rows
-        + 2;
-    // Label column width — fits the longest setting label ("Auto-pull on launch" = 19).
-    const LABEL_W: u16 = 20;
-    let width = 54u16.min(area.width.saturating_sub(2)).max(20) + pad;
-    let height = (content_rows as u16 + 2 + pad).min(area.height.saturating_sub(2).max(6));
+    let (width, content_rows) = if tabbed {
+        (tab_col_w + 1 + content_w, max_tab_rows.max(SETTINGS_TABS.len() as u16) + 2)
+    } else {
+        let row_count = all_rows.len() as u16;
+        (
+            content_w.max(40),
+            row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16 + 1,
+        )
+    };
+    let width = (width + 2 + pad).min(area.width.saturating_sub(2)).max(20);
+    let height = (content_rows + 2 + pad).min(area.height.saturating_sub(2).max(6));
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
+    let toggle_hint =
+        if tabbed { " v flat view · esc close " } else { " v tabbed view · esc close " };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(" Settings ")
-        .title_top(close_line);
+        .title_top(close_line)
+        .title_bottom(Line::from(toggle_hint).right_aligned());
     let inner = block.inner(modal);
     cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
@@ -5224,90 +5304,109 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.settings_area = modal;
     app.settings_close_click = close_click;
     app.settings_click.clear();
+    app.settings_tab_click.clear();
 
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let mut lines: Vec<Line> = Vec::new();
-    if !app.panel_padding {
-        lines.push(Line::from(String::new()));
-    }
-    // Web-like rows: the label region selects the row, each `●/○ text` chip sets that value.
-    let mut row_idx = 0usize;
-    for (section_idx, (section_title, rows)) in sections.iter().enumerate() {
-        if section_idx > 0 {
-            lines.push(Line::from(String::new()));
+    // A `>Label  ● value` row plus the optional "no groups" hint, given the row's left edge.
+    let mut push_row = |row_idx: usize, left_x: u16, row_y: u16, out: &mut Vec<Line>| {
+        let (label, options) = &all_rows[row_idx];
+        let in_view = row_y < inner.y + inner.height;
+        out.push(settings_row_line(
+            row_idx,
+            app.settings_selected == row_idx,
+            label,
+            options,
+            (left_x, row_y),
+            in_view,
+            &mut app.settings_click,
+        ));
+        if *label == "Grouping" && app.groups.is_empty() {
+            out.push(Line::from(Span::styled(
+                "      no groups defined — ~/.config/polygit/groups.json",
+                Style::default().fg(Color::DarkGray),
+            )));
         }
-        lines.push(Line::from(Span::styled(format!("  {section_title}"), section_style)));
-        for (label, options) in rows {
-            let row_y = inner.y + lines.len() as u16;
-            let in_view = row_y < inner.y + inner.height;
-            let selected = app.settings_selected == row_idx;
-            let cursor = if selected { "> " } else { "  " };
-            let label_style = if selected {
-                Style::default().add_modifier(Modifier::BOLD)
+    };
+
+    if tabbed {
+        // Left: clickable vertical tab list. Right: the active tab's rows.
+        let mut tab_lines: Vec<Line> = Vec::new();
+        for (tab_idx, (name, _)) in SETTINGS_TABS.iter().enumerate() {
+            let row_y = inner.y + tab_idx as u16;
+            let active = tab_idx == app.settings_tab;
+            let style = if active {
+                Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Gray)
             };
-            let mut spans = vec![
-                Span::styled(format!("  {cursor}"), label_style),
-                Span::styled(format!("{label:<width$}", width = LABEL_W as usize), label_style),
-            ];
-            let mut col = inner.x + 4;
-            if in_view {
-                app.settings_click.push((row_y, col, col + LABEL_W, row_idx, None));
-            }
-            col += LABEL_W;
-            for (option_idx, (text, active)) in options.iter().enumerate() {
-                if option_idx > 0 {
-                    spans.push(Span::raw("  "));
-                    col += 2;
-                }
-                let style = if *active {
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
-                let dot = if *active { "●" } else { "○" };
-                let chip = format!("{dot} {text}");
-                let chip_width = UnicodeWidthStr::width(chip.as_str()) as u16;
-                if in_view {
-                    app.settings_click
-                        .push((row_y, col, col + chip_width, row_idx, Some(option_idx)));
-                }
-                col += chip_width;
-                spans.push(Span::styled(chip, style));
-            }
-            lines.push(Line::from(spans));
-            if *label == "Grouping" && app.groups.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    "      no groups defined — ~/.config/polygit/groups.json",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            row_idx += 1;
+            app.settings_tab_click.push((row_y, inner.x, inner.x + tab_col_w, tab_idx));
+            tab_lines.push(Line::from(Span::styled(
+                format!(" {name:<width$}", width = (tab_col_w - 1) as usize),
+                style,
+            )));
         }
+        let tabs_area = Rect { width: tab_col_w, ..inner };
+        frame.render_widget(Paragraph::new(tab_lines), tabs_area);
+
+        let content_x = inner.x + tab_col_w + 1;
+        let (start, len) = AppState::settings_tab_range(app.settings_tab);
+        let mut content_lines: Vec<Line> = Vec::new();
+        for offset in 0..len {
+            let row_y = inner.y + content_lines.len() as u16;
+            push_row(start + offset, content_x, row_y, &mut content_lines);
+        }
+        let content_area = Rect {
+            x: content_x,
+            width: inner.width.saturating_sub(tab_col_w + 1),
+            ..inner
+        };
+        frame.render_widget(Paragraph::new(content_lines), content_area);
+    } else {
+        let mut lines: Vec<Line> = Vec::new();
+        if !app.panel_padding {
+            lines.push(Line::from(String::new()));
+        }
+        let mut row_idx = 0usize;
+        for (tab_idx, (name, count)) in SETTINGS_TABS.iter().enumerate() {
+            if tab_idx > 0 {
+                lines.push(Line::from(String::new()));
+            }
+            lines.push(Line::from(Span::styled(format!("  {name}"), section_style)));
+            for _ in 0..*count {
+                let row_y = inner.y + lines.len() as u16;
+                push_row(row_idx, inner.x, row_y, &mut lines);
+                row_idx += 1;
+            }
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
     }
-    lines.push(Line::from(String::new()));
+
+    // Clickable move/toggle/close footer on the last inner row.
     let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let footer_hint = Style::default().fg(Color::DarkGray);
-    let footer_row = inner.y + lines.len() as u16;
-    lines.push(build_hint_footer(
-        vec![
-            ("  ".to_string(), footer_hint, None),
-            ("↑↓".to_string(), footer_key, None),
-            (" move · ".to_string(), footer_hint, None),
-            ("space".to_string(), footer_key, Some(HintKey::Char(' '))),
-            ("/".to_string(), footer_hint, None),
-            ("enter".to_string(), footer_key, Some(HintKey::Enter)),
-            (" toggle".to_string(), footer_hint, Some(HintKey::Enter)),
-            (" · ".to_string(), footer_hint, None),
-            ("esc".to_string(), footer_key, Some(HintKey::Esc)),
-            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
-        ],
-        inner.x,
-        footer_row,
-        &mut app.hint_click,
-    ));
-    frame.render_widget(Paragraph::new(lines), inner);
+    let footer_row = inner.y + inner.height.saturating_sub(1);
+    let mut footer = vec![
+        ("  ".to_string(), footer_hint, None),
+        ("↑↓".to_string(), footer_key, None),
+        (" move · ".to_string(), footer_hint, None),
+    ];
+    if tabbed {
+        footer.push(("←→".to_string(), footer_key, None));
+        footer.push((" tab · ".to_string(), footer_hint, None));
+    }
+    footer.extend([
+        ("space".to_string(), footer_key, Some(HintKey::Char(' '))),
+        ("/".to_string(), footer_hint, None),
+        ("enter".to_string(), footer_key, Some(HintKey::Enter)),
+        (" toggle · ".to_string(), footer_hint, Some(HintKey::Enter)),
+        ("v".to_string(), footer_key, Some(HintKey::Char('v'))),
+        (" layout".to_string(), footer_hint, Some(HintKey::Char('v'))),
+    ]);
+    let footer_line = build_hint_footer(footer, inner.x, footer_row, &mut app.hint_click);
+    frame.render_widget(
+        Paragraph::new(footer_line),
+        Rect { y: footer_row, height: 1, ..inner },
+    );
 }
 
 /// Render the persistent new-build notice (top-right): shown when a newer binary replaced the

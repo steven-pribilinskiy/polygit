@@ -808,6 +808,34 @@ impl SelectionStyle {
     }
 }
 
+/// Layout of the settings modal: `Tabbed` shows IDE-style vertical tabs (one section at a time);
+/// `Flat` stacks every section in one scroll (the original layout).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingsLayout {
+    #[default]
+    Tabbed,
+    Flat,
+}
+
+impl SettingsLayout {
+    /// Toggle Tabbed ↔ Flat.
+    pub fn cycle(self) -> Self {
+        match self {
+            SettingsLayout::Tabbed => SettingsLayout::Flat,
+            SettingsLayout::Flat => SettingsLayout::Tabbed,
+        }
+    }
+}
+
+/// The settings sections, in global row order: `(tab label, number of rows)`. Single source of
+/// truth shared by the renderer (tab labels + which rows belong to each tab) and the navigation
+/// helpers (tab ranges). The row *data* (labels/options) is built in `render_settings`; the counts
+/// here must match it. Appending a setting = bump the relevant count (and add its row data + the
+/// `set_setting_option`/`toggle_selected_setting` arm).
+pub const SETTINGS_TABS: &[(&str, usize)] =
+    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 1)];
+
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1807,9 +1835,14 @@ pub struct AppState {
     pub auto_dark: bool,
     /// Whether the settings modal (`,`) is open.
     pub show_settings: bool,
-    /// Selected row in the settings modal (0 = padding, 1 = grouping, 2 = tree,
-    /// 3 = icons, 4 = theme, 5 = background, 6 = contrast).
+    /// Selected (global) row in the settings modal — see `SETTINGS_TABS` for the row order.
     pub settings_selected: usize,
+    /// Active settings tab (index into `SETTINGS_TABS`) in the tabbed layout.
+    pub settings_tab: usize,
+    /// Settings modal layout (tabbed vs flat). Persisted.
+    pub settings_layout: SettingsLayout,
+    /// Clickable settings tab labels: (row, col_start, col_end, tab index). Rebuilt each render.
+    pub settings_tab_click: Vec<(u16, u16, u16, usize)>,
     /// The repo-page `y` copy menu, when open: the selected option (0 = path, 1 = branch, 2 = both).
     pub copy_menu: Option<usize>,
     /// A transient toast (auto-dismisses after `TOAST_DURATION`).
@@ -2016,6 +2049,9 @@ impl AppState {
             auto_dark,
             show_settings: false,
             settings_selected: 0,
+            settings_tab: 0,
+            settings_layout: persisted.settings_layout,
+            settings_tab_click: Vec::new(),
             copy_menu: None,
             toast: None,
             settings_area: Rect::default(),
@@ -2331,6 +2367,7 @@ impl AppState {
             theme: self.theme,
             contrast: self.contrast,
             selection_style: self.selection_style,
+            settings_layout: self.settings_layout,
             background: Some(self.background),
             sort_column: self.sort_column,
             sort_dir: self.sort_dir,
@@ -3280,6 +3317,59 @@ impl AppState {
 
     /// Number of rows in the settings modal.
     pub const SETTINGS_ROWS: usize = 12;
+
+    /// `(first global row, row count)` for settings tab `tab` (index into `SETTINGS_TABS`).
+    pub fn settings_tab_range(tab: usize) -> (usize, usize) {
+        let start: usize = SETTINGS_TABS.iter().take(tab).map(|(_, count)| count).sum();
+        let len = SETTINGS_TABS.get(tab).map_or(0, |(_, count)| *count);
+        (start, len)
+    }
+
+    /// Which settings tab a global row belongs to.
+    pub fn settings_tab_of_row(row: usize) -> usize {
+        let mut acc = 0;
+        for (tab, (_, count)) in SETTINGS_TABS.iter().enumerate() {
+            acc += count;
+            if row < acc {
+                return tab;
+            }
+        }
+        SETTINGS_TABS.len().saturating_sub(1)
+    }
+
+    /// Switch to settings tab `tab`, moving the selection to that tab's first row.
+    pub fn settings_select_tab(&mut self, tab: usize) {
+        if tab >= SETTINGS_TABS.len() {
+            return;
+        }
+        self.settings_tab = tab;
+        self.settings_selected = Self::settings_tab_range(tab).0;
+    }
+
+    /// Cycle to the next/previous settings tab (wrapping).
+    pub fn settings_cycle_tab(&mut self, forward: bool) {
+        let count = SETTINGS_TABS.len();
+        let next = if forward {
+            (self.settings_tab + 1) % count
+        } else {
+            (self.settings_tab + count - 1) % count
+        };
+        self.settings_select_tab(next);
+    }
+
+    /// Move the settings selection by `delta`, clamped to the active tab in the tabbed layout (and
+    /// to the whole list in the flat layout). Keeps `settings_tab` in sync with the selection.
+    pub fn settings_move(&mut self, delta: isize) {
+        let current = self.settings_selected as isize;
+        let (lo, hi) = if self.settings_layout == SettingsLayout::Tabbed {
+            let (start, len) = Self::settings_tab_range(self.settings_tab);
+            (start as isize, (start + len).saturating_sub(1) as isize)
+        } else {
+            (0, Self::SETTINGS_ROWS.saturating_sub(1) as isize)
+        };
+        self.settings_selected = (current + delta).clamp(lo, hi) as usize;
+        self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
+    }
 
     /// Toggle/cycle the currently-selected settings row, persisting immediately.
     /// Row order (matches `render_settings` sections): 0 padding · 1 grouping · 2 tree (General),

@@ -1066,12 +1066,22 @@ async fn run_event_loop(
                 // clicks never fall through to the view behind.
                 if app.show_settings {
                     if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        let tab_click = app
+                            .settings_tab_click
+                            .iter()
+                            .find(|&&(row, start, end, _)| {
+                                mouse.row == row && mouse.column >= start && mouse.column < end
+                            })
+                            .map(|&(.., tab)| tab);
                         if region_hit(app.settings_close_click, mouse.column, mouse.row) {
                             app.show_settings = false;
+                        } else if let Some(tab) = tab_click {
+                            app.settings_select_tab(tab);
                         } else if let Some((row_idx, option)) =
                             app.settings_hit_at(mouse.column, mouse.row)
                         {
                             app.settings_selected = row_idx;
+                            app.settings_tab = AppState::settings_tab_of_row(row_idx);
                             if let Some(option_idx) = option {
                                 app.set_setting_option(row_idx, option_idx);
                             }
@@ -1569,15 +1579,18 @@ async fn run_event_loop(
                         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => {
                             app.show_settings = false;
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            if app.settings_selected + 1 < AppState::SETTINGS_ROWS {
-                                app.settings_selected += 1;
-                            }
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            app.settings_selected = app.settings_selected.saturating_sub(1);
-                        }
+                        KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
+                        KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
+                        KeyCode::Right | KeyCode::Tab => app.settings_cycle_tab(true),
+                        KeyCode::Left | KeyCode::BackTab => app.settings_cycle_tab(false),
                         KeyCode::Char(' ') | KeyCode::Enter => app.toggle_selected_setting(),
+                        // `v` toggles the tabbed/flat layout (hint shown in the bottom border).
+                        KeyCode::Char('v') => {
+                            app.settings_layout = app.settings_layout.cycle();
+                            app.settings_tab =
+                                AppState::settings_tab_of_row(app.settings_selected);
+                            app.save_state();
+                        }
                         _ => {}
                     }
                     continue;
