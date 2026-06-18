@@ -223,7 +223,7 @@ text-selection is suspended until you quit (same tradeoff as lazygit/htop).
 
 Everything actionable is clickable like a web page:
 
-- **Status-bar hints** — the whole hint ("s sort", "f by-status", "/ filter", …), not just the key. The active tags sit next to their hints and are clickable too: `⟪name ▲⟫` flips the sort direction, `[needle]` clears the name filter, `{failed}` resets the status filter. In "[ ] resize", `[` and `]` nudge the split directly. The right side shows the version, a clickable `built … ago` tag (opens the Build info modal), and clickable `, settings · ? help · q quit`.
+- **Status-bar hints** — the whole hint ("s sort", "f by-status", "/ filter", …), not just the key. While a leader menu is armed (e.g. `f`/`s`/`t`) the rest of the footer dims and goes inert, and the armed leader's own trigger gets a highlight pill so it's clear which menu is open. The active tags sit next to their hints and are clickable too: `⟪name ▲⟫` flips the sort direction, `[needle]` clears the name filter, `{failed}` resets the status filter. In "[ ] resize", `[` and `]` nudge the split directly. The right side shows the version, a clickable `built … ago` tag (opens the Build info modal), and clickable `, settings · ? help · q quit`.
 - **Modals** (settings, copy menu, confirm, diff, help) — every modal has an `[x]` close button on its top border and closes/cancels when you click anywhere outside it. Clicks inside a modal never fall through to the view behind.
 - **Settings** — click a row label to select it, or click a radio chip (`● dark`, `○ off`, …) to set that exact value.
 - **Confirm dialogs** — `[y/enter] yes` and `[n] no` are clickable.

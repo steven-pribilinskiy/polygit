@@ -2914,6 +2914,36 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         compose_status_row(row1_segments, right_version.clone(), area, area.y, &mut clickable, hint)
     };
 
+    // While a leader menu is armed (row 1 shows it), the rest of the footer recedes and goes
+    // inert — except the armed leader's own trigger, which gets a highlight pill so it's obvious
+    // which menu is open.
+    let leader_active = leader.is_some();
+    let leader_trigger = match leader {
+        Some(Leader::Filter) => Some(Command::FilterLeader),
+        Some(Leader::Sort) => Some(Command::SortLeader),
+        Some(Leader::Toggle) => Some(Command::ToggleLeader),
+        _ => None,
+    };
+    let dim_inactive = |segments: Vec<(String, Style, Option<Command>)>| {
+        if !leader_active {
+            return segments;
+        }
+        segments
+            .into_iter()
+            .map(|(text, style, command)| {
+                if command.is_some() && command == leader_trigger {
+                    (
+                        text,
+                        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        command,
+                    )
+                } else {
+                    (text, style.add_modifier(Modifier::DIM), None)
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
     // Row 2 — find & layout. Each active tag sits right after its hint and is clickable:
     // `[needle]` clears the name filter, `{status}` resets to all, `⟪column ▲⟫` flips direction.
     let mut row2_segments: Vec<(String, Style, Option<Command>)> = vec![
@@ -2975,7 +3005,14 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let row2 = if let Some(second) = toggle_lines.as_ref().filter(|lines| lines.len() > 1) {
         second[1].clone()
     } else {
-        compose_status_row(row2_segments, right_built, area, area.y + 1, &mut clickable, hint)
+        compose_status_row(
+            dim_inactive(row2_segments),
+            dim_inactive(right_built),
+            area,
+            area.y + 1,
+            &mut clickable,
+            hint,
+        )
     };
 
     // Row 3 — actions. r/R/e/E dim when they'd be a no-op. The label words are clickable too;
@@ -3014,7 +3051,14 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             (" copy".to_string(), hint, Some(Command::CopyPath)),
         ]);
     }
-    let row3 = compose_status_row(row3_segments, right_meta, area, area.y + 2, &mut clickable, hint);
+    let row3 = compose_status_row(
+        dim_inactive(row3_segments),
+        dim_inactive(right_meta),
+        area,
+        area.y + 2,
+        &mut clickable,
+        hint,
+    );
 
     app.clickable.extend(clickable);
 
