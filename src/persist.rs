@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    Background, ColumnFlags, Contrast, HelpTab, IconStyle, RepoPageColumns, RepoTabsMode,
+    Background, BranchCheck, ColumnFlags, Contrast, HelpTab, IconStyle, RepoPageColumns, RepoTabsMode,
     SelectionStyle, SettingsLayout, SortColumn, SortDir, Theme,
 };
 
@@ -93,6 +93,9 @@ pub struct PersistedState {
     /// Docked repo-panel height as a fraction of the main area (0 = use the default).
     #[serde(default)]
     pub dock_ratio: f64,
+    /// Periodic local branch/status refresh (off / auto). Default off.
+    #[serde(default)]
+    pub branch_check: BranchCheck,
 }
 
 fn default_true() -> bool {
