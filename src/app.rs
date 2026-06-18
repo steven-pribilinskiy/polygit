@@ -1900,6 +1900,8 @@ pub struct AppState {
     pub help_scroll: usize,
     /// Clickable links in the help modal: (absolute screen row, url). Rebuilt each render.
     pub help_links: Vec<(u16, String)>,
+    /// Active filter over the Hotkeys help tab (`/` to start; `Some` = filtering). Session-only.
+    pub help_filter: Option<String>,
     /// Whether the collapsible "Notes" link group in the About tab is expanded. Session-only.
     pub help_notes_expanded: bool,
     /// Screen row of the clickable "Notes" group toggle in the About tab. Rebuilt each render.
@@ -2193,6 +2195,7 @@ impl AppState {
             help_tab: persisted.help_tab,
             help_scroll: 0,
             help_links: Vec::new(),
+            help_filter: None,
             help_notes_expanded: false,
             help_notes_toggle_row: None,
             status_hint: None,

@@ -1386,6 +1386,7 @@ async fn run_event_loop(
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
                             if let Some(tab) = app.help_tab_at(mouse.column, mouse.row) {
+                                app.help_filter = None;
                                 app.help_tab = tab;
                                 app.help_scroll = 0;
                                 app.save_state();
@@ -2173,17 +2174,43 @@ async fn run_event_loop(
                             _ => {}
                         }
                     }
+                    // Hotkeys tab `/` filter: while active, keys edit the query (esc clears).
+                    if app.help_tab == app::HelpTab::Hotkeys {
+                        if app.help_filter.is_some() {
+                            match key.code {
+                                KeyCode::Esc => app.help_filter = None,
+                                KeyCode::Backspace => {
+                                    if let Some(query) = app.help_filter.as_mut() {
+                                        query.pop();
+                                    }
+                                }
+                                KeyCode::Char(ch) => {
+                                    if let Some(query) = app.help_filter.as_mut() {
+                                        query.push(ch);
+                                    }
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+                        if key.code == KeyCode::Char('/') {
+                            app.help_filter = Some(String::new());
+                            continue;
+                        }
+                    }
                     match key.code {
                         KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
                             app.show_help = false;
                         }
                         // Tab / Shift+Tab cycle help tabs; the choice is persisted so it reopens here.
                         KeyCode::Tab => {
+                            app.help_filter = None;
                             app.help_tab = app.help_tab.next();
                             app.help_scroll = 0;
                             app.save_state();
                         }
                         KeyCode::BackTab => {
+                            app.help_filter = None;
                             app.help_tab = app.help_tab.prev();
                             app.help_scroll = 0;
                             app.save_state();

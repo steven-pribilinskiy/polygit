@@ -3650,7 +3650,35 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let cli = help_items_cli(&app.cli_builder);
     let legend = help_items_legend();
     let about = help_items_about(app.help_notes_expanded);
+    // Filter the Hotkeys tab when a `/` filter is active: keep binding lines whose text matches
+    // (a leading `@` matches the keys column specifically); section headers/blanks drop out.
+    let hotkeys_filtered: Vec<(Line<'static>, Option<String>)> = match app.help_filter.as_deref() {
+        Some(query) if app.help_tab == HelpTab::Hotkeys && !query.is_empty() => {
+            let (needle, keys_only) = match query.strip_prefix('@') {
+                Some(rest) => (rest.to_lowercase(), true),
+                None => (query.to_lowercase(), false),
+            };
+            hotkeys
+                .iter()
+                .filter(|(line, _)| {
+                    // The keys column is the leading 18 display cells; the rest is the description.
+                    let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
+                    let haystack = if keys_only {
+                        text.chars().take(18).collect::<String>()
+                    } else {
+                        text.clone()
+                    };
+                    haystack.to_lowercase().contains(&needle)
+                })
+                .cloned()
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    let filtering_hotkeys =
+        app.help_tab == HelpTab::Hotkeys && app.help_filter.as_deref().is_some_and(|q| !q.is_empty());
     let items = match app.help_tab {
+        HelpTab::Hotkeys if filtering_hotkeys => &hotkeys_filtered,
         HelpTab::Hotkeys => &hotkeys,
         HelpTab::CliFlags => &cli,
         HelpTab::Legend => &legend,
@@ -3697,6 +3725,16 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         block = block.title_bottom(
             Line::from(Span::styled(format!(" {url} "), Style::default().fg(Color::DarkGray)))
                 .left_aligned(),
+        );
+    }
+    // Hotkeys filter prompt at the bottom-left (browser-style; `@` prefix matches keys).
+    if let Some(query) = app.help_filter.as_deref().filter(|_| app.help_tab == HelpTab::Hotkeys) {
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                format!(" filter: {query}\u{2588}  (prepend @ to match keys, esc clears) "),
+                Style::default().fg(Color::Cyan),
+            ))
+            .left_aligned(),
         );
     }
     let inner = block.inner(modal_area);
