@@ -1,4 +1,4 @@
-.PHONY: build install test bench clean
+.PHONY: build dev install test bench clean
 
 # Where the runnable `polygit` lives on your $PATH. Override with `make BINDIR=/some/dir`.
 BINDIR ?= $(HOME)/bin
@@ -14,7 +14,20 @@ build:
 	@cp target/release/polygit $(BINDIR)/polygit.new
 	@mv -f $(BINDIR)/polygit.new $(BINDIR)/polygit
 	@echo "→ installed on \$$PATH (atomic): $(BINDIR)/polygit"
-	@echo "✓ build complete — pull/p aliases now run the new build"
+	@echo "✓ build complete"
+
+# Fast inner-loop build: same atomic refresh+install as `build`, but via the `release-fast` profile
+# (no whole-program LTO, parallel codegen) — drops most of `build`'s link time for quick iteration.
+# Use `make build` for the fully-optimized release that ships.
+dev:
+	cargo build --profile release-fast
+	@cp target/release-fast/polygit bin/polygit
+	@echo "→ refreshed repo binary: bin/polygit (release-fast)"
+	@mkdir -p $(BINDIR)
+	@cp target/release-fast/polygit $(BINDIR)/polygit.new
+	@mv -f $(BINDIR)/polygit.new $(BINDIR)/polygit
+	@echo "→ installed on \$$PATH (atomic): $(BINDIR)/polygit"
+	@echo "✓ dev build complete (release-fast)"
 
 # `build` already builds and installs the binary onto $PATH; `install` is kept as an alias.
 install: build

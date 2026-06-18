@@ -11,7 +11,8 @@ Stack: Rust (stable) · ratatui 0.29 · crossterm 0.28 (event-stream) · tokio �
 ## Commands
 
 ```bash
-make build          # cargo build --release → bin/polygit
+make build          # cargo build --release → bin/polygit (fully optimized; ships)
+make dev            # cargo build --profile release-fast → bin/polygit (fast inner loop)
 make test           # cargo test
 make bench          # time bin/polygit --no-tui on the cwd
 cargo clippy        # lint (keep clean before committing)
@@ -22,7 +23,8 @@ cargo test <name>   # run a single test, e.g. cargo test classify_no_upstream
 - **Run the TUI:** `polygit [DIR]` (recursive by default; `--depth N` caps it, `--no-recursive`/`--depth 1` = legacy single-level). Plain streaming mode: `polygit --no-tui [DIR]` (the TUI is gated on `stderr` being a TTY — redirecting stderr forces plain mode). `-j N` / `PULL_JOBS` sets concurrency; `--timeout S` per pull.
 - **Verifying the TUI under tmux/`script`:** auto-responses from a detached harness confuse the event reader and small-width ptys can panic pre-existing clamps — drive a **real-sized** pty (e.g. python `pty.fork` + `TIOCSWINSZ` to 120×34, render with `pyte`) and set `COLORFGBG` to skip the OSC background probe. Don't trust a blank `tmux capture-pane` as "it crashed".
 - **Tests must be hermetic vs `state.json`:** `app.rs` tests run on the user's real persisted prefs — the `normalized()` test helper resets sort/filter/grouping/**tree**/collapsed sets. A manual TUI session that collapses folders/groups persists them; forgetting to reset in a new test helper makes tree/group tests fail spuriously.
-- **`make build` builds AND installs.** It compiles, refreshes the repo `bin/`, and installs the binary onto `$PATH` (`$(BINDIR)`, default `$(HOME)/bin`) via an **atomic rename** — `cp …/polygit.new && mv -f` — because a plain `cp` over a running binary fails with "Text file busy", and the rename is what the in-app new-build `↺ [reload]` watcher keys on. So after `make build`, the `pull`/`p` aliases run the new build immediately; no separate install step. `make install` is kept as a plain alias of `make build`. Override the target dir with `make BINDIR=/some/dir build`.
+- **`make build` builds AND installs.** It compiles, refreshes the repo `bin/`, and installs the binary onto `$PATH` (`$(BINDIR)`, default `$(HOME)/bin`) via an **atomic rename** — `cp …/polygit.new && mv -f` — because a plain `cp` over a running binary fails with "Text file busy", and the rename is what the in-app new-build `↺ [reload]` watcher keys on. So after `make build`, any `polygit`-on-`$PATH` invocation runs the new build immediately; no separate install step. `make install` is kept as a plain alias of `make build`. Override the target dir with `make BINDIR=/some/dir build`.
+- **`make dev` is the fast inner loop.** Same atomic refresh+install as `make build`, but via the `release-fast` Cargo profile (`inherits = "release"` but `lto = false` + `codegen-units = 16`) — drops the bulk of release's whole-program-LTO link time (~40s → ~7s incremental). Only `make build`/CI ship the fully-optimized `release` profile; use `make dev` while iterating, `make build` before tagging a release.
 - **Bump `Cargo.toml` version on every change** (patch = fix, minor = feature) — this project treats it as release-worthy.
 
 ## Architecture
