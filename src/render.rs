@@ -231,6 +231,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         }
     } else if app.repo_page.is_some() {
         if let Some(&(row, start, end, _)) =
+            app.repo_page_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
             app.repo_page_sort_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             hits.push(row_rect(row, start, end));
@@ -4502,6 +4506,9 @@ fn build_repo_page_info_lines(row: &PageRow, base_branch: Option<&str>) -> Vec<L
 
 /// Render the full-screen dedicated repo page: branches + worktrees + fresh ahead/behind.
 fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
+    let tabbed = app.repo_page_tabbed();
+    let active_tab = app.repo_page_tab;
+    let (full_branches, full_worktrees, full_stashes) = app.repo_page_section_counts();
     let rows = app.repo_page_rows();
     let Some(idx) = app.repo_page else {
         return;
@@ -4776,10 +4783,53 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     // None for headers/blanks/stash rows. The banner / fetch error render in a fixed bottom row.
     let mut items: Vec<PageItem> = Vec::new();
 
-    items.push(section_header(icons.branches, Color::Green, format!("BRANCHES ({branch_count})")));
-    let (header_line, header_cells) = column_header();
-    let header_item_index = items.len();
-    items.push((header_line, None, None));
+    // Tabbed mode: a clickable tab bar (Branches/Worktrees/Stashes) replaces the section headers,
+    // and only the active tab's rows render (rows are already filtered to it).
+    app.repo_page_tab_click.clear();
+    if tabbed {
+        let tabs = [
+            (PageRowKind::Branch, icons.branches, "Branches", full_branches),
+            (PageRowKind::Worktree, icons.worktrees, "Worktrees", full_worktrees),
+            (PageRowKind::Stash, icons.stashes, "Stashes", full_stashes),
+        ];
+        let mut spans: Vec<Span> = Vec::new();
+        let mut col = inner.x;
+        for (kind, icon, label, count) in tabs {
+            if count == 0 {
+                continue;
+            }
+            let chip = format!(" {icon} {label} ({count}) ");
+            let chip_w = UnicodeWidthStr::width(chip.as_str()) as u16;
+            let style = if kind == active_tab {
+                Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            app.repo_page_tab_click.push((inner.y, col, col + chip_w, kind));
+            spans.push(Span::styled(chip, style));
+            spans.push(Span::raw(" "));
+            col += chip_w + 1;
+        }
+        items.push((Line::from(spans), None, None));
+        items.push((Line::from(String::new()), None, None));
+    }
+
+    let render_branches = !tabbed || active_tab == PageRowKind::Branch;
+    let mut header_item_index = usize::MAX;
+    let mut header_cells: Vec<(u16, u16, RepoPageSort)> = Vec::new();
+    if render_branches {
+        if !tabbed {
+            items.push(section_header(
+                icons.branches,
+                Color::Green,
+                format!("BRANCHES ({branch_count})"),
+            ));
+        }
+        let (header_line, cells) = column_header();
+        header_cells = cells;
+        header_item_index = items.len();
+        items.push((header_line, None, None));
+    }
     for (sel_index, row) in rows.iter().enumerate() {
         if row.kind != PageRowKind::Branch {
             continue;
@@ -4816,8 +4866,14 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
 
     // Worktrees / stashes sections only appear when there's something to show.
     if worktree_count > 0 {
-        items.push((Line::from(String::new()), None, None));
-        items.push(section_header(icons.worktrees, Color::Cyan, format!("WORKTREES ({worktree_count})")));
+        if !tabbed {
+            items.push((Line::from(String::new()), None, None));
+            items.push(section_header(
+                icons.worktrees,
+                Color::Cyan,
+                format!("WORKTREES ({worktree_count})"),
+            ));
+        }
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Worktree {
                 continue;
@@ -4848,8 +4904,14 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     }
 
     if stash_count > 0 {
-        items.push((Line::from(String::new()), None, None));
-        items.push(section_header(icons.stashes, Color::Magenta, format!("STASHES ({stash_count})")));
+        if !tabbed {
+            items.push((Line::from(String::new()), None, None));
+            items.push(section_header(
+                icons.stashes,
+                Color::Magenta,
+                format!("STASHES ({stash_count})"),
+            ));
+        }
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Stash {
                 continue;
@@ -5315,7 +5377,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
     // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
     // 11 hover · 12 changed-row flash · 13 changed-row highlight (Interaction),
-    // 14 borders · 15 splitter (Layout).
+    // 14 borders · 15 splitter · 16 repo-page tabs (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5403,6 +5465,13 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             vec![
                 ("Borders", vec![("on", app.show_borders), ("off", !app.show_borders)]),
                 ("Splitter", vec![("on", app.show_splitter), ("off", !app.show_splitter)]),
+                (
+                    "Repo page tabs",
+                    vec![
+                        ("off", app.repo_page_tabs == crate::app::RepoTabsMode::Off),
+                        ("auto", app.repo_page_tabs == crate::app::RepoTabsMode::Auto),
+                    ],
+                ),
             ],
         ),
     ];
