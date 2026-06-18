@@ -85,6 +85,19 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let row_rect =
         |row: u16, start: u16, end: u16| Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 };
     let inner_row = |area: Rect| Rect { x: area.x + 1, y: hrow, width: area.width.saturating_sub(2), height: 1 };
+    // A scroll track spans the full pane width (for wheel hit-testing), so highlighting the whole
+    // track on hover tints the entire pane. Only the scrollbar column (the draggable bar) should
+    // react, and only when the pane actually overflows.
+    let scrollbar_col_hit = || -> Option<Rect> {
+        app.scroll_hits.iter().find_map(|hit| {
+            let bar_col = hit.track.x + hit.track.width.saturating_sub(1);
+            (hit.total > hit.viewport
+                && hcol == bar_col
+                && hrow >= hit.track.y
+                && hrow < hit.track.y + hit.track.height)
+                .then_some(Rect { x: bar_col, y: hit.track.y, width: 1, height: hit.track.height })
+        })
+    };
 
     // Only the foreground's OWN regions are considered — every modal/view registers click regions
     // into shared vecs, so gathering them all lets a large modal's background bleed through. The
@@ -144,9 +157,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some(scroll) =
-            app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
+            scrollbar_col_hit()
         {
-            hits.push(scroll.track);
+            hits.push(scroll);
         } else if app.diff_modal_file_at(hrow).is_some() {
             hits.push(inner_row(app.diff_modal_area));
         }
@@ -200,9 +213,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         {
             hits.push(row_rect(row, start, end));
         } else if let Some(scroll) =
-            app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
+            scrollbar_col_hit()
         {
-            hits.push(scroll.track);
+            hits.push(scroll);
         }
         // No body-row hover tint on the repo page: a full-width row following the cursor reads as
         // the whole page tinting. Only the controls above stay reactive.
@@ -228,9 +241,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         {
             hits.push(row_rect(row, start, end));
         } else if let Some(scroll) =
-            app.scroll_hits.iter().find(|sc| crate::app::point_in(sc.track, hcol, hrow))
+            scrollbar_col_hit()
         {
-            hits.push(scroll.track);
+            hits.push(scroll);
         } else if (i32::from(hcol) - i32::from(app.divider_col)).abs() <= 1
             && hrow >= app.main_area.y
             && hrow < app.main_area.y + app.main_area.height
