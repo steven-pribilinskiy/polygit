@@ -239,6 +239,13 @@
       },
       {
         "keys": [
+          "b"
+        ],
+        "action": "Toggle the repo page between full-screen and a docked bottom panel",
+        "note": "persisted; also the 'b dock' footer hint and Settings → Layout → Dock repo page"
+      },
+      {
+        "keys": [
           "i"
         ],
         "action": "Toggle the info panel above the log/diff",

@@ -492,8 +492,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     app.clickable.clear();
     app.hint_click.clear();
 
-    // The dedicated repo page is full-screen and replaces the normal layout.
-    if app.repo_page.is_some() {
+    // The dedicated repo page is full-screen and replaces the normal layout — unless the user
+    // docks it (then it falls through to render as a bottom panel below the two panes).
+    if app.repo_page.is_some() && !app.dock_repo_panel {
         render_repo_page(frame, app, area, tick);
         render_throttle_banner(frame, app, area);
         if app.confirm.is_some() {
@@ -534,8 +535,22 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         .constraints([Constraint::Min(3), Constraint::Length(3)])
         .split(area);
 
-    let main_area = vertical_chunks[0];
+    let full_main_area = vertical_chunks[0];
     let status_bar_area = vertical_chunks[1];
+
+    // Docked repo page: carve a bottom panel off the main area; the two panes share what's left.
+    let dock_area = if app.repo_page.is_some() && app.dock_repo_panel {
+        let dock_height =
+            (full_main_area.height * 9 / 20).clamp(6, full_main_area.height.saturating_sub(6));
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(dock_height)])
+            .split(full_main_area);
+        Some((split[0], split[1]))
+    } else {
+        None
+    };
+    let main_area = dock_area.map_or(full_main_area, |(top, _)| top);
 
     // Split main area horizontally using the adjustable ratio.
     let left_width = ((f64::from(main_area.width)) * app.split_ratio).round() as u16;
@@ -560,6 +575,12 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
 
     // Render right pane
     render_preview(frame, app, preview_area, tick);
+
+    // Docked repo page: render the open repo page into the bottom panel (it captures its own
+    // geometry from the area it's given, so selection/scroll/clicks work there too).
+    if let Some((_, dock)) = dock_area {
+        render_repo_page(frame, app, dock, tick);
+    }
 
     // Render status bar
     render_status_bar(frame, app, status_bar_area);
@@ -3020,6 +3041,9 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ("[ ".to_string(), key, Some(Command::SplitNarrow)),
         ("] ".to_string(), key, Some(Command::SplitWiden)),
         ("resize".to_string(), hint, None),
+        (" · ".to_string(), hint, None),
+        ("b".to_string(), key, Some(Command::ToggleDock)),
+        (" dock".to_string(), if app.dock_repo_panel { active } else { hint }, Some(Command::ToggleDock)),
     ]);
     // When the column picker wrapped to a second row, it owns row 2 — render its second line
     // there instead of the find row (whose hidden clicks must not register).
@@ -5401,7 +5425,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
     // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
     // 11 hover · 12 changed-row flash · 13 changed-row highlight (Interaction),
-    // 14 borders · 15 splitter · 16 repo-page tabs (Layout).
+    // 14 borders · 15 splitter · 16 repo-page tabs · 17 dock repo page (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5495,6 +5519,10 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                         ("off", app.repo_page_tabs == crate::app::RepoTabsMode::Off),
                         ("auto", app.repo_page_tabs == crate::app::RepoTabsMode::Auto),
                     ],
+                ),
+                (
+                    "Dock repo page",
+                    vec![("on", app.dock_repo_panel), ("off", !app.dock_repo_panel)],
                 ),
             ],
         ),

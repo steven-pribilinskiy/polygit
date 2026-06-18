@@ -438,6 +438,12 @@ fn dispatch_command(
         Cmd::ResultOverlay => {
             app.result_overlay = !app.result_overlay;
         }
+        Cmd::ToggleDock => {
+            app.dock_repo_panel = !app.dock_repo_panel;
+            let docked = app.dock_repo_panel;
+            app.show_toast(if docked { "repo page: docked" } else { "repo page: full-screen" });
+            app.save_state();
+        }
         Cmd::FocusToggle => {
             app.preview_focused = !app.preview_focused;
         }
@@ -2351,6 +2357,13 @@ async fn run_event_loop(
                     // `v` leader: arm the view-mode chord (`g` grouped · `t` tree).
                     (KeyCode::Char('v'), _) => {
                         app.pending_leader = Some(Leader::View);
+                    }
+                    // `b`: toggle the repo page between full-screen and a docked bottom panel.
+                    (KeyCode::Char('b'), _) => {
+                        app.dock_repo_panel = !app.dock_repo_panel;
+                        let docked = app.dock_repo_panel;
+                        app.show_toast(if docked { "repo page: docked" } else { "repo page: full-screen" });
+                        app.save_state();
                     }
                     // `z` leader: arm the fold chord (za/zo/zc/zO/zM/zR).
                     (KeyCode::Char('z'), _) => {

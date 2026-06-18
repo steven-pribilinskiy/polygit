@@ -956,7 +956,7 @@ impl RepoTabsMode {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 3), ("Layout", 3)];
+    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 3), ("Layout", 4)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -1156,6 +1156,8 @@ pub enum Command {
     ClearNameFilter,
     /// Toggle the Result overlay (same as Space).
     ResultOverlay,
+    /// Toggle the repo page between full-screen and a docked bottom panel (same as `b`).
+    ToggleDock,
     /// Toggle list ⇄ preview focus (same as Tab).
     FocusToggle,
     /// Narrow / widen the left pane (the clickable `[` / `]` hints).
@@ -1216,6 +1218,7 @@ impl Command {
             Command::NameFilter => "Filter repos by name (type to match)",
             Command::ClearNameFilter => "Clear the name filter",
             Command::ResultOverlay => "Show the Result / Errors summary",
+            Command::ToggleDock => "Toggle the repo page between full-screen and a docked bottom panel",
             Command::FocusToggle => "Switch focus between the list and the preview",
             Command::SplitNarrow => "Narrow the left pane",
             Command::SplitWiden => "Widen the left pane",
@@ -1917,6 +1920,8 @@ pub struct AppState {
     pub repo_page_selected: usize,
     /// Whether the repo page uses tabs for branches/worktrees/stashes (persisted).
     pub repo_page_tabs: RepoTabsMode,
+    /// Show the repo page as a docked bottom panel instead of full-screen (persisted).
+    pub dock_repo_panel: bool,
     /// The active repo-page tab (when tabbed). Session-only.
     pub repo_page_tab: RepoTab,
     /// Clickable repo-page tab chips: (row, col_start, col_end, tab). Rebuilt each render.
@@ -2179,6 +2184,7 @@ impl AppState {
             repo_page_inner: Rect::default(),
             repo_page_selected: 0,
             repo_page_tabs: persisted.repo_page_tabs,
+            dock_repo_panel: persisted.dock_repo_panel,
             repo_page_tab: RepoTab::Branches,
             repo_page_tab_click: Vec::new(),
             repo_page_focus_head: false,
@@ -2540,6 +2546,7 @@ impl AppState {
             tree_enabled: self.tree_enabled,
             collapsed_folders,
             repo_page_tabs: self.repo_page_tabs,
+            dock_repo_panel: self.dock_repo_panel,
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
             base_overrides: self.base_overrides.clone(),
@@ -2825,6 +2832,8 @@ impl AppState {
             (15, 1) => self.show_splitter = false,
             (16, 0) => self.repo_page_tabs = RepoTabsMode::Off,
             (16, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
+            (17, 0) => self.dock_repo_panel = true,
+            (17, 1) => self.dock_repo_panel = false,
             _ => return,
         }
         self.save_state();
@@ -3529,7 +3538,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 17;
+    pub const SETTINGS_ROWS: usize = 18;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -3563,6 +3572,8 @@ impl AppState {
             (15, _) => "Draw the draggable splitter grip between the panes",
             (16, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
                         sections have rows)",
+            (17, _) => "Show the repo page as a docked bottom panel instead of full-screen \
+                        (toggle with b)",
             _ => return None,
         })
     }
@@ -3656,6 +3667,7 @@ impl AppState {
             14 => self.show_borders = !self.show_borders,
             15 => self.show_splitter = !self.show_splitter,
             16 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
+            17 => self.dock_repo_panel = !self.dock_repo_panel,
             _ => {}
         }
         self.save_state();
