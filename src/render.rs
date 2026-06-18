@@ -170,8 +170,13 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.help_maximize_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.cli_copy_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
         } else if app.help_links.iter().any(|&(row, _)| row == hrow)
             || app.help_notes_toggle_row == Some(hrow)
+            || app.cli_flag_click.iter().any(|&(row, _)| row == hrow)
         {
             hits.push(inner_row(app.help_area));
         }
@@ -3174,40 +3179,89 @@ fn help_items_about(notes_expanded: bool) -> Vec<(Line<'static>, Option<String>)
     items
 }
 
-/// The content of the help modal's "CLI & Flags" tab (subcommands, flags/env, exit codes).
-/// Commands/flags get the key accent, placeholders and defaults go italic-faint.
-fn help_items_cli() -> Vec<(Line<'static>, Option<String>)> {
+/// Click sentinels carried in the CLI tab's URL slot (recognized by `render_help`).
+const CLI_FLAG_PREFIX: &str = "\u{1f}cliflag:";
+const CLI_COPY: &str = "\u{1f}clicopy";
+
+/// The help modal's "CLI & Flags" tab — an interactive command builder. Each flag is a row you
+/// toggle (boolean) or fill in (value); the constructed `polygit …` command + a `[Copy]` button
+/// sit below the exit codes. Rows carry click sentinels so `render_help` can hit-test them.
+fn help_items_cli(builder: &crate::app::CliBuilder) -> Vec<(Line<'static>, Option<String>)> {
+    use crate::app::{CliFlagKind, CLI_FLAGS};
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Cyan);
-    let meta_style =
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
+    let meta_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
+    let on_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
     let plain = |text: &str| (Line::from(text.to_string()), None);
-    // `command [placeholder]   description (default)` — the trailing parenthetical (or any
-    // `[meta]` chunk) renders italic-faint so the eye lands on the command and the meaning.
-    let entry = |command: &str, meta: &str, desc: &str, tail: &str| {
-        let mut spans = vec![Span::styled(format!("  {command}"), key_style)];
-        let pad = 31usize.saturating_sub(2 + command.len() + meta.len());
-        spans.push(Span::styled(meta.to_string(), meta_style));
-        spans.push(Span::raw(" ".repeat(pad)));
-        spans.push(Span::raw(desc.to_string()));
-        if !tail.is_empty() {
-            spans.push(Span::styled(format!(" {tail}"), meta_style));
-        }
-        (Line::from(spans), None)
-    };
 
-    items.push(header("FLAGS & ENVIRONMENT"));
-    items.push(entry("[DIR]", "", "directory to scan (recursively)", "(default: cwd)"));
-    items.push(entry("--depth N", "", "max scan depth", "(default: 16; 1 = flat)"));
-    items.push(entry("--no-recursive", "", "single-level scan", "(same as --depth 1)"));
-    items.push(entry("-j N  / PULL_JOBS=N", "", "concurrency", "(default: nproc)"));
-    items.push(entry("--timeout S / PULL_TIMEOUT=S", "", "per-pull timeout seconds", "(default: 30)"));
-    items.push(entry("--no-tui", "", "plain streaming output", "(no TUI)"));
-    items.push(entry("--no-worktrees", "", "skip worktree discovery", ""));
-    items.push(entry("--profile / PULL_PROFILE=1", "", "per-repo timing report", "(slowest first)"));
-    items.push(entry("--profile-out FILE", "", "write the profile report to FILE", ""));
+    items.push(header("BUILD A COMMAND"));
+    items.push((
+        Line::from(Span::styled(
+            "  ↑↓ move · space/enter toggle or edit · type a value, enter to set".to_string(),
+            meta_style,
+        )),
+        None,
+    ));
+    for (idx, flag) in CLI_FLAGS.iter().enumerate() {
+        let selected = idx == builder.selected;
+        let cursor = if selected { "> " } else { "  " };
+        let on = builder.on.get(idx).copied().unwrap_or(false);
+        let value = builder.values.get(idx).cloned().unwrap_or_default();
+        let editing = selected && builder.editing.is_some();
+        let mut spans = vec![Span::styled(cursor.to_string(), key_style)];
+        match flag.kind {
+            CliFlagKind::Toggle => {
+                spans.push(Span::styled(
+                    format!("{} ", if on { "[x]" } else { "[ ]" }),
+                    if on { on_style } else { meta_style },
+                ));
+                spans.push(Span::styled(format!("{:<22}", flag.flag), key_style));
+            }
+            CliFlagKind::Value(placeholder) | CliFlagKind::Positional(placeholder) => {
+                let shown = if editing {
+                    format!("{}\u{2588}", builder.editing.clone().unwrap_or_default())
+                } else if value.is_empty() {
+                    placeholder.to_string()
+                } else {
+                    value.clone()
+                };
+                let label = match flag.kind {
+                    CliFlagKind::Positional(_) => "[DIR]".to_string(),
+                    _ => flag.flag.to_string(),
+                };
+                spans.push(Span::raw("    "));
+                spans.push(Span::styled(format!("{label} "), key_style));
+                let value_style = if editing || !value.is_empty() {
+                    on_style
+                } else {
+                    meta_style
+                };
+                spans.push(Span::styled(format!("{:<18}", format!("= {shown}")), value_style));
+            }
+        }
+        spans.push(Span::styled(flag.help.to_string(), meta_style));
+        items.push((Line::from(spans), Some(format!("{CLI_FLAG_PREFIX}{idx}"))));
+    }
+    items.push(plain(""));
+
+    // The constructed command + a copy button.
+    items.push(header("COMMAND"));
+    items.push((
+        Line::from(Span::styled(
+            format!("  {}", builder.command()),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        None,
+    ));
+    items.push((
+        Line::from(Span::styled(
+            "  [ copy ]".to_string(),
+            Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD),
+        )),
+        Some(CLI_COPY.to_string()),
+    ));
     items.push(plain(""));
 
     items.push(header("EXIT CODES"));
@@ -3561,7 +3615,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     };
     // Build all tabs so the modal size stays stable when switching; show only the active one.
     let hotkeys = help_items_hotkeys(view);
-    let cli = help_items_cli();
+    let cli = help_items_cli(&app.cli_builder);
     let legend = help_items_legend();
     let about = help_items_about(app.help_notes_expanded);
     let items = match app.help_tab {
@@ -3688,11 +3742,21 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
 
     app.help_links.clear();
     app.help_notes_toggle_row = None;
+    app.cli_flag_click.clear();
+    app.cli_copy_click = None;
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, url)) in items[start..end].iter().enumerate() {
         let row = content_area.y + offset as u16;
         match url.as_deref() {
             Some(TOGGLE_NOTES) => app.help_notes_toggle_row = Some(row),
+            Some(CLI_COPY) => {
+                app.cli_copy_click = Some((row, content_area.x, content_area.x + content_area.width));
+            }
+            Some(sentinel) if sentinel.starts_with(CLI_FLAG_PREFIX) => {
+                if let Ok(idx) = sentinel[CLI_FLAG_PREFIX.len()..].parse::<usize>() {
+                    app.cli_flag_click.push((row, idx));
+                }
+            }
             Some(url) => app.help_links.push((row, url.to_string())),
             None => {}
         }

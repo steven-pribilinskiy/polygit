@@ -828,6 +828,76 @@ impl SettingsLayout {
     }
 }
 
+/// A flag in the interactive CLI builder (the help modal's "CLI & Flags" tab).
+pub enum CliFlagKind {
+    /// A boolean flag (present or absent), e.g. `--no-tui`.
+    Toggle,
+    /// A flag that takes a value, with a placeholder shown when empty, e.g. `--depth N`.
+    Value(&'static str),
+    /// The positional `[DIR]` argument.
+    Positional(&'static str),
+}
+
+pub struct CliFlag {
+    /// The flag as it appears on the command line (`--depth`, `-j`, or `` for the positional).
+    pub flag: &'static str,
+    pub kind: CliFlagKind,
+    pub help: &'static str,
+}
+
+/// The CLI builder's flag catalog, in display order. Mirrors the real clap flags.
+pub static CLI_FLAGS: &[CliFlag] = &[
+    CliFlag { flag: "", kind: CliFlagKind::Positional("DIR"), help: "directory to scan (default: cwd)" },
+    CliFlag { flag: "--depth", kind: CliFlagKind::Value("N"), help: "max scan depth (default: 16; 1 = flat)" },
+    CliFlag { flag: "--no-recursive", kind: CliFlagKind::Toggle, help: "single-level scan (same as --depth 1)" },
+    CliFlag { flag: "-j", kind: CliFlagKind::Value("N"), help: "concurrency (default: nproc)" },
+    CliFlag { flag: "--timeout", kind: CliFlagKind::Value("S"), help: "per-pull timeout seconds (default: 30)" },
+    CliFlag { flag: "--no-tui", kind: CliFlagKind::Toggle, help: "plain streaming output (no TUI)" },
+    CliFlag { flag: "--no-worktrees", kind: CliFlagKind::Toggle, help: "skip worktree discovery" },
+    CliFlag { flag: "--profile", kind: CliFlagKind::Toggle, help: "per-repo timing report (slowest first)" },
+    CliFlag { flag: "--profile-out", kind: CliFlagKind::Value("FILE"), help: "write the profile report to FILE" },
+];
+
+/// Mutable state of the interactive CLI builder: which flags are selected/edited.
+#[derive(Default)]
+pub struct CliBuilder {
+    /// Selected flag row (index into `CLI_FLAGS`).
+    pub selected: usize,
+    /// Per-flag on state (toggles) — index-aligned with `CLI_FLAGS`.
+    pub on: Vec<bool>,
+    /// Per-flag value (value flags / positional) — index-aligned with `CLI_FLAGS`.
+    pub values: Vec<String>,
+    /// When editing a value flag, the in-progress input buffer.
+    pub editing: Option<String>,
+}
+
+impl CliBuilder {
+    /// Build the `polygit …` command string from the current selections.
+    pub fn command(&self) -> String {
+        let mut parts = vec!["polygit".to_string()];
+        for (idx, flag) in CLI_FLAGS.iter().enumerate() {
+            match flag.kind {
+                CliFlagKind::Toggle => {
+                    if self.on.get(idx).copied().unwrap_or(false) {
+                        parts.push(flag.flag.to_string());
+                    }
+                }
+                CliFlagKind::Value(_) => {
+                    if let Some(value) = self.values.get(idx).filter(|value| !value.is_empty()) {
+                        parts.push(format!("{} {}", flag.flag, value));
+                    }
+                }
+                CliFlagKind::Positional(_) => {
+                    if let Some(value) = self.values.get(idx).filter(|value| !value.is_empty()) {
+                        parts.push(value.clone());
+                    }
+                }
+            }
+        }
+        parts.join(" ")
+    }
+}
+
 /// The settings sections, in global row order: `(tab label, number of rows)`. Single source of
 /// truth shared by the renderer (tab labels + which rows belong to each tab) and the navigation
 /// helpers (tab ranges). The row *data* (labels/options) is built in `render_settings`; the counts
@@ -1760,6 +1830,12 @@ pub struct AppState {
     pub help_maximized: bool,
     /// The clickable maximize/restore toggle in the help tab bar: (row, col_start, col_end).
     pub help_maximize_click: Option<(u16, u16, u16)>,
+    /// Interactive CLI-builder state (the "CLI & Flags" help tab).
+    pub cli_builder: CliBuilder,
+    /// Clickable CLI-builder flag rows: (row, flag index). Rebuilt each render.
+    pub cli_flag_click: Vec<(u16, usize)>,
+    /// The clickable `[Copy]` button in the CLI builder: (row, col_start, col_end).
+    pub cli_copy_click: Option<(u16, u16, u16)>,
     /// Clickable help-modal tab chips: (row, col_start, col_end, tab). Rebuilt each render.
     pub help_tab_click: Vec<(u16, u16, u16, HelpTab)>,
     /// The clickable `[esc]` close region in the help modal: (row, col_start, col_end).
@@ -2023,6 +2099,14 @@ impl AppState {
             status_hint: None,
             help_maximized: false,
             help_maximize_click: None,
+            cli_builder: CliBuilder {
+                selected: 0,
+                on: vec![false; CLI_FLAGS.len()],
+                values: vec![String::new(); CLI_FLAGS.len()],
+                editing: None,
+            },
+            cli_flag_click: Vec::new(),
+            cli_copy_click: None,
             help_tab_click: Vec::new(),
             help_close_click: None,
             show_keyboard: false,
@@ -4301,6 +4385,22 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_builder_command_assembles_flags() {
+        let mut builder = CliBuilder {
+            selected: 0,
+            on: vec![false; CLI_FLAGS.len()],
+            values: vec![String::new(); CLI_FLAGS.len()],
+            editing: None,
+        };
+        assert_eq!(builder.command(), "polygit");
+        // index 0 = positional DIR, 1 = --depth, 5 = --no-tui (per CLI_FLAGS order).
+        builder.values[0] = "~/projects".to_string();
+        builder.values[1] = "3".to_string();
+        builder.on[5] = true;
+        assert_eq!(builder.command(), "polygit ~/projects --depth 3 --no-tui");
+    }
 
     #[test]
     fn status_token_filter_matches_status_and_attributes() {
