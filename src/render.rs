@@ -3787,6 +3787,115 @@ fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Option<String
     items.push(swatch("muted", Color::Gray, "secondary text"));
     items.push(swatch("faint", Color::DarkGray, "tertiary text · dim zero counts"));
     items.push(swatch("bright", Color::White, "strongest text"));
+
+    // Components showcase — the reusable tui-pick primitives drawn live in every interaction state
+    // (a storybook). Buttons under both hover effects, list rows under both selection effects, and
+    // the radio glyph. All semantic-ANSI so `apply_palette` themes them with the live theme.
+    use tui_pick::components::{
+        button, list_item, radio, ButtonStyle, HoverEffect, Interaction, ListItemStyle,
+        SelectionEffect,
+    };
+    let button_style = |hover: HoverEffect| ButtonStyle {
+        label: Color::Gray,
+        accent: Color::Cyan,
+        on_accent: Color::Black,
+        disabled: Color::DarkGray,
+        hover,
+        brackets: true,
+    };
+    let list_style = |selection: SelectionEffect| ListItemStyle {
+        label: Color::Gray,
+        accent: Color::Blue,
+        on_accent: Color::White,
+        muted_bg: Color::DarkGray,
+        disabled: Color::DarkGray,
+        selection,
+    };
+    // The user's current choices, marked so the showcase doubles as a live preview of the settings.
+    let active_hover = match app.button_hover_style {
+        crate::app::ButtonHoverStyle::Inverted => HoverEffect::Inverted,
+        crate::app::ButtonHoverStyle::Subtle => HoverEffect::Subtle,
+    };
+    let active_sel = match app.selection_style {
+        crate::app::SelectionStyle::Blue => SelectionEffect::Accent,
+        crate::app::SelectionStyle::Subtle => SelectionEffect::Subtle,
+    };
+    let mark = |on: bool| if on { " ◀ active" } else { "" };
+
+    items.push((Line::from(""), None));
+    items.push((
+        Line::from(Span::styled("Components — buttons (live)".to_string(), group_style)),
+        None,
+    ));
+    items.push((
+        Line::from(Span::styled(
+            format!("  {:<11}{:<10}{:<10}", "state", "inverted", "subtle"),
+            dim,
+        )),
+        None,
+    ));
+    for state in Interaction::ALL {
+        let mut spans = vec![Span::styled(format!("  {:<11}", state.label()), dim)];
+        spans.extend(button("Save", state, &button_style(HoverEffect::Inverted)).spans);
+        spans.push(Span::raw("   "));
+        spans.extend(button("Save", state, &button_style(HoverEffect::Subtle)).spans);
+        items.push((Line::from(spans), None));
+    }
+    items.push((
+        Line::from(Span::styled(
+            format!(
+                "  hover effect: inverted{} · subtle{}",
+                mark(active_hover == HoverEffect::Inverted),
+                mark(active_hover == HoverEffect::Subtle)
+            ),
+            dim,
+        )),
+        None,
+    ));
+
+    items.push((Line::from(""), None));
+    items.push((
+        Line::from(Span::styled("Components — list rows (live)".to_string(), group_style)),
+        None,
+    ));
+    items.push((
+        Line::from(Span::styled(format!("  {:<11}{:<20}{}", "state", "blue", "subtle"), dim)),
+        None,
+    ));
+    for state in [
+        Interaction::Normal,
+        Interaction::Hover,
+        Interaction::Selected,
+        Interaction::Focused,
+        Interaction::Disabled,
+    ] {
+        let mut spans = vec![Span::styled(format!("  {:<11}", state.label()), dim)];
+        spans.extend(list_item(None, "repo-name", None, state, &list_style(SelectionEffect::Accent), 18).spans);
+        spans.push(Span::raw("  "));
+        spans.extend(list_item(None, "repo-name", None, state, &list_style(SelectionEffect::Subtle), 18).spans);
+        items.push((Line::from(spans), None));
+    }
+    items.push((
+        Line::from(Span::styled(
+            format!(
+                "  list selection: blue{} · subtle{}",
+                mark(active_sel == SelectionEffect::Accent),
+                mark(active_sel == SelectionEffect::Subtle)
+            ),
+            dim,
+        )),
+        None,
+    ));
+
+    items.push((Line::from(""), None));
+    items.push((Line::from(Span::styled("Components — radios".to_string(), group_style)), None));
+    let radio_style = button_style(active_hover);
+    let mut radio_spans = vec![Span::styled("  ".to_string(), dim)];
+    radio_spans.extend(radio("selected", true, &radio_style).spans);
+    radio_spans.push(Span::raw("   "));
+    radio_spans.extend(radio("option", false, &radio_style).spans);
+    items.push((Line::from(radio_spans), None));
+
     items
 }
 
