@@ -5850,7 +5850,7 @@ mod tests {
 
     #[test]
     fn command_applicable_tracks_context() {
-        let mut state = state_named(&["a"]);
+        let state = state_named(&["a"]);
         // Always available regardless of context.
         assert!(state.command_applicable(Command::Settings));
         assert!(state.command_applicable(Command::Help));
