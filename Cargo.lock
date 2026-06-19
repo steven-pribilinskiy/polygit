@@ -807,6 +807,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "num_cpus"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -877,7 +887,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "polygit"
-version = "2.39.0"
+version = "2.39.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -893,6 +903,7 @@ dependencies = [
  "terminal-colorsaurus",
  "tokio",
  "tokio-stream",
+ "tui-pick",
  "unicode-width 0.2.0",
 ]
 
@@ -1576,6 +1587,17 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tui-pick"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "dirs",
+ "nucleo-matcher",
+ "ratatui",
+ "unicode-width 0.2.0",
+]
 
 [[package]]
 name = "unicode-ident"

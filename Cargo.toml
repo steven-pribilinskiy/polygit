@@ -1,6 +1,13 @@
+# The repo root is BOTH the workspace root and the `polygit` binary package — so polygit's `src/`
+# stays put while the reusable widget crate lives in `tui-pick/`. Profiles live here (workspace root)
+# and apply to every member.
+[workspace]
+members = ["tui-pick"]
+resolver = "2"
+
 [package]
 name = "polygit"
-version = "2.39.0"
+version = "2.39.1"
 edition = "2024"
 
 [[bin]]
@@ -23,6 +30,7 @@ serde_json = "1"
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 terminal-colorsaurus = "1.0.3"
+tui-pick = { path = "tui-pick" }
 
 [profile.release]
 lto = true
