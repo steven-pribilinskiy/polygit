@@ -403,6 +403,7 @@ fn dispatch_command(
         Cmd::Info => {
             app.info_pinned = !app.info_pinned;
         }
+        Cmd::ToggleResultPanel => app.toggle_result_panel(),
         Cmd::Help => app.open_help(),
         Cmd::OpenPage => app.open_repo_page(),
         Cmd::ToggleLeader => {
@@ -849,6 +850,7 @@ async fn run_event_loop(
     // Whether the divider is currently being dragged with the mouse.
     let mut dragging_divider = false;
     let mut dragging_dock = false;
+    let mut dragging_preview_split = false;
     // Tracks the list selection between frames: when it changes (keyboard / Alt+wheel nav, filter
     // preview, …) the view scrolls just enough to keep it visible. The plain wheel changes only
     // `list_scroll`, not the selection, so it never triggers this — the view scrolls freely.
@@ -1125,6 +1127,29 @@ async fn run_event_loop(
                     }
                     MouseEventKind::Up(MouseButton::Left) if dragging_dock => {
                         dragging_dock = false;
+                        app.save_state();
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                // Dragging the info/result boundary inside the preview resizes the two panels (a
+                // horizontal splitter within the right pane). Only over the preview pane's columns.
+                let on_preview_split = app.preview_divider_row.is_some_and(|row| {
+                    (mouse.row == row || mouse.row + 1 == row) && mouse.column >= app.divider_col
+                });
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) if on_preview_split => {
+                        dragging_preview_split = true;
+                        app.set_preview_split_from_row(mouse.row);
+                        continue;
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) if dragging_preview_split => {
+                        app.set_preview_split_from_row(mouse.row);
+                        continue;
+                    }
+                    MouseEventKind::Up(MouseButton::Left) if dragging_preview_split => {
+                        dragging_preview_split = false;
                         app.save_state();
                         continue;
                     }
@@ -2885,6 +2910,8 @@ async fn run_event_loop(
                     (KeyCode::Char('i'), _) => {
                         app.info_pinned = !app.info_pinned;
                     }
+                    // Toggle the result/log panel (bottom of the preview); hidden, info fills it.
+                    (KeyCode::Char('I'), _) => app.toggle_result_panel(),
                     // Toggle the per-repo diff view in the right pane.
                     (KeyCode::Char('d'), _) => {
                         app.toggle_diff_view();

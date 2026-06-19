@@ -1241,6 +1241,9 @@ pub enum Command {
     Refetch,
     RefetchAll,
     Info,
+    /// Toggle the result/log panel — the bottom half of the preview pane (same as `I`). Hidden, the
+    /// info panel spans the whole pane.
+    ToggleResultPanel,
     Help,
     OpenPage,
     ToggleLeader,
@@ -1316,6 +1319,10 @@ impl Command {
             Command::Refetch => "Re-pull the selected repo (or every repo in the selected folder/group)",
             Command::RefetchAll => "Re-pull every repo from scratch",
             Command::Info => "Toggle the info panel for the selected repo",
+            Command::ToggleResultPanel => {
+                "Toggle the result/log panel (the bottom of the preview); hidden, the info panel \
+                 fills the pane"
+            }
             Command::Help => "Open the help modal (keys, flags, glyphs, about)",
             Command::OpenPage => "Open the selected repo's page: branches, worktrees, stashes",
             Command::ToggleLeader => "Choose which columns are shown",
@@ -1990,6 +1997,17 @@ pub struct AppState {
     pub max_jobs: usize,
     /// Left-pane width as a fraction of the main area (clamped MIN_SPLIT..MAX_SPLIT).
     pub split_ratio: f64,
+    /// Whether the result/log panel (the bottom half of the preview) is shown. Off → the info panel
+    /// fills the preview pane. Persisted.
+    pub show_result_panel: bool,
+    /// Info-panel height as a fraction of the preview pane when both info + result are shown
+    /// (clamped PREVIEW_SPLIT_MIN..PREVIEW_SPLIT_MAX). Persisted.
+    pub preview_split_ratio: f64,
+    /// Screen row of the info/result boundary inside the preview (the horizontal splitter), captured
+    /// each render for drag hit-testing. `None` when the pane isn't split.
+    pub preview_divider_row: Option<u16>,
+    /// The preview inner area the `preview_split_ratio` is measured against, captured each render.
+    pub preview_split_area: Rect,
     /// Docked repo-panel height as a fraction of the main area (clamped DOCK_MIN..DOCK_MAX).
     pub dock_ratio: f64,
     /// Screen row of the docked-panel top boundary (the horizontal splitter), captured each
@@ -2356,6 +2374,11 @@ impl AppState {
         } else {
             Self::DOCK_DEFAULT
         };
+        let preview_split_ratio = if persisted.preview_split_ratio >= Self::PREVIEW_SPLIT_MIN {
+            persisted.preview_split_ratio.clamp(Self::PREVIEW_SPLIT_MIN, Self::PREVIEW_SPLIT_MAX)
+        } else {
+            Self::PREVIEW_SPLIT_DEFAULT
+        };
         AppState {
             repos,
             worktrees: Vec::new(),
@@ -2375,6 +2398,10 @@ impl AppState {
             all_done: false,
             max_jobs,
             split_ratio,
+            show_result_panel: persisted.show_result_panel,
+            preview_split_ratio,
+            preview_divider_row: None,
+            preview_split_area: Rect::default(),
             dock_ratio,
             dock_divider_row: None,
             dock_full_area: Rect::default(),
@@ -2846,6 +2873,8 @@ impl AppState {
             folder_bookmarks: self.folder_bookmarks.clone(),
             info_pinned: self.info_pinned,
             split_ratio: self.split_ratio,
+            show_result_panel: self.show_result_panel,
+            preview_split_ratio: self.preview_split_ratio,
             dock_ratio: self.dock_ratio,
             panel_padding: self.panel_padding,
             icon_style: self.icon_style,
@@ -3315,6 +3344,34 @@ impl AppState {
         let below = (area.y + area.height).saturating_sub(row);
         let rel = f64::from(below) / f64::from(area.height);
         self.dock_ratio = rel.clamp(Self::DOCK_MIN, Self::DOCK_MAX);
+    }
+
+    pub const PREVIEW_SPLIT_DEFAULT: f64 = 0.4;
+    pub const PREVIEW_SPLIT_MIN: f64 = 0.2;
+    pub const PREVIEW_SPLIT_MAX: f64 = 0.8;
+
+    /// Toggle the result/log panel (the bottom of the preview). Hidden, the info panel fills the
+    /// pane (so it reads like the repo list). Persisted.
+    pub fn toggle_result_panel(&mut self) {
+        self.show_result_panel = !self.show_result_panel;
+        self.show_toast(if self.show_result_panel {
+            "result panel: shown"
+        } else {
+            "result panel: hidden"
+        });
+        self.save_state();
+    }
+
+    /// Set the info/result split ratio from an absolute screen row (drag on the boundary inside the
+    /// preview): rows *above* the boundary become the info panel.
+    pub fn set_preview_split_from_row(&mut self, row: u16) {
+        let area = self.preview_split_area;
+        if area.height == 0 {
+            return;
+        }
+        let above = row.saturating_sub(area.y);
+        let rel = f64::from(above) / f64::from(area.height);
+        self.preview_split_ratio = rel.clamp(Self::PREVIEW_SPLIT_MIN, Self::PREVIEW_SPLIT_MAX);
     }
 
     /// Map mouse coordinates to a list selection index, or None for the separator row / header /
@@ -5674,6 +5731,25 @@ mod tests {
         state.auto_pull_in_tree = false;
         state.auto_pull_suppressed = false;
         state
+    }
+
+    #[test]
+    fn result_panel_toggle_and_split_ratio() {
+        let mut state = state_named(&["a"]);
+        // Toggling flips the flag (default on → off → on).
+        let initial = state.show_result_panel;
+        state.toggle_result_panel();
+        assert_eq!(state.show_result_panel, !initial);
+        state.toggle_result_panel();
+        assert_eq!(state.show_result_panel, initial);
+        // Dragging the boundary sets the ratio from an absolute row, clamped.
+        state.preview_split_area = Rect { x: 0, y: 10, width: 40, height: 20 };
+        state.set_preview_split_from_row(20); // 10 rows above of 20 → 0.5
+        assert!((state.preview_split_ratio - 0.5).abs() < 1e-9);
+        state.set_preview_split_from_row(10); // at the top → clamps to MIN
+        assert!((state.preview_split_ratio - AppState::PREVIEW_SPLIT_MIN).abs() < 1e-9);
+        state.set_preview_split_from_row(40); // past the bottom → clamps to MAX
+        assert!((state.preview_split_ratio - AppState::PREVIEW_SPLIT_MAX).abs() < 1e-9);
     }
 
     #[test]

@@ -18,6 +18,11 @@ pub struct PersistedState {
     pub info_pinned: bool,
     /// Left/right splitter position.
     pub split_ratio: f64,
+    /// The result/log panel (bottom of the preview) was shown on last exit (defaults on).
+    #[serde(default = "default_true")]
+    pub show_result_panel: bool,
+    /// Info/result split ratio inside the preview (info-panel fraction).
+    pub preview_split_ratio: f64,
     /// 1-cell padding inside every bordered panel/modal.
     pub panel_padding: bool,
     /// Glyph set (Unicode vs emoji).

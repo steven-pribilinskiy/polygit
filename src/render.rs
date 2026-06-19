@@ -1882,24 +1882,41 @@ fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, _tick: u64)
     // Clickable info-block regions are rebuilt each frame (and only the main view captures them).
     app.info_click.clear();
 
-    // Info block (`i`): a compact info section above the log/diff, tracking the selection.
-    let area = if let (true, Some(repo_idx)) = (app.info_pinned, selected_repo) {
-        let name = app.repos[repo_idx].lock().unwrap().name.clone();
-        let info_width = area.width.saturating_sub(if app.panel_padding { 4 } else { 2 }) as usize;
-        let (lines, clicks) = build_info_lines(app, repo_idx, info_width);
-        // +2 for the border, +2 more for inner padding when the setting is on.
-        let chrome = if app.panel_padding { 4 } else { 2 };
-        // Lines are pre-wrapped, so one logical line is one row.
-        let max_info = area.height.saturating_sub(3).max(3);
-        let desired = (lines.len() as u16 + chrome).clamp(3, max_info);
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(desired), Constraint::Min(0)])
-            .split(area);
-        render_info_block(frame, app, chunks[0], format!(" {name} · info "), lines, clicks);
-        chunks[1]
-    } else {
-        area
+    // The preview pane stacks an info panel (`i`, top, repo-only) and the result/log panel (`I`,
+    // bottom). Each hides independently; with both shown a draggable boundary splits them by
+    // `preview_split_ratio`. Hidden result → info fills the pane (reads like the repo list).
+    let info_visible = app.info_pinned && selected_repo.is_some();
+    let result_visible = app.show_result_panel;
+    app.preview_divider_row = None;
+    let area = match (info_visible, result_visible) {
+        (true, true) => {
+            let repo_idx = selected_repo.unwrap();
+            let info_h = ((f64::from(area.height)) * app.preview_split_ratio).round() as u16;
+            let info_h = info_h.clamp(3, area.height.saturating_sub(3).max(3));
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(info_h), Constraint::Min(0)])
+                .split(area);
+            app.preview_split_area = area;
+            app.preview_divider_row = Some(chunks[1].y);
+            render_info_panel(frame, app, chunks[0], repo_idx);
+            chunks[1]
+        }
+        (true, false) => {
+            render_info_panel(frame, app, area, selected_repo.unwrap());
+            app.preview_total = 0;
+            app.preview_viewport = 0;
+            app.preview_scroll_area = Rect::default();
+            return;
+        }
+        (false, false) => {
+            render_preview_hidden_hint(frame, app, area);
+            app.preview_total = 0;
+            app.preview_viewport = 0;
+            app.preview_scroll_area = Rect::default();
+            return;
+        }
+        (false, true) => area,
     };
 
     let (header_text, content_lines, scroll_offset) = if show_errors {
@@ -2453,6 +2470,39 @@ fn build_info_lines(
 
 /// Render an info block (border + pre-wrapped lines + scrollbar) into `area`, and translate each
 /// clickable region's in-line columns into absolute screen rects on `app.info_click`.
+/// Render the pinned info panel for `repo_idx` into `area` (sized by the caller — full pane or the
+/// top half of a split). Clips to fit; the info content is short.
+fn render_info_panel(frame: &mut Frame, app: &mut AppState, area: Rect, repo_idx: usize) {
+    let name = app.repos[repo_idx].lock().unwrap().name.clone();
+    let info_width = area.width.saturating_sub(if app.panel_padding { 4 } else { 2 }) as usize;
+    let (lines, clicks) = build_info_lines(app, repo_idx, info_width);
+    render_info_block(frame, app, area, format!(" {name} · info "), lines, clicks);
+}
+
+/// Render the placeholder shown when the result/log panel is hidden and there's no info panel to
+/// fill the pane — a bordered box with a centered hint on how to bring the panel back.
+fn render_preview_hidden_hint(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let modal_open = app.any_modal_open();
+    let block = Block::default()
+        .title(" [2] ")
+        .title_style(pane_title_style(modal_open))
+        .borders(pane_borders(app))
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(pane_border_style(app.preview_focused, modal_open));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height >= 1 {
+        let hint = Line::from(Span::styled(
+            "result panel hidden — I to show",
+            Style::default().fg(Color::DarkGray),
+        ))
+        .centered();
+        let mid = Rect { y: inner.y + inner.height / 2, height: 1, ..inner };
+        frame.render_widget(Paragraph::new(hint), mid);
+    }
+}
+
 fn render_info_block(
     frame: &mut Frame,
     app: &mut AppState,
@@ -3432,6 +3482,13 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             (" · ".to_string(), hint, None),
             ("i".to_string(), key, Some(Command::Info)),
             (" info".to_string(), info_label, Some(Command::Info)),
+            (" · ".to_string(), hint, None),
+            ("I".to_string(), key, Some(Command::ToggleResultPanel)),
+            (
+                " log".to_string(),
+                if app.show_result_panel { active } else { hint },
+                Some(Command::ToggleResultPanel),
+            ),
             (" · ".to_string(), hint, None),
             ("d".to_string(), key, Some(Command::DiffView)),
             (" diff".to_string(), diff_label, Some(Command::DiffView)),

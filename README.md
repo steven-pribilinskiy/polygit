@@ -116,6 +116,7 @@ polygit --no-worktrees [DIR]
 | `u` | Refresh the selected repo's local git facts — branch, ahead/behind, dirty, stash (no pull) |
 | `U` | Refresh all repos' local git facts (no pull) |
 | `i` | Toggle the info panel — an additive block above the log/diff (status, branch, pull request, pulled delta, ahead/behind, remote, last commit, worktrees, changes, path) |
+| `I` | Toggle the result/log panel (the bottom of the preview). Info + result are independent panels split by a **draggable boundary**; hide the result panel and the info panel fills the pane (reads like the repo list). Clickable `I log` footer hint; persisted |
 | `d` | Toggle the per-repo diff view (working-tree changes, or the last pull's diff) |
 | `t` | Column-toggle leader: press `t` then `u`/`a`/`d`/`l`/`w`/`b`/`s`/`p`/`c` to show/hide a column (mode stays active until `Esc`) |
 | `s` | Sort leader: press `s` then `n`/`c`/`s`/`a`/`d`/`l`/`w`/`b`/`k` to sort by name / branch / status / ahead-behind / dirty / last-commit / worktrees / branches / stashes — re-pick flips `▲`/`▼` (or click a column header); the list is always sorted (Name asc by default) |

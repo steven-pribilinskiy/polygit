@@ -73,11 +73,16 @@ PULL_TIMEOUT=60 polygit ~/projects
   [columns](../../guides/columns-and-glyphs/) add ahead/behind, dirty, last-commit,
   worktree, branch, and stash counts, and a clickable column header lets you sort. With
   `z`, the list renders as named [group sections](../../guides/groups/).
-- **Right `[2]`** — a live log of the selected repo's pull output, or (with `i`) an info
-  panel, or (with `d`) the working-tree / last-pull diff.
+- **Right `[2]`** — two independent panels: an **info panel** (`i`, top) and the
+  **result/log panel** (`I`, bottom — a live log of the pull output, or with `d` the
+  working-tree / last-pull diff). When both show, a **draggable boundary** splits them
+  (set by `preview_split_ratio`); hide the result panel and the info panel fills the whole
+  pane (so it reads like the repo list). Both toggles are persisted, with clickable
+  `i info` / `I log` footer hints.
 
 `Tab` (or `1`/`2`) switches focus; the active pane shows a bright rounded border. Drag the
-divider between them (it shows a grip and highlights while dragging) or use `[` / `]`.
+divider between the panes (it shows a grip and highlights while dragging) or use `[` / `]`;
+drag the info/result boundary inside the right pane to resize the two panels.
 
 <Aside type="tip">
 Press `?` at any time for the in-app help modal — five tabs (**Hotkeys**, **CLI**,
