@@ -30,11 +30,24 @@ fn spinner_frame(tick: u64, icons: &IconSet) -> &'static str {
 }
 
 /// Border color for a main pane: a bright accent when it's the focused pane, dim otherwise.
-fn pane_border_style(active: bool) -> Style {
-    if active {
+fn pane_border_style(active: bool, modal_open: bool) -> Style {
+    if modal_open {
+        // A modal overlays the panes — recede all pane borders so the modal is the focus.
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+    } else if active {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
+    }
+}
+
+/// Title style for the main panes: dim while a modal overlays them, so the background chrome
+/// recedes. (Pane titles are plain strings, so a base `title_style` dims them wholesale.)
+fn pane_title_style(modal_open: bool) -> Style {
+    if modal_open {
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+    } else {
+        Style::default()
     }
 }
 
@@ -866,12 +879,14 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         format!(" [1] polygit · {done}/{total_repos}{concurrency} · {elapsed:.1}s ")
     };
 
+    let modal_open = app.any_modal_open();
     let block = Block::default()
         .title(title)
+        .title_style(pane_title_style(modal_open))
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(!app.preview_focused));
+        .border_style(pane_border_style(!app.preview_focused, modal_open));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -1656,12 +1671,14 @@ fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, _tick: u64)
         }
     };
 
+    let modal_open = app.any_modal_open();
     let mut block = Block::default()
         .title(format!(" [2]{header_text}"))
+        .title_style(pane_title_style(modal_open))
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(app.preview_focused));
+        .border_style(pane_border_style(app.preview_focused, modal_open));
 
     // A `⧉` copy button on the top border copies the repo's log when it has output, otherwise the
     // repo path — so it's always useful (an up-to-date repo's log is empty). Same clipboard handler
@@ -2159,12 +2176,14 @@ fn render_info_block(
     lines: Vec<Line<'static>>,
     clicks: Vec<InfoClick>,
 ) {
+    let modal_open = app.any_modal_open();
     let block = Block::default()
         .title(title)
+        .title_style(pane_title_style(modal_open))
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(app.preview_focused));
+        .border_style(pane_border_style(app.preview_focused, modal_open));
     let inner = block.inner(area);
     let total = lines.len();
     frame.render_widget(block, area);
