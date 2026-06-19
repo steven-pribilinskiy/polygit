@@ -84,8 +84,11 @@ value to cycle) above a live swatch showcase of the palette's semantic colors.
 a **General** section (panel padding, grouping, tree view), a **Theming** section (icons, theme,
 background, contrast, selection), a **Sync** section (auto-pull policy — see below), and an
 **Interaction** section (hover effects), and a **Layout** section (borders). By default it uses a **tabbed** layout (sections as
-vertical tabs — `←`/`→` or `Tab` switch, `↑`/`↓` move within a tab); press `v` to switch to a
-**flat** layout that stacks every section:
+vertical tabs — `←`/`→` or `Tab` switch, `↑`/`↓` move within a tab); press `v` to cycle the layout
+**tabbed → accordion → flat**. In the **accordion** layout every section stacks under a collapsible
+header (click a header — or `←`/`→` on the selected row's section — to fold/unfold it; a top
+`[- collapse all]` / `[+ expand all]` button folds them all at once; collapsed sections persist).
+The **flat** layout stacks every section expanded:
 
 - **Panel padding** — a 1-cell inner padding inside every bordered panel and modal.
 - **Icons** — switch the status / column / marker glyphs between the default Unicode set and

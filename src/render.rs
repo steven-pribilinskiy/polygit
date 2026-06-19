@@ -5980,11 +5980,25 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         SETTINGS_TABS.iter().map(|(_, count)| *count).max().unwrap_or(1) as u16 + 1; // +1 groups hint
     let groups_hint = usize::from(app.groups.is_empty());
 
+    let accordion = app.settings_layout == SettingsLayout::Accordion;
     let pad = if app.panel_padding { 2 } else { 0 };
     // The hint footer now lives on the bottom border, not an in-content row, so the content
     // height no longer reserves a trailing row for it.
     let (width, content_rows) = if tabbed {
         (tab_col_w + 1 + content_w, max_tab_rows.max(SETTINGS_TABS.len() as u16) + 1)
+    } else if accordion {
+        // collapse-all button + blank, then per section: a header + (expanded) its rows.
+        let mut rows = 2u16;
+        for (tab_idx, (name, count)) in SETTINGS_TABS.iter().enumerate() {
+            rows += 1;
+            if !app.settings_section_collapsed(tab_idx) {
+                rows += *count as u16;
+                if *name == "General" && app.groups.is_empty() {
+                    rows += 1;
+                }
+            }
+        }
+        (content_w.max(40), rows)
     } else {
         let row_count = all_rows.len() as u16;
         (content_w.max(40), row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16)
@@ -6010,7 +6024,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     footer.push(("enter".to_string(), key, Some(HintKey::Enter)));
     footer.push((" toggle".to_string(), hint, Some(HintKey::Enter)));
     footer.push(footer_sep());
-    footer.extend(footer_chip("v", if tabbed { " flat view" } else { " tabbed view" }, HintKey::Char('v')));
+    footer.extend(footer_chip("v", app.settings_layout.next_label(), HintKey::Char('v')));
     footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let block = Block::default()
@@ -6029,12 +6043,19 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.settings_close_click = close_click;
     app.settings_click.clear();
     app.settings_tab_click.clear();
+    app.settings_section_click.clear();
+    app.settings_collapse_all_click = None;
 
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     // Precomputed (not via `app` inside the closure, which would conflict with the closure's
     // disjoint field borrows): the Theme row's autodetect underline.
     let theme_underline = radio_underline_idx(app, 5);
     let emoji_icons = app.icon_style == crate::app::IconStyle::Emoji;
+    // Precomputed before push_row (its closure borrows app.settings_click, so a `&self` method call
+    // mid-loop would conflict): per-section collapse state for the accordion layout.
+    let section_collapsed: Vec<bool> =
+        (0..SETTINGS_TABS.len()).map(|tab_idx| app.settings_section_collapsed(tab_idx)).collect();
+    let all_collapsed = app.settings_all_collapsed();
     // A `>Label  ● value` row plus the optional "no groups" hint, given the row's left edge.
     let mut push_row = |row_idx: usize, left_x: u16, row_y: u16, out: &mut Vec<Line>| {
         let (label, options) = &all_rows[row_idx];
@@ -6099,6 +6120,46 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             ..inner
         };
         frame.render_widget(Paragraph::new(content_lines), content_area);
+    } else if accordion {
+        let mut lines: Vec<Line> = Vec::new();
+        // Expand/collapse-all button (label flips once every section is collapsed).
+        let btn_label = if all_collapsed { "[+ expand all]" } else { "[- collapse all]" };
+        let btn_y = inner.y + lines.len() as u16;
+        let btn_w = UnicodeWidthStr::width(btn_label) as u16;
+        app.settings_collapse_all_click = Some((btn_y, inner.x + 2, inner.x + 2 + btn_w));
+        lines.push(Line::from(Span::styled(
+            format!("  {btn_label}"),
+            Style::default().fg(Color::Cyan),
+        )));
+        lines.push(Line::from(String::new()));
+        let selected_section = AppState::settings_tab_of_row(app.settings_selected);
+        let mut row_idx = 0usize;
+        for (tab_idx, (name, count)) in SETTINGS_TABS.iter().enumerate() {
+            let collapsed = section_collapsed[tab_idx];
+            let chevron = if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
+            // The section owning the selection gets a cursor + brighter style so a selection hidden
+            // inside a collapsed section stays discoverable (←/→ collapse/expand it).
+            let owns_selection = tab_idx == selected_section;
+            let cursor = if owns_selection { ">" } else { " " };
+            let header = format!(" {cursor}{chevron} {name}");
+            let header_y = inner.y + lines.len() as u16;
+            let header_w = UnicodeWidthStr::width(header.as_str()) as u16;
+            app.settings_section_click.push((header_y, inner.x, inner.x + header_w, tab_idx));
+            let style = if owns_selection {
+                section_style.add_modifier(Modifier::REVERSED)
+            } else {
+                section_style
+            };
+            lines.push(Line::from(Span::styled(header, style)));
+            for _ in 0..*count {
+                if !collapsed {
+                    let row_y = inner.y + lines.len() as u16;
+                    push_row(row_idx, inner.x, row_y, &mut lines);
+                }
+                row_idx += 1;
+            }
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
     } else {
         let mut lines: Vec<Line> = Vec::new();
         if !app.panel_padding {

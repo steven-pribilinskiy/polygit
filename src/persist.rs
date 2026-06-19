@@ -35,8 +35,11 @@ pub struct PersistedState {
     /// Button hover style (reverse-video vs soft tint) for hints/tabs/chips/keys.
     #[serde(default)]
     pub button_hover_style: ButtonHoverStyle,
-    /// Settings modal layout (tabbed vs flat).
+    /// Settings modal layout (tabbed / accordion / flat).
     pub settings_layout: SettingsLayout,
+    /// Section names collapsed in the accordion settings layout.
+    #[serde(default)]
+    pub collapsed_settings: Vec<String>,
     /// Background tone (normal / soft) — surface only. `None` in pre-split state files;
     /// `resolve_background` derives it from `contrast` for backward compatibility.
     pub background: Option<Background>,
