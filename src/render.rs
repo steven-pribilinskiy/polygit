@@ -146,6 +146,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.settings_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
         }
     } else if app.show_keyboard {
         if let Some(&(_, _, _, code)) =
@@ -162,6 +166,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.keyboard_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
         }
     } else if app.show_help {
         if let Some(&(row, start, end, tab)) =
@@ -197,6 +205,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         {
             // A full-width in-text link row — a tint reads better here than reverse-video.
             hits.push(inner_row(app.help_area));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
         }
     } else if app.diff_modal.is_some() {
         if let Some((row, start, end)) =
@@ -3091,8 +3103,9 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         if tree_on || grouping_on {
             row1_segments.extend([
                 (" · ".to_string(), hint, None),
-                ("←/→".to_string(), key, None),
-                (" fold".to_string(), hint, None),
+                ("←/".to_string(), key, Some(Command::NavLeft)),
+                ("→".to_string(), key, Some(Command::NavRight)),
+                (" fold".to_string(), hint, Some(Command::NavRight)),
                 (" · ".to_string(), hint, None),
                 ("-".to_string(), key, Some(Command::FoldCollapseAll)),
                 ("/".to_string(), hint, None),
@@ -3187,10 +3200,10 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     }
     row2_segments.extend([
         (" · ".to_string(), hint, None),
-        // `[` and `]` nudge the split directly; the label stays inert.
+        // `[` narrows, `]` widens the split; the `resize` label joins the widen hotspot.
         ("[ ".to_string(), key, Some(Command::SplitNarrow)),
         ("] ".to_string(), key, Some(Command::SplitWiden)),
-        ("resize".to_string(), hint, None),
+        ("resize".to_string(), hint, Some(Command::SplitWiden)),
         (" · ".to_string(), hint, None),
         ("b".to_string(), key, Some(Command::ToggleDock)),
         (" dock".to_string(), if app.dock_repo_panel { active } else { hint }, Some(Command::ToggleDock)),
@@ -3215,13 +3228,11 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // actions (page/claude/lazygit/open/copy) are hidden entirely when no repo is selected (the
     // Result/Errors row or a header) — there's nothing for them to act on.
     let mut row3_segments: Vec<(String, Style, Option<Command>)> = vec![
-        ("e".to_string(), style_refetch_one, Some(Command::Refetch)),
-        ("/".to_string(), hint_refetch, None),
+        ("e/".to_string(), style_refetch_one, Some(Command::Refetch)),
         ("E".to_string(), style_refetch_all, Some(Command::RefetchAll)),
         (" refetch".to_string(), hint_refetch, Some(Command::RefetchAll)),
         (" · ".to_string(), hint, None),
-        ("r".to_string(), style_retry_one, Some(Command::Retry)),
-        ("/".to_string(), hint_retry, None),
+        ("r/".to_string(), style_retry_one, Some(Command::Retry)),
         ("R".to_string(), style_retry_all, Some(Command::RetryAll)),
         (" retry".to_string(), hint_retry, Some(Command::RetryAll)),
     ];
@@ -3240,10 +3251,9 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             ("o".to_string(), key, Some(Command::OpenRemote)),
             (" open".to_string(), hint, Some(Command::OpenRemote)),
             (" · ".to_string(), hint, None),
-            ("y".to_string(), key, Some(Command::CopyPath)),
-            ("/".to_string(), hint, None),
-            ("Y".to_string(), key, Some(Command::CopyRemote)),
-            (" copy".to_string(), hint, Some(Command::CopyPath)),
+            ("y/".to_string(), key, Some(Command::CopyPath)),
+            ("Y ".to_string(), key, Some(Command::CopyRemote)),
+            ("copy".to_string(), hint, Some(Command::CopyPath)),
         ]);
     }
     let row3 = compose_status_row(

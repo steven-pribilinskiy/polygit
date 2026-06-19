@@ -118,7 +118,7 @@
           "←"
         ],
         "action": "Collapse the selected header, or jump to the enclosing folder/group",
-        "note": "tree-style",
+        "note": "tree-style; also the clickable `←/` footer hint",
         "keywords": [
           "collapse",
           "fold",
@@ -131,6 +131,7 @@
           "→"
         ],
         "action": "Expand a collapsed folder/group (on its header)",
+        "note": "also the clickable `→ fold` footer hint",
         "keywords": [
           "expand",
           "unfold",

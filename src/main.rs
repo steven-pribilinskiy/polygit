@@ -505,6 +505,12 @@ fn dispatch_command(
         Cmd::NavUp => {
             app.nav_up();
         }
+        Cmd::NavLeft => {
+            app.nav_left();
+        }
+        Cmd::NavRight => {
+            app.nav_right();
+        }
         Cmd::Quit => {
             return Some(if app.all_done {
                 let failed = app
