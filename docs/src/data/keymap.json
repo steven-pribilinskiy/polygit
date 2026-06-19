@@ -422,7 +422,8 @@
         "keys": [
           "q"
         ],
-        "action": "Quit"
+        "action": "Quit",
+        "note": "with a modal open it closes the modal instead (the footer hint reads `q close`); `, settings` / `? help` / `q` stay clickable from inside any modal"
       },
       {
         "keys": [

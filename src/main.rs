@@ -1112,6 +1112,39 @@ async fn run_event_loop(
                     }
                 }
 
+                // Footer status-bar commands are clickable in every context — including over an
+                // open modal, where only settings/help/quit stay live (the rest are inert via
+                // `style_footer`, so they have no click region). `q` inside a modal closes it
+                // (injecting Esc reuses each modal's own close handler) rather than quitting.
+                if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                    let clicked = app
+                        .clickable
+                        .iter()
+                        .find(|region| {
+                            region.row == mouse.row
+                                && mouse.column >= region.col_start
+                                && mouse.column < region.col_end
+                        })
+                        .map(|region| region.command);
+                    if let Some(command) = clicked {
+                        if command == Cmd::Quit && app.any_modal_open() {
+                            synthetic_keys.push_back(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                            continue;
+                        }
+                        if let Some(code) = dispatch_command(
+                            command,
+                            &mut app,
+                            &mut retry_queue,
+                            &mut pending_claude,
+                            &mut pending_lazygit,
+                        ) {
+                            drop(app);
+                            return Ok(code);
+                        }
+                        continue;
+                    }
+                }
+
                 // Build-info modal: footer hints (`r` restart / `esc` close) are handled by the
                 // hint-click injection above; any other click dismisses it.
                 if app.show_build_info {
@@ -1481,28 +1514,9 @@ async fn run_event_loop(
                         if point_in(app.main_area, mouse.column, mouse.row) {
                             app.preview_focused = mouse.column >= app.divider_col;
                         }
-                        // A clickable status-bar command takes precedence over list/divider hits.
-                        let clicked = app
-                            .clickable
-                            .iter()
-                            .find(|region| {
-                                region.row == mouse.row
-                                    && mouse.column >= region.col_start
-                                    && mouse.column < region.col_end
-                            })
-                            .map(|region| region.command);
-                        if let Some(command) = clicked {
-                            if let Some(code) = dispatch_command(
-                                command,
-                                &mut app,
-                                &mut retry_queue,
-                                &mut pending_claude,
-                                &mut pending_lazygit,
-                            ) {
-                                drop(app);
-                                return Ok(code);
-                            }
-                        } else if let Some(column) = app.header_sort_at(mouse.column, mouse.row) {
+                        // Footer status-bar commands are handled globally above (before the modal
+                        // branches), so here we only handle the panes' own hits.
+                        if let Some(column) = app.header_sort_at(mouse.column, mouse.row) {
                             // Click a column header to sort by it (re-click flips direction).
                             app.set_sort(column);
                         } else if let Some(action) = app.info_action_at(mouse.column, mouse.row) {
