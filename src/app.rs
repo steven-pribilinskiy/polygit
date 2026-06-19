@@ -3239,13 +3239,19 @@ impl AppState {
             })
             .map(|(index, _)| index)
             .collect();
-        // The list is always sorted; a stable sort keeps discovery order among equal keys.
+        // The list is always sorted by the active column (direction-aware), then ties break by
+        // name (rel_path) ascending — always alphabetical, never discovery order, and independent
+        // of the primary direction (so `branch ▼` lists branches Z→A but each branch's repos A→Z).
         indices.sort_by(|&a, &b| {
-            let ord = self.compare_repos(a, b);
-            match self.sort_dir {
-                SortDir::Asc => ord,
-                SortDir::Desc => ord.reverse(),
-            }
+            let primary = match self.sort_dir {
+                SortDir::Asc => self.compare_repos(a, b),
+                SortDir::Desc => self.compare_repos(a, b).reverse(),
+            };
+            primary.then_with(|| {
+                let left = self.repos[a].lock().unwrap().rel_path.to_lowercase();
+                let right = self.repos[b].lock().unwrap().rel_path.to_lowercase();
+                left.cmp(&right)
+            })
         });
         indices
     }
@@ -5085,6 +5091,25 @@ mod tests {
 
         state.sort_dir = SortDir::Desc;
         assert_eq!(state.visible_indices(), vec![0, 2, 1]); // charlie, bravo, alpha
+    }
+
+    #[test]
+    fn sort_breaks_ties_by_name_ascending() {
+        // Insertion order is deliberately non-alphabetical; three share a branch, one differs.
+        let mut state = state_named(&["charlie", "alpha", "bravo", "zulu"]);
+        state.repos[0].lock().unwrap().branch = Some("dev".into()); // charlie
+        state.repos[1].lock().unwrap().branch = Some("dev".into()); // alpha
+        state.repos[2].lock().unwrap().branch = Some("dev".into()); // bravo
+        state.repos[3].lock().unwrap().branch = Some("fix".into()); // zulu
+        state.sort_column = SortColumn::Branch;
+
+        // Asc: "dev" group first, sorted by name (alpha, bravo, charlie), then "fix" (zulu).
+        state.sort_dir = SortDir::Asc;
+        assert_eq!(state.visible_indices(), vec![1, 2, 0, 3]);
+
+        // Desc: "fix" (zulu) leads, but the "dev" group's name tiebreak stays ascending.
+        state.sort_dir = SortDir::Desc;
+        assert_eq!(state.visible_indices(), vec![3, 1, 2, 0]);
     }
 
     fn diff_modal_with(statuses: &[&str]) -> DiffModal {

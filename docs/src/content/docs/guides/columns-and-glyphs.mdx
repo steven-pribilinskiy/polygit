@@ -51,7 +51,9 @@ worktrees, no stashes, or `≤1` branch everywhere) auto-hides once its data has
 
 Press `s` to enter the sort leader, then a column key — or click a column header (including
 the **branch** header). The 2-row header shows a `▲`/`▼` indicator on the active sort column.
-The list is always sorted — **Name ascending** is the default.
+The list is always sorted — **Name ascending** is the default. When sorting by any other column,
+ties break by **name (A→Z)** — so e.g. repos sharing a branch list alphabetically within that
+branch — and the name tiebreak stays ascending even when the column is sorted descending.
 
 | Key | Sort by |
 |-----|---------|
