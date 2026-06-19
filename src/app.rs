@@ -1251,6 +1251,9 @@ pub enum Command {
     /// Move the selection down / up (the clickable `j` / `k` move hints).
     NavDown,
     NavUp,
+    /// Collapse-or-jump-to-parent / expand the selected header (the clickable `←` / `→` fold hints).
+    NavLeft,
+    NavRight,
     Quit,
 }
 
@@ -1296,6 +1299,8 @@ impl Command {
             Command::ShowBuildInfo => "Show when this build was made + reload to a newer one",
             Command::NavDown => "Move the selection down",
             Command::NavUp => "Move the selection up",
+            Command::NavLeft => "Collapse the selected folder/group (or jump to its parent)",
+            Command::NavRight => "Expand the selected folder/group",
             Command::Quit => "Quit polygit",
         }
     }
