@@ -20,6 +20,29 @@
       },
       {
         "keys": [
+          "wheel"
+        ],
+        "action": "Scroll the list view (over the left pane)",
+        "note": "web-app style — the selection stays put and may scroll out of view; keyboard nav always keeps the selection on screen",
+        "keywords": [
+          "mouse",
+          "scroll"
+        ]
+      },
+      {
+        "keys": [
+          "Alt",
+          "wheel"
+        ],
+        "action": "Move the selection (over the left pane), like ↑/↓",
+        "keywords": [
+          "mouse",
+          "scroll",
+          "selection"
+        ]
+      },
+      {
+        "keys": [
           "g"
         ],
         "action": "Jump to top"

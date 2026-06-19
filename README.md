@@ -224,13 +224,15 @@ On the **Hotkeys** tab, press `/` to **filter the keybindings** (type to narrow;
 ### Mouse
 
 Click a repo row to select it (a click also **focuses** whichever pane it lands
-in, like the `1`/`2`/`Tab` keys), scroll the wheel over the left pane to move the
-selection or over the right pane to scroll the preview, click or drag the preview
-scrollbar to jump/scroll, and drag the divider between the panes to resize. Hold a
+in, like the `1`/`2`/`Tab` keys). Over the **left pane** the plain wheel **scrolls
+the list view** (web-app style — the selection stays put and may scroll out of
+view), and **`Alt`+wheel moves the selection** (like `↑`/`↓`); keyboard nav always
+scrolls just enough to keep the selection on screen. Over the **right pane** the
+wheel scrolls the preview. Click or drag the preview scrollbar to jump/scroll, and
+drag the divider between the panes to resize. On the preview/repo-page, hold a
 modifier while scrolling to go faster: **Shift** jumps 5× the normal step, **Ctrl**
-or **Alt** scrolls a full page at a time (works on the list, the preview, and the
-repo page). While the TUI is running it captures the mouse, so native terminal
-text-selection is suspended until you quit (same tradeoff as lazygit/htop).
+scrolls a full page. While the TUI is running it captures the mouse, so native
+terminal text-selection is suspended until you quit (same tradeoff as lazygit/htop).
 
 Everything actionable is clickable like a web page:
 
