@@ -422,20 +422,18 @@ fn dispatch_command(
             // Clicking the `/ filter` hint toggles: enter filter input, or exit it when already
             // filtering (dropping an empty filter so it leaves no dangling tag).
             if app.filter_input_mode {
-                app.filter_input_mode = false;
                 if app.filter.as_deref() == Some("") {
                     app.filter = None;
                 }
+                app.commit_filter_input();
             } else {
-                app.filter_input_mode = true;
-                if app.filter.is_none() {
-                    app.filter = Some(String::new());
-                }
+                app.begin_filter_input();
             }
         }
         Cmd::ClearNameFilter => {
             app.filter = None;
             app.filter_input_mode = false;
+            app.filter_prev_selection = None;
         }
         Cmd::ResultOverlay => {
             app.result_overlay = !app.result_overlay;
@@ -1644,13 +1642,8 @@ async fn run_event_loop(
                 // Filter input mode
                 if app.filter_input_mode {
                     match key.code {
-                        KeyCode::Esc => {
-                            app.filter_input_mode = false;
-                            app.filter = None;
-                        }
-                        KeyCode::Enter => {
-                            app.filter_input_mode = false;
-                        }
+                        KeyCode::Esc => app.cancel_filter_input(),
+                        KeyCode::Enter => app.commit_filter_input(),
                         KeyCode::Backspace => {
                             if let Some(ref mut filter) = app.filter {
                                 filter.pop();
@@ -1658,11 +1651,11 @@ async fn run_event_loop(
                                     app.filter = None;
                                 }
                             }
+                            app.select_first_filtered_row();
                         }
                         KeyCode::Char(ch) => {
-                            app.filter
-                                .get_or_insert_with(String::new)
-                                .push(ch);
+                            app.filter.get_or_insert_with(String::new).push(ch);
+                            app.select_first_filtered_row();
                         }
                         _ => {}
                     }
@@ -2584,12 +2577,7 @@ async fn run_event_loop(
                     }
 
                     // Filter
-                    (KeyCode::Char('/'), _) => {
-                        app.filter_input_mode = true;
-                        if app.filter.is_none() {
-                            app.filter = Some(String::new());
-                        }
-                    }
+                    (KeyCode::Char('/'), _) => app.begin_filter_input(),
 
                     // Preview scroll (when preview focused)
                     (KeyCode::PageUp, _) if app.preview_focused => {
