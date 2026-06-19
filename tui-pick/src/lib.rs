@@ -8,18 +8,24 @@
 //! - [`ranking`] — the **goto-repo-compatible** usage-history store (`~/.config/goto-repo/history`,
 //!   lines `epoch\tpath`) + sort modes (relevance / name / recent / most-used).
 //! - [`modal`] — self-contained modal helpers (centering, shadow, close button, hint footer).
+//! - [`tooltip`] — a floating-element positioning engine (placement + flip + shift), à la floating-ui.
 //! - [`style`] — themeable [`FinderStyle`]/[`PickerStyle`]; defaults use **semantic ANSI colors**
 //!   so a host that remaps the frame buffer (like polygit) themes the widgets for free.
+//! - [`components`] — presentational primitives (buttons, list rows, radios) drawn in every
+//!   interaction state, for a consistent widget vocabulary across tools.
 //!
 //! The widgets own small state structs and pure `render`/`handle_*` functions — they never depend
 //! on a host's god-object, so they drop into any ratatui app.
 
+pub mod components;
 pub mod finder;
 pub mod modal;
 pub mod picker;
 pub mod ranking;
 pub mod style;
+pub mod tooltip;
 
 pub use modal::{HintClick, HintKey};
 pub use ranking::{History, SortMode};
 pub use style::{FinderStyle, PickerStyle};
+pub use tooltip::{Align, Placement, PositionOptions, Positioned, Side, position};
