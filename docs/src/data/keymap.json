@@ -289,7 +289,7 @@
           "s"
         ],
         "action": "Sort leader",
-        "note": "then n/c/s/d (+a/l/w/b/k/p/g/r for visible columns) → name/branch/status/dirty/ahead-behind/last/worktrees/branches/stashes/pulled/changed/pull-request; the menu lists only currently-visible columns. Re-pick flips ▲▼ (or click a header); the status-bar ⟪column ▲⟫ tag is clickable too and flips direction. The list is always sorted — Name asc is the default",
+        "note": "then n/c/s/d (+a/l/w/b/k/p/g/r for visible columns) → name/branch/status/dirty/ahead-behind/last/worktrees/branches/stashes/pulled/changed/pull-request; the menu lists only currently-visible columns. Re-pick flips ▲▼ (or click a header); the status-bar ⟪column ▲⟫ tag is clickable too and flips direction. The list is always sorted — Name asc is the default; ties break by name (A→Z), regardless of the column's direction",
         "keywords": [
           "sort",
           "order",
