@@ -1031,6 +1031,33 @@ impl RepoTabsMode {
 pub const SETTINGS_TABS: &[(&str, usize)] =
     &[("Lists", 3), ("Theming", 7), ("Sync", 3), ("Interaction", 3), ("Layout", 6)];
 
+/// Every settings row's label in global row order — the single list the search filter matches
+/// against (keep in sync with the inline `sections` in `render_settings`).
+pub const SETTINGS_LABELS: [&str; 22] = [
+    "Grouping",            // 0
+    "Tree view",           // 1
+    "Hide folder lines",   // 2
+    "Icons",               // 3
+    "Hide zeros",          // 4
+    "Theme",               // 5
+    "Background",          // 6
+    "Contrast",            // 7
+    "List selection",      // 8
+    "Button hover",        // 9
+    "Auto-pull on launch", // 10
+    "Auto-pull limit",     // 11
+    "Auto-pull in tree",   // 12
+    "Hover effects",       // 13
+    "Changed-row flash",   // 14
+    "Changed-row highlight", // 15
+    "Panel padding",       // 16
+    "Borders",             // 17
+    "Splitter",            // 18
+    "Repo page tabs",      // 19
+    "Dock repo page",      // 20
+    "Auto branch-check",   // 21
+];
+
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -2199,6 +2226,13 @@ pub struct AppState {
     pub settings_selected: usize,
     /// Active settings tab (index into `SETTINGS_TABS`) in the tabbed layout.
     pub settings_tab: usize,
+    /// Settings search query (empty = no filter). When non-empty the modal shows a flat list of the
+    /// matching rows with the matched chars highlighted. Session-only (reset on open).
+    pub settings_search: String,
+    /// Whether the settings search input is focused (typing edits the query). `/` focuses it.
+    pub settings_search_focused: bool,
+    /// The clickable settings search-box region: (row, col_start, col_end). Rebuilt each render.
+    pub settings_search_click: Option<(u16, u16, u16)>,
     /// Settings modal layout (tabbed / accordion / flat). Persisted.
     pub settings_layout: SettingsLayout,
     /// Section names collapsed in the accordion settings layout. Persisted.
@@ -2495,6 +2529,9 @@ impl AppState {
             show_settings: false,
             settings_selected: 0,
             settings_tab: 0,
+            settings_search: String::new(),
+            settings_search_focused: false,
+            settings_search_click: None,
             settings_layout: persisted.settings_layout,
             collapsed_settings: persisted.collapsed_settings.into_iter().collect(),
             settings_tab_click: Vec::new(),
@@ -4470,6 +4507,18 @@ impl AppState {
     /// to the whole list in flat/accordion). In accordion mode, rows in collapsed sections are
     /// skipped. Keeps `settings_tab` in sync with the selection.
     pub fn settings_move(&mut self, delta: isize) {
+        // While searching, navigate the flat filtered list regardless of layout.
+        if !self.settings_search.is_empty() {
+            let matches = self.settings_filtered_rows();
+            if matches.is_empty() {
+                return;
+            }
+            let current = matches.iter().position(|&row| row == self.settings_selected).unwrap_or(0);
+            let next = (current as isize + delta).clamp(0, matches.len() as isize - 1) as usize;
+            self.settings_selected = matches[next];
+            self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
+            return;
+        }
         let (lo, hi) = if self.settings_layout == SettingsLayout::Tabbed {
             let (start, len) = Self::settings_tab_range(self.settings_tab);
             (start as isize, (start + len).saturating_sub(1) as isize)
@@ -4777,6 +4826,54 @@ impl AppState {
         self.close_all_modals();
         self.show_settings = true;
         self.settings_selected = 0;
+        self.settings_search.clear();
+        self.settings_search_focused = false;
+    }
+
+    /// Whether settings row `idx`'s label fuzzy-matches the current search query (always true when
+    /// the query is empty).
+    pub fn settings_row_matches(&self, idx: usize) -> bool {
+        self.settings_search.is_empty()
+            || SETTINGS_LABELS
+                .get(idx)
+                .is_some_and(|label| tui_pick::finder::fuzzy_matches(label, &self.settings_search))
+    }
+
+    /// The global row indices matching the current search query, in order.
+    pub fn settings_filtered_rows(&self) -> Vec<usize> {
+        (0..Self::SETTINGS_ROWS).filter(|&idx| self.settings_row_matches(idx)).collect()
+    }
+
+    /// Begin / refocus the settings search input.
+    pub fn settings_begin_search(&mut self) {
+        self.settings_search_focused = true;
+    }
+
+    /// Push a char into the settings search query and keep the selection on a matching row.
+    pub fn settings_search_push(&mut self, ch: char) {
+        self.settings_search.push(ch);
+        self.settings_snap_selection();
+    }
+
+    /// Backspace the settings search query.
+    pub fn settings_search_backspace(&mut self) {
+        self.settings_search.pop();
+        self.settings_snap_selection();
+    }
+
+    /// Clear the settings search (query + focus).
+    pub fn settings_clear_search(&mut self) {
+        self.settings_search.clear();
+        self.settings_search_focused = false;
+    }
+
+    /// Keep `settings_selected` on a row that matches the query (the first match if it fell out).
+    fn settings_snap_selection(&mut self) {
+        let matches = self.settings_filtered_rows();
+        if !matches.is_empty() && !matches.contains(&self.settings_selected) {
+            self.settings_selected = matches[0];
+            self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
+        }
     }
 
     /// Open the build-info modal as the only modal.
@@ -5731,6 +5828,28 @@ mod tests {
         state.auto_pull_in_tree = false;
         state.auto_pull_suppressed = false;
         state
+    }
+
+    #[test]
+    fn settings_search_filters_and_navigates() {
+        let mut state = state_named(&["a"]);
+        // No query → every row matches.
+        assert_eq!(state.settings_filtered_rows().len(), AppState::SETTINGS_ROWS);
+        // "auto" matches the four Auto-* rows (fuzzy, case-insensitive).
+        state.settings_search = "auto".to_string();
+        let matches = state.settings_filtered_rows();
+        assert!(matches.iter().all(|&idx| SETTINGS_LABELS[idx].to_lowercase().contains("auto")));
+        assert_eq!(matches.len(), 4);
+        // Navigation moves within the filtered set.
+        state.settings_selected = matches[0];
+        state.settings_move(1);
+        assert_eq!(state.settings_selected, matches[1]);
+        state.settings_move(-5); // clamps to the first match
+        assert_eq!(state.settings_selected, matches[0]);
+        // Clearing the search restores the full set.
+        state.settings_clear_search();
+        assert!(state.settings_search.is_empty());
+        assert_eq!(state.settings_filtered_rows().len(), AppState::SETTINGS_ROWS);
     }
 
     #[test]

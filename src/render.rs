@@ -166,6 +166,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.settings_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.settings_search_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
         } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
@@ -3815,7 +3819,7 @@ fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Option<String
         // row's actual screen position via the sentinel. Discard the dummy-position clicks here.
         let underline_idx = radio_underline_idx(app, row_idx);
         let line = settings_row_line(
-            row_idx, false, label, &options, (0, 0), false, underline_idx, false, &mut throwaway,
+            row_idx, false, label, &options, (0, 0), false, underline_idx, false, None, &mut throwaway,
         );
         items.push((line, Some(format!("{DESIGN_RADIO_PREFIX}{row_idx}"))));
     }
@@ -4599,6 +4603,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                         true,
                         underline_idx,
                         false,
+                        None,
                         &mut app.help_design_click,
                     );
                 }
@@ -6248,6 +6253,7 @@ fn settings_row_line(
     in_view: bool,
     underline_idx: Option<usize>,
     disabled: bool,
+    query: Option<&str>,
     clicks: &mut Vec<(u16, u16, u16, usize, Option<usize>)>,
 ) -> Line<'static> {
     let (left_x, row_y) = pos;
@@ -6261,10 +6267,20 @@ fn settings_row_line(
     } else {
         Style::default().fg(Color::Gray)
     };
-    let mut spans = vec![
-        Span::styled(format!("  {cursor}"), label_style),
-        Span::styled(format!("{label:<width$}", width = SETTINGS_LABEL_W as usize), label_style),
-    ];
+    let padded = format!("{label:<width$}", width = SETTINGS_LABEL_W as usize);
+    let mut spans = vec![Span::styled(format!("  {cursor}"), label_style)];
+    // Highlight the search-matched chars of the label (the padding stays plain).
+    match query.and_then(|query| tui_pick::finder::fuzzy_match(label, query)) {
+        Some((_, matched)) if !matched.is_empty() => {
+            let hl = label_style.fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+            let set: std::collections::HashSet<usize> = matched.into_iter().collect();
+            for (idx, ch) in padded.chars().enumerate() {
+                let style = if set.contains(&idx) { hl } else { label_style };
+                spans.push(Span::styled(ch.to_string(), style));
+            }
+        }
+        _ => spans.push(Span::styled(padded, label_style)),
+    }
     let mut col = left_x + 4;
     if in_view && !disabled {
         clicks.push((row_y, col, col + SETTINGS_LABEL_W, row_idx, None));
@@ -6462,7 +6478,12 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let pad = if app.panel_padding { 2 } else { 0 };
     // The hint footer now lives on the bottom border, not an in-content row, so the content
     // height no longer reserves a trailing row for it.
-    let (width, content_rows) = if tabbed {
+    // The search box reserves 2 rows at the top of every layout. When a query is active the body
+    // becomes a flat filtered list (one row per match + a count line), regardless of layout.
+    let search_active = !app.settings_search.is_empty();
+    let filtered_rows = app.settings_filtered_rows();
+    let search_rows = 2u16;
+    let (base_width, base_rows) = if tabbed {
         (tab_col_w + 1 + content_w, max_tab_rows.max(SETTINGS_TABS.len() as u16) + 1)
     } else if accordion {
         // collapse-all button + blank, then per section: a header + (expanded) its rows.
@@ -6480,6 +6501,11 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     } else {
         let row_count = all_rows.len() as u16;
         (content_w.max(40), row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16)
+    };
+    let (width, content_rows) = if search_active {
+        (content_w.max(40), filtered_rows.len() as u16 + 1 + search_rows)
+    } else {
+        (base_width, base_rows + search_rows)
     };
     let width = (width + 2 + pad).min(area.width.saturating_sub(2)).max(20);
     let height = (content_rows + 2 + pad).min(area.height.saturating_sub(2).max(6));
@@ -6524,6 +6550,28 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.settings_section_click.clear();
     app.settings_collapse_all_click = None;
 
+    // Search box at the top of every layout (filters rows across all tabs); `/` focuses it.
+    let full_inner = inner;
+    let cursor = if app.settings_search_focused { "\u{2588}" } else { "" };
+    let mut search_spans = vec![
+        Span::styled("Search: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{}{cursor}", app.settings_search),
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if app.settings_search.is_empty() && !app.settings_search_focused {
+        search_spans.push(Span::styled("(/ to search)", Style::default().fg(Color::DarkGray)));
+    }
+    frame.render_widget(Paragraph::new(Line::from(search_spans)), Rect { height: 1, ..full_inner });
+    app.settings_search_click = Some((full_inner.y, full_inner.x, full_inner.x + full_inner.width));
+    // The body sits below the search box (+ a blank spacer row).
+    let inner = Rect {
+        y: full_inner.y + search_rows,
+        height: full_inner.height.saturating_sub(search_rows),
+        ..full_inner
+    };
+
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     // Precomputed (not via `app` inside the closure, which would conflict with the closure's
     // disjoint field borrows): the Theme row's autodetect underline.
@@ -6550,6 +6598,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             in_view,
             underline_idx,
             disabled,
+            None,
             &mut app.settings_click,
         ));
         if *label == "Grouping" && app.groups.is_empty() {
@@ -6560,7 +6609,38 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         }
     };
 
-    if tabbed {
+    if search_active {
+        // A flat list of the matching rows with the matched chars highlighted (ignores tabs).
+        let query = app.settings_search.clone();
+        let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+            format!(
+                "  {} match{}",
+                filtered_rows.len(),
+                if filtered_rows.len() == 1 { "" } else { "es" }
+            ),
+            Style::default().fg(Color::DarkGray),
+        ))];
+        for &row_idx in &filtered_rows {
+            let (label, options) = &all_rows[row_idx];
+            let row_y = inner.y + lines.len() as u16;
+            let in_view = row_y < inner.y + inner.height;
+            let underline_idx = if row_idx == 5 { theme_underline } else { None };
+            let disabled = row_idx == 4 && emoji_icons;
+            lines.push(settings_row_line(
+                row_idx,
+                app.settings_selected == row_idx,
+                label,
+                options,
+                (inner.x, row_y),
+                in_view,
+                underline_idx,
+                disabled,
+                Some(query.as_str()),
+                &mut app.settings_click,
+            ));
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
+    } else if tabbed {
         // Left: clickable vertical tab list. Right: the active tab's rows.
         let mut tab_lines: Vec<Line> = Vec::new();
         for (tab_idx, (name, _)) in SETTINGS_TABS.iter().enumerate() {
