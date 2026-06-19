@@ -81,9 +81,10 @@ value to cycle) above a live swatch showcase of the palette's semantic colors.
 ## Settings
 
 `,` opens a small settings modal (persisted in `~/.config/polygit/state.json`), organized into
-a **General** section (panel padding, grouping, tree view), a **Theming** section (icons, theme,
-background, contrast, selection), a **Sync** section (auto-pull policy — see below), and an
-**Interaction** section (hover effects), and a **Layout** section (borders). By default it uses a **tabbed** layout (sections as
+a **Lists** section (grouping, tree view, hide folder-header lines), a **Theming** section (icons,
+theme, background, contrast, selection), a **Sync** section (auto-pull policy — see below), an
+**Interaction** section (hover effects), and a **Layout** section (panel padding, borders, splitter,
+repo-page tabs, dock, branch-check). By default it uses a **tabbed** layout (sections as
 vertical tabs — `←`/`→` or `Tab` switch, `↑`/`↓` move within a tab); press `v` to cycle the layout
 **tabbed → accordion → flat**. In the **accordion** layout every section stacks under a collapsible
 header (click a header — or `←`/`→` on the selected row's section — to fold/unfold it; a top
@@ -117,6 +118,8 @@ The **flat** layout stacks every section expanded:
   a soft tint, `inverted` is reverse-video so the hovered button reads as a solid chip. Independent
   of List selection.
 - **Grouping** — render the list as named [group sections](../../guides/groups/) (same as `z`).
+- **Hide folder lines** — drop the dim dash-fill leader lines that connect a group / folder header
+  name to its right-corner count, for a cleaner header row.
 - **Auto-pull on launch** — `on` / `off`. When off, launches never pull; the list shows cached
   status and you pull on demand (`e` / `E`).
 - **Auto-pull limit** — `50` / `100` / `250` / `∞`. Skip the launch auto-pull when more repos

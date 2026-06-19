@@ -46,6 +46,9 @@ pub struct PersistedState {
     /// Pin a "★ Favorites" section to the top of the list (default off).
     #[serde(default)]
     pub favorites_first: bool,
+    /// Hide the dash-fill leader lines in group / folder headers (default off).
+    #[serde(default)]
+    pub hide_folder_lines: bool,
     /// Background tone (normal / soft) — surface only. `None` in pre-split state files;
     /// `resolve_background` derives it from `contrast` for backward compatibility.
     pub background: Option<Background>,

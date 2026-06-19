@@ -1029,7 +1029,7 @@ impl RepoTabsMode {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 7), ("Sync", 3), ("Interaction", 3), ("Layout", 5)];
+    &[("Lists", 3), ("Theming", 7), ("Sync", 3), ("Interaction", 3), ("Layout", 6)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -2104,6 +2104,8 @@ pub struct AppState {
     pub icon_style: IconStyle,
     /// Hide zero-count cells (emoji always hides; this extends it to the Unicode set).
     pub hide_zero_counts: bool,
+    /// Hide the dash-fill leader lines in group / folder headers.
+    pub hide_folder_lines: bool,
     /// Color theme (auto = detect terminal background; dark/light = forced).
     pub theme: Theme,
     /// Contrast level for the active palette (text + accent saturation).
@@ -2375,6 +2377,7 @@ impl AppState {
             panel_padding: persisted.panel_padding,
             icon_style: persisted.icon_style,
             hide_zero_counts: persisted.hide_zero_counts,
+            hide_folder_lines: persisted.hide_folder_lines,
             theme: persisted.theme,
             contrast: persisted.contrast,
             selection_style: persisted.selection_style,
@@ -2715,6 +2718,7 @@ impl AppState {
             panel_padding: self.panel_padding,
             icon_style: self.icon_style,
             hide_zero_counts: self.hide_zero_counts,
+            hide_folder_lines: self.hide_folder_lines,
             theme: self.theme,
             contrast: self.contrast,
             selection_style: self.selection_style,
@@ -3017,9 +3021,7 @@ impl AppState {
     /// `toggle_selected_setting`, which cycles. Same row order; out-of-range pairs are a no-op.
     pub fn set_setting_option(&mut self, row_idx: usize, option_idx: usize) {
         match (row_idx, option_idx) {
-            (0, 0) => self.panel_padding = true,
-            (0, 1) => self.panel_padding = false,
-            (1, 0) | (1, 1) => {
+            (0, 0) | (0, 1) => {
                 let enable = option_idx == 0;
                 if self.grouping_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -3027,7 +3029,7 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
-            (2, 0) | (2, 1) => {
+            (1, 0) | (1, 1) => {
                 let enable = option_idx == 0;
                 if self.tree_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -3035,6 +3037,8 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
+            (2, 0) => self.hide_folder_lines = true,
+            (2, 1) => self.hide_folder_lines = false,
             (3, 0) => self.icon_style = IconStyle::Unicode,
             (3, 1) => self.icon_style = IconStyle::Emoji,
             // Hide zeros is forced on (and inert) in emoji mode — ignore clicks then.
@@ -3066,16 +3070,18 @@ impl AppState {
             (14, 1) => self.changed_row_flash = false,
             (15, 0) => self.changed_row_highlight = true,
             (15, 1) => self.changed_row_highlight = false,
-            (16, 0) => self.show_borders = true,
-            (16, 1) => self.show_borders = false,
-            (17, 0) => self.show_splitter = true,
-            (17, 1) => self.show_splitter = false,
-            (18, 0) => self.repo_page_tabs = RepoTabsMode::Off,
-            (18, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
-            (19, 0) => self.dock_repo_panel = true,
-            (19, 1) => self.dock_repo_panel = false,
-            (20, 0) => self.branch_check = BranchCheck::Off,
-            (20, 1) => self.branch_check = BranchCheck::Auto,
+            (16, 0) => self.panel_padding = true,
+            (16, 1) => self.panel_padding = false,
+            (17, 0) => self.show_borders = true,
+            (17, 1) => self.show_borders = false,
+            (18, 0) => self.show_splitter = true,
+            (18, 1) => self.show_splitter = false,
+            (19, 0) => self.repo_page_tabs = RepoTabsMode::Off,
+            (19, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
+            (20, 0) => self.dock_repo_panel = true,
+            (20, 1) => self.dock_repo_panel = false,
+            (21, 0) => self.branch_check = BranchCheck::Off,
+            (21, 1) => self.branch_check = BranchCheck::Auto,
             _ => return,
         }
         self.save_state();
@@ -3086,9 +3092,9 @@ impl AppState {
     /// value instead of being a no-op. Out-of-range rows return 0.
     pub fn settings_active_option(&self, row_idx: usize) -> usize {
         match row_idx {
-            0 => usize::from(!self.panel_padding),
-            1 => usize::from(!self.grouping_enabled),
-            2 => usize::from(!self.tree_enabled),
+            0 => usize::from(!self.grouping_enabled),
+            1 => usize::from(!self.tree_enabled),
+            2 => usize::from(!self.hide_folder_lines),
             3 => match self.icon_style {
                 IconStyle::Unicode => 0,
                 IconStyle::Emoji => 1,
@@ -3128,14 +3134,15 @@ impl AppState {
             13 => usize::from(!self.hover_effects),
             14 => usize::from(!self.changed_row_flash),
             15 => usize::from(!self.changed_row_highlight),
-            16 => usize::from(!self.show_borders),
-            17 => usize::from(!self.show_splitter),
-            18 => match self.repo_page_tabs {
+            16 => usize::from(!self.panel_padding),
+            17 => usize::from(!self.show_borders),
+            18 => usize::from(!self.show_splitter),
+            19 => match self.repo_page_tabs {
                 RepoTabsMode::Off => 0,
                 RepoTabsMode::Auto => 1,
             },
-            19 => usize::from(!self.dock_repo_panel),
-            20 => match self.branch_check {
+            20 => usize::from(!self.dock_repo_panel),
+            21 => match self.branch_check {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
             },
@@ -3972,7 +3979,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 21;
+    pub const SETTINGS_ROWS: usize = 22;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -3984,9 +3991,9 @@ impl AppState {
                  color); emoji use the font's own fixed colors"
             }
             (3, Some(1)) => "Emoji glyphs render 2 cells wide and use the font's fixed colors",
-            (0, _) => "A 1-cell inner padding inside every bordered panel and modal",
-            (1, _) => "Render the repo list as named group sections (from groups.json)",
-            (2, _) => "Render the repos as a collapsible directory tree",
+            (0, _) => "Render the repo list as named group sections (from groups.json)",
+            (1, _) => "Render the repos as a collapsible directory tree",
+            (2, _) => "Hide the dash-fill leader lines in group / folder headers",
             (3, _) => "Glyph set for statuses, columns, and markers",
             (4, _) => "Hide zero-count column cells (a dim 0 becomes blank). Emoji mode always \
                        hides them.",
@@ -4007,13 +4014,14 @@ impl AppState {
                         also marks what changed.",
             (15, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
                         also marks what changed.",
-            (16, _) => "Draw the rounded borders around the two main panes",
-            (17, _) => "Draw the draggable splitter grip between the panes",
-            (18, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
+            (16, _) => "A 1-cell inner padding inside every bordered panel and modal",
+            (17, _) => "Draw the rounded borders around the two main panes",
+            (18, _) => "Draw the draggable splitter grip between the panes",
+            (19, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
                         sections have rows)",
-            (19, _) => "Show the repo page as a docked bottom panel instead of full-screen \
+            (20, _) => "Show the repo page as a docked bottom panel instead of full-screen \
                         (toggle with b)",
-            (20, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
+            (21, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
                         scales the interval with the repo count",
             _ => return None,
         })
@@ -4159,22 +4167,24 @@ impl AppState {
     }
 
     /// Toggle/cycle the currently-selected settings row, persisting immediately.
-    /// Row order (matches `render_settings` sections): 0 padding · 1 grouping · 2 tree (General),
-    /// 3 icons · 4 theme · 5 background · 6 contrast (Theming), 7 auto-pull · 8 auto-pull limit ·
-    /// 9 auto-pull-in-tree (Sync), 10 hover effects (Mouse).
+    /// Row order (matches `render_settings` sections): 0 grouping · 1 tree · 2 hide-folder-lines
+    /// (Lists), 3 icons · 4 hide-zeros · 5 theme · 6 background · 7 contrast · 8 selection ·
+    /// 9 button-hover (Theming), 10 auto-pull · 11 limit · 12 in-tree (Sync), 13 hover · 14 flash ·
+    /// 15 highlight (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-tabs · 20 dock ·
+    /// 21 branch-check (Layout).
     pub fn toggle_selected_setting(&mut self) {
         match self.settings_selected {
-            0 => self.panel_padding = !self.panel_padding,
-            1 => {
+            0 => {
                 let prev = self.selected_repo_index();
                 self.grouping_enabled = !self.grouping_enabled;
                 self.reselect_repo(prev);
             }
-            2 => {
+            1 => {
                 let prev = self.selected_repo_index();
                 self.tree_enabled = !self.tree_enabled;
                 self.reselect_repo(prev);
             }
+            2 => self.hide_folder_lines = !self.hide_folder_lines,
             3 => {
                 self.icon_style = match self.icon_style {
                     IconStyle::Unicode => IconStyle::Emoji,
@@ -4196,11 +4206,12 @@ impl AppState {
             13 => self.hover_effects = !self.hover_effects,
             14 => self.changed_row_flash = !self.changed_row_flash,
             15 => self.changed_row_highlight = !self.changed_row_highlight,
-            16 => self.show_borders = !self.show_borders,
-            17 => self.show_splitter = !self.show_splitter,
-            18 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
-            19 => self.dock_repo_panel = !self.dock_repo_panel,
-            20 => self.branch_check = self.branch_check.cycle(),
+            16 => self.panel_padding = !self.panel_padding,
+            17 => self.show_borders = !self.show_borders,
+            18 => self.show_splitter = !self.show_splitter,
+            19 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
+            20 => self.dock_repo_panel = !self.dock_repo_panel,
+            21 => self.branch_check = self.branch_check.cycle(),
             _ => {}
         }
         self.save_state();
@@ -6246,21 +6257,22 @@ mod tests {
 
     #[test]
     fn set_setting_option_sets_exact_values() {
-        // Row order: 0 padding · 1 grouping · 2 tree · 3 icons · 4 hide-zeros · 5 theme ·
-        // 6 background · 7 contrast · 8 selection · 9 button-hover.
+        // Row order: 0 grouping · 1 tree · 2 hide-folder-lines (Lists), 3 icons · 4 hide-zeros ·
+        // 5 theme · 6 background · 7 contrast · 8 selection · 9 button-hover (Theming),
+        // 16 padding · 17 borders … 21 branch-check (Layout).
         let mut state = state_named(&["a"]);
-        state.set_setting_option(0, 1);
-        assert!(!state.panel_padding);
         state.set_setting_option(0, 0);
-        assert!(state.panel_padding);
-        state.set_setting_option(1, 0);
         assert!(state.grouping_enabled);
-        state.set_setting_option(1, 1);
+        state.set_setting_option(0, 1);
         assert!(!state.grouping_enabled);
-        state.set_setting_option(2, 0);
+        state.set_setting_option(1, 0);
         assert!(state.tree_enabled);
-        state.set_setting_option(2, 1);
+        state.set_setting_option(1, 1);
         assert!(!state.tree_enabled);
+        state.set_setting_option(2, 0);
+        assert!(state.hide_folder_lines);
+        state.set_setting_option(2, 1);
+        assert!(!state.hide_folder_lines);
         // Hide zeros (row 4) toggles with the Unicode set.
         state.set_setting_option(3, 0);
         assert_eq!(state.icon_style, IconStyle::Unicode);
@@ -6284,15 +6296,18 @@ mod tests {
         assert_eq!(state.background, Background::Normal);
         state.set_setting_option(7, 1);
         assert_eq!(state.contrast, Contrast::Soft);
-        // Button hover (Theming row 9, right after List selection): inverted / subtle.
         state.set_setting_option(9, 0);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Inverted);
         state.set_setting_option(9, 1);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Subtle);
-        // Layout rows: row 16 = borders, 20 = branch check.
+        // Layout rows: 16 = padding, 17 = borders, 21 = branch-check.
         state.set_setting_option(16, 1);
+        assert!(!state.panel_padding);
+        state.set_setting_option(16, 0);
+        assert!(state.panel_padding);
+        state.set_setting_option(17, 1);
         assert!(!state.show_borders);
-        state.set_setting_option(20, 1);
+        state.set_setting_option(21, 1);
         assert_eq!(state.branch_check, crate::app::BranchCheck::Auto);
         // Out-of-range pairs are a no-op.
         let theme = state.theme;
@@ -6336,7 +6351,7 @@ mod tests {
     #[test]
     fn settings_active_option_tracks_current_values() {
         let mut state = state_named(&["a"]);
-        // 2-radio: panel padding on → option 0, off → option 1.
+        // 2-radio: grouping (row 0) on → option 0, off → option 1.
         state.set_setting_option(0, 0);
         assert_eq!(state.settings_active_option(0), 0);
         state.set_setting_option(0, 1);
