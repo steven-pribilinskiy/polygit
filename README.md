@@ -17,7 +17,7 @@ Interactive polyrepo git dashboard. Discovers every git repo under a directory a
 - Dynamic `Errors (N)` page (after `Result`) listing each failed repo with its error output
 - **What the pull delivered**: optional **pulled** (`t p`, `⇣N` commits) and **changed** (`t c`, `±N` files) columns showing what each repo's pull landed this run; the info panel's **Pulled** row spells out the full delta — `oldsha → newsha · N commits · M files (+ins −del) · N new tags · N new branches` — and the panel re-fetches after a pull so its numbers reflect the new HEAD
 - **Optional auto-pull + status cache**: launches are useful instantly — the list is seeded from a persisted per-repo status cache (last-known status shown **dim with an age**, e.g. `up-to-date 2d`, until pulled). Auto-pull-on-launch is configurable in Settings (master on/off · a max-repos limit `50/100/250/∞` · suppress in tree view); by default it pulls small flat sets and **skips** large sets (>100) and the tree view. When auto-pull is suppressed, `E` pulls everything / `e` pulls the selected repo on demand
-- Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`e` / `E`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees)
+- Retry repos with an issue (`r` / `R`) and refetch any repo from scratch (`e` / `E`) — a refetch re-pulls **and** refreshes every cached fact (branch/dirty/stash counts, ahead/behind, worktrees). With a **folder or group header selected**, `r`/`e` act on just that section (the folder's whole subtree, recursively, or the group's members)
 - **Open PR detection** (via the `gh` CLI): when a repo's current branch has an open pull request, the info panel shows a clickable **Pull Request** row (`#N title`, with a "checked … ago" age) below the branch, and the optional **pr** column (`t r`) shows a clickable `#N` per repo. Results are **cached 5 minutes** per repo+branch (in `pr-cache.json`, each entry timestamped) so the column fills instantly on relaunch without re-hitting the network; the selected repo refreshes on focus, and a pull re-checks. Resolved in the background with bounded concurrency when the column is on; silently absent when `gh` isn't installed or there's no PR
 - Footer command hints **dim and go inert when not applicable** (never hidden) — e.g. info/diff/page/claude/lazygit/open/copy when no repo is selected, the fold + group/tree hints when there's nothing to fold. While a **modal is open** the background recedes — all pane borders + titles dim — and the whole footer goes inert except `, settings` · `? help` · `q` (which stay clickable from inside any modal), with `q` reading **`close`** (it closes the modal instead of quitting)
 - Worktree discovery (`.worktrees/*/.git`)
@@ -103,9 +103,9 @@ polygit --no-worktrees [DIR]
 | `PgUp` / `PgDn` | Scroll preview (when focused) |
 | `End` | Resume auto-scroll in preview |
 | `Enter` / double-click | Open the dedicated repo page for the selected repo (on the repo list); on a folder/collapsible group header: collapse/expand |
-| `r` | Retry selected repo if it has an issue (failed or skipped) |
+| `r` | Retry selected repo if it has an issue — or, on a folder/group header, every repo it covers |
 | `R` | Retry all repos with an issue (failed or skipped) |
-| `e` | Refetch selected repo (re-pull regardless of status, unless it's in progress) |
+| `e` | Refetch selected repo (re-pull regardless of status) — or, on a folder/group header, every repo it covers |
 | `E` | Refetch all repos that aren't currently in progress |
 | `u` | Refresh the selected repo's local git facts — branch, ahead/behind, dirty, stash (no pull) |
 | `U` | Refresh all repos' local git facts (no pull) |

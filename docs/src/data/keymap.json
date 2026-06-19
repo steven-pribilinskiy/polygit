@@ -203,7 +203,8 @@
         "keys": [
           "r"
         ],
-        "action": "Retry selected repo if it failed or was skipped"
+        "action": "Retry the selected repo if it failed or was skipped",
+        "note": "with a folder/group header selected: retry every failed/skipped repo it covers (folder subtree, recursively)"
       },
       {
         "keys": [
@@ -215,8 +216,8 @@
         "keys": [
           "e"
         ],
-        "action": "Refetch / pull selected repo",
-        "note": "re-pull regardless of status — incl. idle/cached repos when auto-pull was suppressed"
+        "action": "Refetch / pull the selected repo",
+        "note": "re-pull regardless of status — incl. idle/cached repos when auto-pull was suppressed; with a folder/group header selected, re-pulls every repo it covers (folder subtree, recursively)"
       },
       {
         "keys": [
