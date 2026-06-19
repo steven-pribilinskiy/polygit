@@ -1,0 +1,17 @@
+[package]
+name = "tui-pick"
+version = "0.1.0"
+edition = "2024"
+description = "Reusable ratatui widgets: a fzf-style fuzzy finder and a filesystem folder/repo picker, plus a goto-repo-compatible usage-ranking store. Theme-agnostic (draws in semantic ANSI colors)."
+license = "MIT"
+
+[lib]
+name = "tui_pick"
+path = "src/lib.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+unicode-width = "0.2"
+nucleo-matcher = "0.3"
+dirs = "6"
