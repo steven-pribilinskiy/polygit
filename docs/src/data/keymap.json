@@ -434,7 +434,7 @@
         "keys": [
           "/"
         ],
-        "action": "Filter repos by name (selection follows the first match; Enter keeps it)"
+        "action": "Fuzzy-filter repos by name (subsequence match, ranked by relevance; matched chars underlined; selection follows the first match, Enter keeps it)"
       },
       {
         "keys": [

@@ -808,43 +808,39 @@ fn render_scrollbar(
     frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
-/// First case-insensitive (ASCII) occurrence of `needle` in `name_chars`, as a (start, len)
-/// pair in char units. Char-based so multibyte names stay aligned.
-fn find_ci(name_chars: &[char], needle: &str) -> Option<(usize, usize)> {
-    let needle_chars: Vec<char> = needle.chars().collect();
-    if needle_chars.is_empty() || needle_chars.len() > name_chars.len() {
-        return None;
-    }
-    (0..=name_chars.len() - needle_chars.len()).find_map(|start| {
-        let matches = name_chars[start..start + needle_chars.len()]
-            .iter()
-            .zip(&needle_chars)
-            .all(|(actual, wanted)| actual.eq_ignore_ascii_case(wanted));
-        matches.then_some((start, needle_chars.len()))
-    })
-}
-
-/// Repo-name spans for the list, underlining the substring that matches the active filter.
-/// Padded with trailing spaces to `width` chars in `base` style (no truncation, as before).
+/// Repo-name spans for the list, underlining the chars that fuzzy-match the active filter (the same
+/// nucleo matcher the list uses to rank). Consecutive matched / unmatched chars merge into runs.
+/// The `@` status filter never highlights. Padded with trailing spaces to `width` chars.
 fn highlight_name(name: &str, filter: Option<&str>, base: Style, width: usize) -> Vec<Span<'static>> {
     let name_chars: Vec<char> = name.chars().collect();
     let total = name_chars.len();
     let mut spans: Vec<Span<'static>> = Vec::new();
 
-    match filter.filter(|f| !f.is_empty()).and_then(|f| find_ci(&name_chars, f)) {
-        Some((start, len)) => {
-            let before: String = name_chars[..start].iter().collect();
-            let matched: String = name_chars[start..start + len].iter().collect();
-            let after: String = name_chars[start + len..].iter().collect();
-            if !before.is_empty() {
-                spans.push(Span::styled(before, base));
+    let matched: std::collections::HashSet<usize> = filter
+        .filter(|needle| !needle.is_empty() && !needle.starts_with('@'))
+        .and_then(|needle| tui_pick::finder::fuzzy_match(name, needle).map(|(_, idx)| idx))
+        .map(|idx| idx.into_iter().collect())
+        .unwrap_or_default();
+
+    if matched.is_empty() {
+        spans.push(Span::styled(name.to_string(), base));
+    } else {
+        // Coalesce adjacent chars sharing the same matched/unmatched state into one span.
+        let mut run = String::new();
+        let mut run_matched = matched.contains(&0);
+        for (index, ch) in name_chars.iter().enumerate() {
+            let is_matched = matched.contains(&index);
+            if is_matched != run_matched && !run.is_empty() {
+                let style = if run_matched { base.add_modifier(Modifier::UNDERLINED) } else { base };
+                spans.push(Span::styled(std::mem::take(&mut run), style));
             }
-            spans.push(Span::styled(matched, base.add_modifier(Modifier::UNDERLINED)));
-            if !after.is_empty() {
-                spans.push(Span::styled(after, base));
-            }
+            run_matched = is_matched;
+            run.push(*ch);
         }
-        None => spans.push(Span::styled(name.to_string(), base)),
+        if !run.is_empty() {
+            let style = if run_matched { base.add_modifier(Modifier::UNDERLINED) } else { base };
+            spans.push(Span::styled(run, style));
+        }
     }
     if width > total {
         spans.push(Span::styled(" ".repeat(width - total), base));

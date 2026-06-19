@@ -3384,39 +3384,57 @@ impl AppState {
 
     pub fn visible_indices(&self) -> Vec<usize> {
         let filter = self.filter.as_ref().map(|filter| filter.to_lowercase());
-        let mut indices: Vec<usize> = self
+        // A non-`@` name filter ranks results by fuzzy relevance (best first) like fzf; the `@`
+        // status filter and the no-filter case keep the active column sort.
+        let name_needle = filter
+            .as_deref()
+            .filter(|needle| !needle.is_empty() && !needle.starts_with('@'));
+        // (index, fuzzy score) — score is 0 unless a name filter is ranking the results.
+        let mut scored: Vec<(usize, u32)> = self
             .repos
             .iter()
             .enumerate()
-            .filter(|(_, repo)| {
+            .filter_map(|(index, repo)| {
                 let state = repo.lock().unwrap();
-                // A leading `@` switches the name filter to a status/attribute filter.
-                let filter_ok = match filter.as_deref() {
-                    None => true,
+                if !self.status_filter.matches(&state.status) {
+                    return None;
+                }
+                match filter.as_deref() {
+                    None => Some((index, 0)),
                     Some(needle) => match needle.strip_prefix('@') {
-                        Some(token) => Self::status_token_matches(&state, token),
-                        None => state.rel_path.to_lowercase().contains(needle),
+                        Some(token) => Self::status_token_matches(&state, token).then_some((index, 0)),
+                        None => tui_pick::finder::fuzzy_match(&state.rel_path, needle)
+                            .map(|(score, _)| (index, score)),
                     },
-                };
-                filter_ok && self.status_filter.matches(&state.status)
+                }
             })
-            .map(|(index, _)| index)
             .collect();
-        // The list is always sorted by the active column (direction-aware), then ties break by
-        // name (rel_path) ascending — always alphabetical, never discovery order, and independent
-        // of the primary direction (so `branch ▼` lists branches Z→A but each branch's repos A→Z).
-        indices.sort_by(|&a, &b| {
-            let primary = match self.sort_dir {
-                SortDir::Asc => self.compare_repos(a, b),
-                SortDir::Desc => self.compare_repos(a, b).reverse(),
-            };
-            primary.then_with(|| {
-                let left = self.repos[a].lock().unwrap().rel_path.to_lowercase();
-                let right = self.repos[b].lock().unwrap().rel_path.to_lowercase();
-                left.cmp(&right)
-            })
-        });
-        indices
+        if name_needle.is_some() {
+            // Rank by fuzzy score (best first), tie-break by name ascending.
+            scored.sort_by(|&(left, left_score), &(right, right_score)| {
+                right_score.cmp(&left_score).then_with(|| {
+                    self.repos[left].lock().unwrap().rel_path.to_lowercase().cmp(
+                        &self.repos[right].lock().unwrap().rel_path.to_lowercase(),
+                    )
+                })
+            });
+        } else {
+            // The list is sorted by the active column (direction-aware), then ties break by name
+            // (rel_path) ascending — always alphabetical, never discovery order, and independent of
+            // the primary direction (so `branch ▼` lists branches Z→A but each branch's repos A→Z).
+            scored.sort_by(|&(left, _), &(right, _)| {
+                let primary = match self.sort_dir {
+                    SortDir::Asc => self.compare_repos(left, right),
+                    SortDir::Desc => self.compare_repos(left, right).reverse(),
+                };
+                primary.then_with(|| {
+                    self.repos[left].lock().unwrap().rel_path.to_lowercase().cmp(
+                        &self.repos[right].lock().unwrap().rel_path.to_lowercase(),
+                    )
+                })
+            });
+        }
+        scored.into_iter().map(|(index, _)| index).collect()
     }
 
     /// The list rows in display order — the single source of truth for the list pane. With
