@@ -4191,6 +4191,34 @@ impl HelpView {
 }
 
 /// The "Hotkeys" tab content for the current view — only the bindings that apply here.
+/// Filter help-tab items by a search `query` (case-insensitive substring). In `hotkeys_mode` the
+/// match replicates lazygit's keybinding search — the key column AND the description both match, and
+/// a leading `@` restricts the match to the key column (the leading 18 display cells). Blank rows and
+/// non-matching lines drop out.
+fn filter_help_items(
+    items: &[(Line<'static>, Option<String>)],
+    query: &str,
+    hotkeys_mode: bool,
+) -> Vec<(Line<'static>, Option<String>)> {
+    let (needle, keys_only) = match query.strip_prefix('@') {
+        Some(rest) if hotkeys_mode => (rest.to_lowercase(), true),
+        _ => (query.to_lowercase(), false),
+    };
+    items
+        .iter()
+        .filter(|(line, _)| {
+            let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
+            if text.trim().is_empty() {
+                return false;
+            }
+            let haystack =
+                if keys_only { text.chars().take(18).collect::<String>() } else { text };
+            haystack.to_lowercase().contains(&needle)
+        })
+        .cloned()
+        .collect()
+}
+
 fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<String>)> {
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let subhead_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
@@ -4400,41 +4428,24 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let legend = help_items_legend();
     let about = help_items_about(app.help_notes_expanded);
     let design = help_items_design_system(app);
-    // Filter the Hotkeys tab when a `/` filter is active: keep binding lines whose text matches
-    // (a leading `@` matches the keys column specifically); section headers/blanks drop out.
-    let hotkeys_filtered: Vec<(Line<'static>, Option<String>)> = match app.help_filter.as_deref() {
-        Some(query) if app.help_tab == HelpTab::Hotkeys && !query.is_empty() => {
-            let (needle, keys_only) = match query.strip_prefix('@') {
-                Some(rest) => (rest.to_lowercase(), true),
-                None => (query.to_lowercase(), false),
-            };
-            hotkeys
-                .iter()
-                .filter(|(line, _)| {
-                    // The keys column is the leading 18 display cells; the rest is the description.
-                    let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
-                    let haystack = if keys_only {
-                        text.chars().take(18).collect::<String>()
-                    } else {
-                        text.clone()
-                    };
-                    haystack.to_lowercase().contains(&needle)
-                })
-                .cloned()
-                .collect()
-        }
-        _ => Vec::new(),
-    };
-    let filtering_hotkeys =
-        app.help_tab == HelpTab::Hotkeys && app.help_filter.as_deref().is_some_and(|q| !q.is_empty());
-    let items = match app.help_tab {
-        HelpTab::Hotkeys if filtering_hotkeys => &hotkeys_filtered,
+    // `/` search applies to every tab: the Hotkeys tab matches like lazygit (the key column AND the
+    // description; a leading `@` restricts to keys), the others are a plain text filter over the
+    // content lines. Section headers/blanks drop out of the filtered view.
+    let unfiltered = match app.help_tab {
         HelpTab::Hotkeys => &hotkeys,
         HelpTab::CliFlags => &cli,
         HelpTab::Legend => &legend,
         HelpTab::About => &about,
         HelpTab::DesignSystem => &design,
     };
+    let filtering = app.help_filter.as_deref().is_some_and(|query| !query.is_empty());
+    let filtered: Vec<(Line<'static>, Option<String>)> = if filtering {
+        let query = app.help_filter.as_deref().unwrap_or_default();
+        filter_help_items(unfiltered, query, app.help_tab == HelpTab::Hotkeys)
+    } else {
+        Vec::new()
+    };
+    let items = if filtering { &filtered } else { unfiltered };
 
     // Size the box to the widest/tallest tab (capped to the screen) so switching doesn't resize it.
     let pad = if app.panel_padding { 2 } else { 0 };
@@ -4495,11 +4506,16 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 .right_aligned(),
         );
     }
-    // Hotkeys filter prompt at the bottom-right (browser-style; `@` prefix matches keys).
-    if let Some(query) = app.help_filter.as_deref().filter(|_| app.help_tab == HelpTab::Hotkeys) {
+    // Search prompt at the bottom-right (browser-style; on Hotkeys the `@` prefix matches keys).
+    if let Some(query) = app.help_filter.as_deref() {
+        let hint = if app.help_tab == HelpTab::Hotkeys {
+            "  (prepend @ to match keys, esc clears) "
+        } else {
+            "  (esc clears) "
+        };
         block = block.title_bottom(
             Line::from(Span::styled(
-                format!(" filter: {query}\u{2588}  (prepend @ to match keys, esc clears) "),
+                format!(" search: {query}\u{2588}{hint}"),
                 Style::default().fg(Color::Cyan),
             ))
             .right_aligned(),
@@ -7071,6 +7087,30 @@ mod tests {
         assert_eq!(count_cell_text("⎇", None), ("…".to_string(), true));
         assert_eq!(count_cell_text("⎇", Some(0)), ("⎇0".to_string(), true));
         assert_eq!(count_cell_text("⎇", Some(3)), ("⎇3".to_string(), false));
+    }
+
+    #[test]
+    fn help_search_matches_keys_and_descriptions() {
+        // The key column is the leading 18 cells; the rest is the description.
+        let items: Vec<(Line<'static>, Option<String>)> = vec![
+            (Line::from("Basics"), None), // a section header (no 'c'/'r' to avoid cross-hits)
+            (Line::from("    r / R          retry selected / all"), None),
+            (Line::from("    z              start claude in the editor"), None),
+            (Line::from(""), None), // a blank
+        ];
+        // Plain search matches description text.
+        assert_eq!(filter_help_items(&items, "claude", false).len(), 1);
+        // Plain hotkeys-mode search matches the full row (key + description).
+        assert_eq!(filter_help_items(&items, "retry", true).len(), 1);
+        // `@` (hotkeys mode) restricts the match to the key column: "claude"'s key is `z`, so
+        // `@claude` finds nothing (claude is only in the description).
+        assert!(filter_help_items(&items, "@claude", true).is_empty());
+        // `@r` matches the key column of the r/R row only.
+        assert_eq!(filter_help_items(&items, "@r", true).len(), 1);
+        // Blanks never survive a filter.
+        assert!(filter_help_items(&items, "", false).iter().all(|(line, _)| {
+            !line.spans.iter().map(|s| s.content.as_ref()).collect::<String>().trim().is_empty()
+        }));
     }
 
     #[test]
