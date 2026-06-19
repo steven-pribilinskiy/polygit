@@ -1169,6 +1169,27 @@ pub struct ClickRegion {
     pub command: Command,
 }
 
+/// A captured dwell-tooltip region: the hover hit-area, the text, the element the popup anchors to,
+/// and the preferred side (the floating engine flips/shifts to keep it on-screen). Column headers
+/// anchor to the full header cell with `bottom-start` (drop below, flipping above when cramped).
+#[derive(Debug, Clone)]
+pub struct TooltipRegion {
+    pub row: u16,
+    pub col_start: u16,
+    pub col_end: u16,
+    pub text: String,
+    pub anchor: Rect,
+    pub placement: tui_pick::Placement,
+}
+
+/// The active dwell tooltip (after the ~1s dwell): text + the element it anchors to + preferred side.
+#[derive(Debug, Clone)]
+pub struct HoverTip {
+    pub text: String,
+    pub anchor: Rect,
+    pub placement: tui_pick::Placement,
+}
+
 /// The keystroke a clickable hint stands in for. Clicking the hint injects this key, so it runs
 /// through the exact same handler as the real key press — no per-action duplication. Used by the
 /// repo-page and modal footers, which act through context-specific key matches, not `Command`.
@@ -2300,12 +2321,12 @@ pub struct AppState {
     /// Current mouse position `(col, row)` while `hover_effects` is on, else `None`. Drives the
     /// post-render hover highlight; never persisted.
     pub hover: Option<(u16, u16)>,
-    /// A footer-command tooltip `(text, anchor_col, anchor_row)`, set after dwelling ~1s on a
-    /// status-bar command; rendered as a small popup above the anchor. Never persisted.
-    pub hover_tooltip: Option<(String, u16, u16)>,
-    /// Dwell-tooltip regions captured each frame: `(row, col_start, col_end, text)`. Covers the
-    /// column headers and group/folder count tails. Hovering one ~1s shows its text.
-    pub hover_tooltips: Vec<(u16, u16, u16, String)>,
+    /// The active dwell tooltip, set after dwelling ~1s on a hoverable element; rendered as a small
+    /// popup placed by the floating engine (flip + shift). Never persisted.
+    pub hover_tooltip: Option<HoverTip>,
+    /// Dwell-tooltip regions captured each frame. Covers status-bar commands (via [`Self::command_at`]),
+    /// the column headers, and group/folder count tails. Hovering one ~1s shows its text.
+    pub hover_tooltips: Vec<TooltipRegion>,
     /// Set once discovery completes and the launch decision skipped pulling — the run is then
     /// "settled" without any repo being pulled, and the footer offers a manual pull-everything.
     pub auto_pull_suppressed: bool,
@@ -4593,12 +4614,13 @@ impl AppState {
             .map(|region| region.command)
     }
 
-    /// The dwell-tooltip text for a captured region (column header / group-count tail) at a point.
-    pub fn tooltip_at(&self, col: u16, row: u16) -> Option<String> {
+    /// The dwell tooltip for a captured region (column header / group-count tail) at a point: its
+    /// text, the element to anchor the popup to, and the preferred side.
+    pub fn tooltip_at(&self, col: u16, row: u16) -> Option<(String, Rect, tui_pick::Placement)> {
         self.hover_tooltips
             .iter()
-            .find(|(tip_row, start, end, _)| *tip_row == row && col >= *start && col < *end)
-            .map(|(.., text)| text.clone())
+            .find(|region| region.row == row && col >= region.col_start && col < region.col_end)
+            .map(|region| (region.text.clone(), region.anchor, region.placement))
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {

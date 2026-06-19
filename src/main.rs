@@ -31,6 +31,7 @@ use crossterm::terminal::{
     LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use app::{
@@ -351,6 +352,16 @@ fn pop_key_enhancement(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
 /// Apply a command triggered by key OR by clicking its status-bar hint. Returns
 /// `Some(exit_code)` when the command should quit the app. `pending_claude`/`pending_lazygit`
 /// are the event loop's suspend-to-launch slots (picked up at the top of the next iteration).
+/// A cursor-anchored dwell tooltip (a 1×1 anchor at the cursor, preferring to sit above it). Used
+/// for settings rows, help links, and footer commands; column headers carry their own anchor/side.
+fn cursor_tip(cursor: Option<(u16, u16)>, text: String) -> Option<app::HoverTip> {
+    cursor.map(|(col, row)| app::HoverTip {
+        text,
+        anchor: Rect { x: col, y: row, width: 1, height: 1 },
+        placement: tui_pick::Placement::top_center(),
+    })
+}
+
 fn dispatch_command(
     command: Cmd,
     app: &mut AppState,
@@ -1025,23 +1036,33 @@ async fn run_event_loop(
             } else {
                 None
             };
-            let dwell_text: Option<String> = settings_tip
-                .or(help_url)
-                .or_else(|| app.hover.and_then(|(col, row)| app.tooltip_at(col, row)))
+            // Cursor-anchored tips (settings rows, help links, footer commands) sit above the
+            // cursor; column-header / count-tail tips carry their own anchor + side (below the
+            // header). The floating engine flips/shifts each to stay on-screen.
+            let cursor = app.hover;
+            let dwell: Option<app::HoverTip> = settings_tip
+                .and_then(|tip| cursor_tip(cursor, tip))
+                .or_else(|| help_url.and_then(|url| cursor_tip(cursor, url)))
                 .or_else(|| {
-                    app.hover
+                    cursor
+                        .and_then(|(col, row)| app.tooltip_at(col, row))
+                        .map(|(text, anchor, placement)| app::HoverTip { text, anchor, placement })
+                })
+                .or_else(|| {
+                    cursor
                         .and_then(|(col, row)| app.command_at(col, row))
-                        .map(|cmd| cmd.tooltip().to_string())
+                        .and_then(|cmd| cursor_tip(cursor, cmd.tooltip().to_string()))
                 });
+            let dwell_text = dwell.as_ref().map(|tip| tip.text.clone());
             if dwell_text != hover_dwell_text {
-                hover_dwell_text = dwell_text.clone();
+                hover_dwell_text = dwell_text;
                 hover_dwell_since = Instant::now();
                 app.hover_tooltip = None;
-            } else if let (Some(text), Some((col, row))) = (dwell_text, app.hover) {
+            } else if let Some(tip) = dwell {
                 if app.hover_tooltip.is_none()
                     && hover_dwell_since.elapsed() >= Duration::from_millis(1000)
                 {
-                    app.hover_tooltip = Some((text, col, row));
+                    app.hover_tooltip = Some(tip);
                 }
             }
             // Periodic local branch/status refresh (no pull) when enabled — interval scales with

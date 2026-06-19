@@ -520,26 +520,31 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
     apply_hover(frame, app, &palette);
 }
 
-/// Render the footer-command tooltip (a small bordered popup above the hovered status-bar hint),
-/// when one has been set after a dwell. Drawn before the palette pass so its semantic colors remap.
+/// Render the active dwell tooltip (a small bordered popup), placed by the floating engine relative
+/// to its anchor — flipping to the opposite side and shifting along the cross axis to stay on-screen
+/// (e.g. a column header drops below, flipping above when cramped). Drawn before the palette pass so
+/// its semantic colors remap.
 fn render_tooltip(frame: &mut Frame, app: &AppState) {
-    let Some((text, anchor_col, anchor_row)) = app.hover_tooltip.as_ref() else {
+    let Some(tip) = app.hover_tooltip.as_ref() else {
         return;
     };
-    let (anchor_col, anchor_row) = (*anchor_col, *anchor_row);
     let area = frame.area();
     if area.width < 6 || area.height < 3 {
         return;
     }
-    let text_width = UnicodeWidthStr::width(text.as_str()) as u16;
+    let text_width = UnicodeWidthStr::width(tip.text.as_str()) as u16;
     // border (2) + 1-cell horizontal padding (2) around the text.
     let width = (text_width + 4).min(area.width);
     let height = 3;
-    // Sit above the anchor (footer hints live at the bottom); clamp into the screen.
-    let y = anchor_row.saturating_sub(height).max(area.y);
-    let max_x = (area.x + area.width).saturating_sub(width);
-    let x = anchor_col.min(max_x);
-    let rect = Rect { x, y, width, height };
+    let rect = tui_pick::position(
+        tip.anchor,
+        (width, height),
+        area,
+        tip.placement,
+        tui_pick::PositionOptions { offset: 0, flip: true, shift: true },
+    )
+    .rect;
+    let text = &tip.text;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -1341,13 +1346,18 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     // Dwell tooltips for the column-header titles (the underline row is left bare).
     if header_height > 0 {
         let title_row = app.header_area.y;
+        let header = app.header_area;
         for &(start, end, sort) in &app.header_click {
-            app.hover_tooltips.push((
-                title_row,
-                start,
-                end,
-                column_header_tooltip(sort).to_string(),
-            ));
+            app.hover_tooltips.push(crate::app::TooltipRegion {
+                row: title_row,
+                col_start: start,
+                col_end: end,
+                text: column_header_tooltip(sort).to_string(),
+                // Anchor to the full-height header cell so the popup drops below the whole header,
+                // left-aligned to the column, flipping above when there's no room below.
+                anchor: Rect { x: start, y: header.y, width: end.saturating_sub(start), height: header.height },
+                placement: tui_pick::Placement::bottom_start(),
+            });
         }
     }
 
@@ -1446,7 +1456,14 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
                 let screen_row = rows_area.y + visible as u16;
                 let start = end.saturating_sub(tail_w as u16);
                 let text = header_tail_tooltip(app, &repos, total, noun);
-                app.hover_tooltips.push((screen_row, start, end, text));
+                app.hover_tooltips.push(crate::app::TooltipRegion {
+                    row: screen_row,
+                    col_start: start,
+                    col_end: end,
+                    text,
+                    anchor: Rect { x: start, y: screen_row, width: end.saturating_sub(start), height: 1 },
+                    placement: tui_pick::Placement::bottom_start(),
+                });
             }
         }
     }
