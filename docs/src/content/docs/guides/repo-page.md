@@ -28,6 +28,8 @@ Press `t` to open the column-toggle menu, then a chip key — `b` ahead/behind, 
 a chip. The added/modified/deleted counts are each branch's changes vs the merge-base with the
 repo's default branch, computed in the background (cells show `…` until ready). A column every
 branch leaves empty auto-hides and its chip goes dim and inert. Choices persist across runs.
+The page distributes its width across the visible columns — hiding columns reclaims that space
+for the **branch** and **subject** text columns (they expand to fill it instead of truncating).
 
 `i` toggles a bottom **info panel** detailing the selected row: branch, upstream, base branch
 plus merge-base sha, ahead/behind, change stats, and the tip commit (sha · author · date ·
