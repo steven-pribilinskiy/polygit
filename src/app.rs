@@ -2212,6 +2212,9 @@ pub struct AppState {
     /// A footer-command tooltip `(text, anchor_col, anchor_row)`, set after dwelling ~1s on a
     /// status-bar command; rendered as a small popup above the anchor. Never persisted.
     pub hover_tooltip: Option<(String, u16, u16)>,
+    /// Dwell-tooltip regions captured each frame: `(row, col_start, col_end, text)`. Covers the
+    /// column headers and group/folder count tails. Hovering one ~1s shows its text.
+    pub hover_tooltips: Vec<(u16, u16, u16, String)>,
     /// Set once discovery completes and the launch decision skipped pulling — the run is then
     /// "settled" without any repo being pulled, and the footer offers a manual pull-everything.
     pub auto_pull_suppressed: bool,
@@ -2415,6 +2418,7 @@ impl AppState {
             changed_row_highlight: persisted.changed_row_highlight,
             hover: None,
             hover_tooltip: None,
+            hover_tooltips: Vec::new(),
             auto_pull_suppressed: false,
             status_cache: crate::cache::load(),
             pr_cache: crate::pr_cache::load(),
@@ -4178,6 +4182,14 @@ impl AppState {
             .iter()
             .find(|region| region.row == row && col >= region.col_start && col < region.col_end)
             .map(|region| region.command)
+    }
+
+    /// The dwell-tooltip text for a captured region (column header / group-count tail) at a point.
+    pub fn tooltip_at(&self, col: u16, row: u16) -> Option<String> {
+        self.hover_tooltips
+            .iter()
+            .find(|(tip_row, start, end, _)| *tip_row == row && col >= *start && col < *end)
+            .map(|(.., text)| text.clone())
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {

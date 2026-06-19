@@ -854,6 +854,7 @@ fn highlight_name(name: &str, filter: Option<&str>, base: Style, width: usize) -
 }
 
 fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> usize {
+    app.hover_tooltips.clear();
     let rows = app.visible_rows();
     let total_repos = app.repos.len();
     let elapsed = app.finished_elapsed.unwrap_or_else(|| app.start.elapsed()).as_secs_f64();
@@ -1244,6 +1245,18 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         app.header_area = Rect::default();
     }
     app.header_click = header_click;
+    // Dwell tooltips for the column-header titles (the underline row is left bare).
+    if header_height > 0 {
+        let title_row = app.header_area.y;
+        for &(start, end, sort) in &app.header_click {
+            app.hover_tooltips.push((
+                title_row,
+                start,
+                end,
+                column_header_tooltip(sort).to_string(),
+            ));
+        }
+    }
 
     let total_items = items.len();
     let list = List::new(items)
@@ -1289,6 +1302,34 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
                 }
             }
             app.pr_cell_click = clicks;
+        }
+    }
+
+    // Dwell tooltips for the group/folder count tails (right-aligned in each header row).
+    {
+        let offset = list_state.offset();
+        let height = rows_area.height as usize;
+        let end = inner.x + inner.width.saturating_sub(2);
+        for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
+            let (repos, noun) = match *row {
+                ListRow::GroupHeader { group_idx, .. } => {
+                    (Some(app.group_visible_members(group_idx)), "group")
+                }
+                ListRow::FolderHeader { node_idx, .. } => {
+                    (Some(app.tree_subtree_repos(node_idx)), "folder")
+                }
+                _ => (None, ""),
+            };
+            if let Some(repos) = repos {
+                let total = repos.len();
+                let icons = app.icons();
+                let tail_w: usize =
+                    status_tail_for(app, &repos, total, icons, tick).iter().map(|s| s.width()).sum();
+                let screen_row = rows_area.y + visible as u16;
+                let start = end.saturating_sub(tail_w as u16);
+                let text = header_tail_tooltip(app, &repos, total, noun);
+                app.hover_tooltips.push((screen_row, start, end, text));
+            }
         }
     }
 
@@ -1472,6 +1513,64 @@ fn header_marker(collapsible: bool, collapsed: bool) -> &'static str {
     } else {
         "▾ "
     }
+}
+
+/// One-line description for a sortable column header (shown as a dwell tooltip).
+fn column_header_tooltip(sort: SortColumn) -> &'static str {
+    match sort {
+        SortColumn::Name => "Repository name (relative to the scan root)",
+        SortColumn::Branch => "Current branch",
+        SortColumn::Status => "Pull status (and the failure/skip reason when known)",
+        SortColumn::AheadBehind => "Commits ahead ↑ / behind ↓ the upstream",
+        SortColumn::Dirty => "Δ — uncommitted (dirty) working-tree changes",
+        SortColumn::LastCommit => "Age of the last commit on the current branch",
+        SortColumn::Worktrees => "wt — linked git worktrees on this repo",
+        SortColumn::Branches => "br — local branches",
+        SortColumn::Stashes => "st — stash entries",
+        SortColumn::PulledCommits => "pull — commits pulled in this session",
+        SortColumn::PulledFiles => "chg — files changed by this session's pull",
+        SortColumn::PullRequest => "pr — open pull request for the current branch (click to open)",
+    }
+}
+
+/// Status tallies for a set of repos `(running, updated, failed, skipped, throttled)`. Shared by
+/// `status_tail_for` (the rendered glyph tail) and the group/folder count-tail tooltip text.
+fn header_status_counts(app: &AppState, repos: &[usize]) -> (usize, usize, usize, usize, usize) {
+    let (mut running, mut updated, mut failed, mut skipped, mut throttled) = (0, 0, 0, 0, 0);
+    for &repo_idx in repos {
+        match app.repos[repo_idx].lock().unwrap().status {
+            RepoStatus::Running { .. } => running += 1,
+            RepoStatus::Updated => updated += 1,
+            RepoStatus::Failed => failed += 1,
+            RepoStatus::Skipped => skipped += 1,
+            RepoStatus::Throttled => throttled += 1,
+            _ => {}
+        }
+    }
+    (running, updated, failed, skipped, throttled)
+}
+
+/// Tooltip text for a group/folder count tail (e.g. "27 repos in group · 3 running · 1 failed").
+fn header_tail_tooltip(app: &AppState, repos: &[usize], total: usize, noun: &str) -> String {
+    let (running, updated, failed, skipped, throttled) = header_status_counts(app, repos);
+    let mut parts = vec![format!("{total} repos in {noun}")];
+    let plural = |count: usize, word: &str| format!("{count} {word}");
+    if running > 0 {
+        parts.push(plural(running, "running"));
+    }
+    if updated > 0 {
+        parts.push(plural(updated, "updated"));
+    }
+    if throttled > 0 {
+        parts.push(plural(throttled, "throttled"));
+    }
+    if failed > 0 {
+        parts.push(plural(failed, "failed"));
+    }
+    if skipped > 0 {
+        parts.push(plural(skipped, "skipped"));
+    }
+    parts.join(" \u{b7} ")
 }
 
 /// Build the status-count tail for `repos` (the non-zero running/updated/failed/skipped tallies

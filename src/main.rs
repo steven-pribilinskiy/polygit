@@ -975,11 +975,14 @@ async fn run_event_loop(
             } else {
                 None
             };
-            let dwell_text: Option<String> = settings_tip.or(help_url).or_else(|| {
-                app.hover
-                    .and_then(|(col, row)| app.command_at(col, row))
-                    .map(|cmd| cmd.tooltip().to_string())
-            });
+            let dwell_text: Option<String> = settings_tip
+                .or(help_url)
+                .or_else(|| app.hover.and_then(|(col, row)| app.tooltip_at(col, row)))
+                .or_else(|| {
+                    app.hover
+                        .and_then(|(col, row)| app.command_at(col, row))
+                        .map(|cmd| cmd.tooltip().to_string())
+                });
             if dwell_text != hover_dwell_text {
                 hover_dwell_text = dwell_text.clone();
                 hover_dwell_since = Instant::now();
