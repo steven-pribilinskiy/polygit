@@ -355,12 +355,19 @@ pub fn should_descend(name: &str) -> bool {
 }
 
 /// `path` rendered relative to `root` with `/` separators (e.g. "personal/polygit").
-/// Falls back to the full path when `path` isn't under `root`.
+/// Falls back to the full path when `path` isn't under `root`. When `path == root` (a root that is
+/// itself a repo), the relative path is empty — use the root's basename so the repo still has a name.
 pub fn relative_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
+    let rel = path
+        .strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/")
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    if rel.is_empty() {
+        path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or(rel)
+    } else {
+        rel
+    }
 }
 
 /// Recursively scan `root` for git repos (directories containing `.git`), streaming each found
@@ -387,8 +394,9 @@ fn walk_dir(
     semaphore: Arc<Semaphore>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
-        // The root (depth 0) is never itself a pull target — only its descendants are.
-        if depth >= 1 && dir.join(".git").exists() {
+        // A repo is a leaf: emit it and never descend into it. The scan root counts too — pointing
+        // polygit at a single repo (`polygit ~/some-repo`) lists that one repo.
+        if dir.join(".git").exists() {
             let _ = tx.send(dir);
             return;
         }

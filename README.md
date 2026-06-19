@@ -7,6 +7,7 @@ Interactive polyrepo git dashboard. Discovers every git repo under a directory a
 ## Features
 
 - **Recursive discovery** (default): crawls the directory tree in parallel for git repos, pruning hidden / `node_modules` / `vendor` / `target` / `*.worktrees` dirs and never descending into a found repo — so `polygit ~/projects` (or even `~`) just works. Repos stream in and start pulling as they're found; `--depth N` caps it, `--no-recursive` restores a single-level scan
+- **Multiple folders / persistent workspace**: pass several folders (`polygit ~/work ~/oss`) — each may itself be a single repo. The set is remembered in `~/.config/polygit/state.json`; a no-arg launch restores it and any new `DIR` args merge in. In the tree view each folder becomes its own top-level node (a forest)
 - **Directory-tree view** (`v t`): render the repos as a collapsible folder tree, with per-folder status rollups; orthogonal to grouping, so you can have flat, grouped, tree, or **tree + groups** (groups subdivide repos inside each folder)
 - Parallel pulls with configurable concurrency (default: nproc); the list title shows live concurrency (`⇄ active/cap`)
 - Live log streaming per repo in a scrollable **Command log** pane (the right pane, titled `[2] Command log · <repo> · <status>`)
@@ -59,10 +60,13 @@ See the [installation docs](https://steven-pribilinskiy.github.io/polygit/start/
 
 ```bash
 # TUI mode (auto-detected when stderr is a TTY)
-polygit [DIR]
+polygit [DIR...]
 
 # Recursive by default — scan a whole tree of projects
 polygit ~/projects
+
+# Multiple folders (each may itself be a single repo); remembered as a workspace
+polygit ~/work ~/oss ~/some-repo
 
 # Plain streaming output (matches bash reference for a flat dir; lists nested repos too)
 polygit --no-tui [DIR]

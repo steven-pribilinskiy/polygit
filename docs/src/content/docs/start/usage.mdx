@@ -9,21 +9,31 @@ import { Aside } from '@astrojs/starlight/components';
 
 ```bash
 # TUI mode (auto-detected when stderr is a TTY)
-polygit [DIR]
+polygit [DIR...]
 
-# Default DIR is the current directory
+# Default: the persisted workspace, or the current directory when nothing is saved
 polygit
 ```
 
-`polygit` scans `DIR` **recursively** for git repositories (pruning hidden /
+`polygit` scans each `DIR` **recursively** for git repositories (pruning hidden /
 `node_modules` / `vendor` / `target` / `*.worktrees` dirs, and never descending into a found
-repo), then fast-forwards each in parallel as it's discovered. Point it at a whole tree:
+repo), then fast-forwards each in parallel as it's discovered. A `DIR` that is **itself a git
+repo** is shown as that single repo. Point it at a whole tree, several folders, or one repo:
 
 ```bash
-polygit ~/projects     # crawl every project
-polygit ~ --depth 4    # crawl home, capped 4 levels deep
-polygit --no-recursive # legacy single-level scan (immediate children only)
+polygit ~/projects                 # crawl every project
+polygit ~/work ~/oss ~/some-repo   # multiple folders (the last is a single repo)
+polygit ~ --depth 4                # crawl home, capped 4 levels deep
+polygit --no-recursive             # legacy single-level scan (immediate children only)
 ```
+
+### Persistent workspace
+
+The set of folders is **remembered** (in `~/.config/polygit/state.json`). Launching with no
+args restores the saved folders; any `DIR` args are **merged into** that set and persisted, so
+they're there next time. With multiple folders, the [tree view](../../guides/tree-view/) shows
+each as its own top-level node (a forest). (Adding/removing folders from inside the app comes with
+the folder picker.)
 
 Render the result as a collapsible [directory tree](../../guides/tree-view/) with `v t`, or as
 named [groups](../../guides/groups/) with `v g`. The list title shows live concurrency

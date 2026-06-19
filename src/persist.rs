@@ -49,6 +49,10 @@ pub struct PersistedState {
     /// Hide the dash-fill leader lines in group / folder headers (default off).
     #[serde(default)]
     pub hide_folder_lines: bool,
+    /// Folders/roots polygit manages (absolute paths). The launch set is the union of these and any
+    /// CLI dirs; the picker adds/removes them live. Empty + no CLI args → fall back to cwd.
+    #[serde(default)]
+    pub roots: Vec<String>,
     /// Background tone (normal / soft) — surface only. `None` in pre-split state files;
     /// `resolve_background` derives it from `contrast` for backward compatibility.
     pub background: Option<Background>,

@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -14,7 +14,7 @@ use crate::git::{classify_pull_output, diff_stat, discover_worktrees, get_branch
 /// output matches the bash reference byte-for-byte; a recursive scan additionally lists repos
 /// found in nested folders, named by their path relative to the scan root.
 pub async fn run_plain(
-    cwd: &Path,
+    roots: &[PathBuf],
     max_jobs: usize,
     max_depth: usize,
     timeout_secs: u64,
@@ -22,37 +22,53 @@ pub async fn run_plain(
     profiling: bool,
     profile_out: Option<&Path>,
 ) -> Result<i32> {
-    let cwd_name = cwd
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| ".".to_string());
+    let where_label = if roots.len() == 1 {
+        roots[0]
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
+    } else {
+        format!("{} folders", roots.len())
+    };
 
-    println!("🔄 Pulling all repositories in {cwd_name}...");
+    println!("🔄 Pulling all repositories in {where_label}...");
 
-    // Discover repos (recursively, pruned; `--depth 1` keeps the legacy single-level scan).
-    let repos = crate::git::discover_repos_recursive(cwd, max_depth).await?;
+    // Discover repos across every root (recursively, pruned; `--depth 1` keeps the legacy
+    // single-level scan). Each repo is paired with the root it was found under (for relative paths)
+    // and deduped across overlapping roots.
+    let mut repos: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for root in roots {
+        for path in crate::git::discover_repos_recursive(root, max_depth).await? {
+            if seen.insert(path.clone()) {
+                repos.push((root.clone(), path));
+            }
+        }
+    }
 
     if repos.is_empty() {
         println!();
         println!("🎉 Pull completed!");
         println!();
-        println!("   No git repositories found in {cwd_name}.");
+        println!("   No git repositories found in {where_label}.");
         return Ok(0);
     }
 
-    // Start worktree discovery concurrently
+    // Start worktree discovery concurrently across all roots.
     let worktrees_future = if no_worktrees {
         tokio::spawn(async { Vec::<WorktreeEntry>::new() })
     } else {
-        let cwd_clone = cwd.to_path_buf();
+        let roots: Vec<PathBuf> = roots.to_vec();
         tokio::spawn(async move {
-            match discover_worktrees(&cwd_clone).await {
-                Ok(entries) => entries
-                    .into_iter()
-                    .map(|(repo, branch)| WorktreeEntry { repo, branch })
-                    .collect(),
-                Err(_) => Vec::new(),
+            let mut out = Vec::new();
+            for root in &roots {
+                if let Ok(entries) = discover_worktrees(root).await {
+                    out.extend(
+                        entries.into_iter().map(|(repo, branch)| WorktreeEntry { repo, branch }),
+                    );
+                }
             }
+            out
         })
     };
 
@@ -77,9 +93,9 @@ pub async fn run_plain(
 
     let mut handles = Vec::new();
 
-    for (idx, path) in repos.iter().enumerate() {
+    for (idx, (root, path)) in repos.iter().enumerate() {
         let path = path.clone();
-        let name = crate::git::relative_path(cwd, &path);
+        let name = crate::git::relative_path(root, &path);
         let semaphore = Arc::clone(&semaphore);
         let results = Arc::clone(&results);
         let timeout = timeout_secs;
