@@ -392,10 +392,7 @@ fn dispatch_command(
         Cmd::Info => {
             app.info_pinned = !app.info_pinned;
         }
-        Cmd::Help => {
-            app.show_help = true;
-            app.help_scroll = 0;
-        }
+        Cmd::Help => app.open_help(),
         Cmd::OpenPage => app.open_repo_page(),
         Cmd::ToggleLeader => {
             app.pending_leader = if app.pending_leader == Some(Leader::Toggle) {
@@ -510,13 +507,8 @@ fn dispatch_command(
                 copy_to_clipboard(&url);
             }
         }
-        Cmd::Settings => {
-            app.show_settings = true;
-            app.settings_selected = 0;
-        }
-        Cmd::ShowBuildInfo => {
-            app.show_build_info = true;
-        }
+        Cmd::Settings => app.open_settings(),
+        Cmd::ShowBuildInfo => app.open_build_info(),
         Cmd::NavDown => {
             app.nav_down();
         }
@@ -2106,10 +2098,7 @@ async fn run_event_loop(
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.diff_modal = None,
                         // `?` opens help (the overlay shows the diff-modal hotkeys).
-                        KeyCode::Char('?') => {
-                            app.show_help = true;
-                            app.help_scroll = 0;
-                        }
+                        KeyCode::Char('?') => app.open_help(),
                         // Tab switches which panel j/k/g/G drive (file list ⇄ diff).
                         KeyCode::Tab | KeyCode::BackTab => app.diff_modal_toggle_focus(),
                         // j/k/↑/↓ drive the focused panel: pick a file, or scroll the diff.
@@ -2284,15 +2273,9 @@ async fn run_event_loop(
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
                         // `?` opens help (the overlay shows the repo-page hotkeys).
-                        KeyCode::Char('?') => {
-                            app.show_help = true;
-                            app.help_scroll = 0;
-                        }
+                        KeyCode::Char('?') => app.open_help(),
                         // `,` opens settings (handled by the early gate next iteration).
-                        KeyCode::Char(',') => {
-                            app.show_settings = true;
-                            app.settings_selected = 0;
-                        }
+                        KeyCode::Char(',') => app.open_settings(),
                         // `t` opens the column-toggle menu; `i` toggles the info panel.
                         KeyCode::Char('t') => app.repo_page_toggle = true,
                         KeyCode::Char('i') => {
@@ -2785,10 +2768,7 @@ async fn run_event_loop(
                     }
 
                     // Help modal
-                    (KeyCode::Char('?'), _) => {
-                        app.show_help = true;
-                        app.help_scroll = 0;
-                    }
+                    (KeyCode::Char('?'), _) => app.open_help(),
 
                     // `t` leader: arm the column-toggle chord (next key picks the column).
                     (KeyCode::Char('t'), _) => {
@@ -2806,10 +2786,7 @@ async fn run_event_loop(
                     }
 
                     // `,` opens the settings modal.
-                    (KeyCode::Char(','), _) => {
-                        app.show_settings = true;
-                        app.settings_selected = 0;
-                    }
+                    (KeyCode::Char(','), _) => app.open_settings(),
 
                     // Resize the split: [ narrows the left pane, ] widens it.
                     (KeyCode::Char('['), _) => {
