@@ -40,6 +40,12 @@ pub struct PersistedState {
     /// Section names collapsed in the accordion settings layout.
     #[serde(default)]
     pub collapsed_settings: Vec<String>,
+    /// Relative paths of repos marked as favorites.
+    #[serde(default)]
+    pub favorites: Vec<String>,
+    /// Pin a "★ Favorites" section to the top of the list (default off).
+    #[serde(default)]
+    pub favorites_first: bool,
     /// Background tone (normal / soft) — surface only. `None` in pre-split state files;
     /// `resolve_background` derives it from `contrast` for backward compatibility.
     pub background: Option<Background>,

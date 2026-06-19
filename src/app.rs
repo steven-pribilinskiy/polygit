@@ -433,6 +433,8 @@ pub enum Column {
     PulledFiles,
     /// Open pull request for the current branch (via `gh`), shown as a clickable `#N`.
     PullRequest,
+    /// Favorite marker (★/☆), clickable to toggle.
+    Favorite,
 }
 
 /// Which optional list columns are enabled. `#[serde(default)]` keeps older state files
@@ -450,6 +452,7 @@ pub struct ColumnFlags {
     pub pulled_commits: bool,
     pub pulled_files: bool,
     pub pull_request: bool,
+    pub favorite: bool,
 }
 
 impl ColumnFlags {
@@ -1088,6 +1091,9 @@ pub struct IconSet {
     pub warning: &'static str,
     pub skip_log: &'static str,
     pub retry_log: &'static str,
+    /// Favorited / not-favorited star (favorites column).
+    pub fav_on: &'static str,
+    pub fav_off: &'static str,
 }
 
 // Status glyphs are drawn from Geometric Shapes (U+25xx), which terminal fonts like Cascadia Code
@@ -1115,6 +1121,8 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     warning: "⚠",
     skip_log: "◇",
     retry_log: "↻",
+    fav_on: "★",
+    fav_off: "☆",
 };
 
 pub static EMOJI_ICONS: IconSet = IconSet {
@@ -1146,6 +1154,10 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     // the active icon style (or a style change after the line was written).
     skip_log: "⊘",
     retry_log: "↻",
+    // The star stays a compact 1-cell symbol in both sets (like the ahead/behind arrows) so the
+    // favorites column keeps a fixed width regardless of icon style.
+    fav_on: "★",
+    fav_off: "☆",
 };
 
 /// A mouse-clickable command region in the status bar (rebuilt each render).
@@ -1237,6 +1249,8 @@ pub enum Command {
     GroupingToggle,
     /// Toggle the directory-tree view (`v t`; hint shown only when nested folders exist).
     TreeToggle,
+    /// Toggle the "★ Favorites" pinned-at-top section (`M`; hint shown only when favorites exist).
+    FavoritesFirst,
     /// Collapse/expand a group by index (the group preview's clickable footer hint).
     ToggleGroupCollapsed(usize),
     /// Collapse every folder + collapsible group (`-` / `z M`).
@@ -1297,6 +1311,7 @@ impl Command {
             Command::SplitWiden => "Widen the left pane",
             Command::GroupingToggle => "Toggle the grouped list view",
             Command::TreeToggle => "Toggle the directory-tree view",
+            Command::FavoritesFirst => "Pin a ★ Favorites section to the top of the list",
             Command::ToggleGroupCollapsed(_) => "Collapse or expand this group",
             Command::FoldCollapseAll => "Collapse all folders and groups",
             Command::FoldExpandAll => "Expand all folders and groups",
@@ -1724,6 +1739,8 @@ pub enum ListRow {
     GroupHeader { group_idx: usize, parent: Option<usize>, collapsible: bool, depth: u16 },
     /// A repo row. `repo_idx` is the absolute index into `AppState::repos`.
     Repo { repo_idx: usize, depth: u16 },
+    /// The pinned "★ Favorites" section header (favorites-first mode). Not collapsible.
+    FavoritesHeader,
     /// A blank line between sections — never selectable or clickable.
     Spacer,
 }
@@ -1937,6 +1954,9 @@ pub struct AppState {
     /// Clickable PR-cell regions in the list (PR column): (row, col_start, col_end, url). Rebuilt
     /// each render; a click opens the PR in the browser.
     pub pr_cell_click: Vec<(u16, u16, u16, String)>,
+    /// Clickable favorite-star regions in the list: (row, col_start, col_end, repo_idx). Rebuilt
+    /// each render; a click toggles that repo's favorite state.
+    pub fav_cell_click: Vec<(u16, u16, u16, usize)>,
     /// The column-header rect (the 2 rows above the repo list) — for header click-to-sort.
     pub header_area: Rect,
     /// Header sort-cell hit map: (col_start, col_end, column). Rebuilt each render.
@@ -2043,6 +2063,10 @@ pub struct AppState {
     pub confirm: Option<ConfirmDialog>,
     /// Which optional list columns are enabled.
     pub columns: ColumnFlags,
+    /// Relative paths of repos marked as favorites (persisted).
+    pub favorites: HashSet<String>,
+    /// Pin a "★ Favorites" section to the top of the list (persisted).
+    pub favorites_first: bool,
     /// A pending leader chord (e.g. `t` awaiting a column key).
     pub pending_leader: Option<Leader>,
     /// Whether the background "fetch details for all repos" pass has been spawned.
@@ -2274,6 +2298,7 @@ impl AppState {
             list_area: Rect::default(),
             list_rows_area: Rect::default(),
             pr_cell_click: Vec::new(),
+            fav_cell_click: Vec::new(),
             header_area: Rect::default(),
             header_click: Vec::new(),
             preview_area: Rect::default(),
@@ -2329,6 +2354,8 @@ impl AppState {
             repo_page_message: None,
             confirm: None,
             columns: persisted.columns,
+            favorites: persisted.favorites.into_iter().collect(),
+            favorites_first: persisted.favorites_first,
             pending_leader: None,
             details_pass_spawned: false,
             clickable: Vec::new(),
@@ -2673,6 +2700,12 @@ impl AppState {
         collapsed_folders.sort();
         crate::persist::save(&crate::persist::PersistedState {
             columns: self.columns,
+            favorites: {
+                let mut favorites: Vec<String> = self.favorites.iter().cloned().collect();
+                favorites.sort();
+                favorites
+            },
+            favorites_first: self.favorites_first,
             info_pinned: self.info_pinned,
             split_ratio: self.split_ratio,
             dock_ratio: self.dock_ratio,
@@ -3159,8 +3192,10 @@ impl AppState {
         // real list rows, so physical == logical for the rows region.
         if row_idx < rows.len() {
             match rows[row_idx] {
-                // Static (small-group) headers and spacers are inert — not selectable/clickable.
-                ListRow::GroupHeader { collapsible: false, .. } | ListRow::Spacer => None,
+                // Static (small-group) headers, the favorites header, and spacers are inert.
+                ListRow::GroupHeader { collapsible: false, .. }
+                | ListRow::FavoritesHeader
+                | ListRow::Spacer => None,
                 _ => Some(row_idx),
             }
         } else if row_idx == rows.len() + 1 {
@@ -3311,14 +3346,28 @@ impl AppState {
     /// hidden; collapsed groups keep their header but omit their members.
     pub fn visible_rows(&self) -> Vec<ListRow> {
         let visible = self.visible_indices();
+        // Favorites-first: pin a "★ Favorites" section at the top (favorited repos in sort order),
+        // then render the rest of the views below with favorites excluded from their normal place.
+        let favorites = if self.favorites_first { self.favorite_visible(&visible) } else { Vec::new() };
+        let mut rows = Vec::new();
+        let body_visible: Vec<usize> = if favorites.is_empty() {
+            visible
+        } else {
+            rows.push(ListRow::FavoritesHeader);
+            rows.extend(favorites.iter().map(|&repo_idx| ListRow::Repo { repo_idx, depth: 0 }));
+            rows.push(ListRow::Spacer);
+            visible.into_iter().filter(|idx| !self.is_favorite(*idx)).collect()
+        };
         // Tree view wins when active; groups subdivide repos inside each folder (tree+groups).
-        if self.tree_active() {
-            return self.visible_rows_tree(&visible);
-        }
-        if !self.grouping_active() {
-            return visible.into_iter().map(ListRow::repo).collect();
-        }
-        self.grouped_rows(&visible, None, 0)
+        let body = if self.tree_active() {
+            self.visible_rows_tree(&body_visible)
+        } else if !self.grouping_active() {
+            body_visible.into_iter().map(ListRow::repo).collect()
+        } else {
+            self.grouped_rows(&body_visible, None, 0)
+        };
+        rows.extend(body);
+        rows
     }
 
     /// Partition `visible` repos into config-ordered group sections (the grouped view, also
@@ -3504,7 +3553,7 @@ impl AppState {
             Some(ListRow::Repo { .. }) => true,
             Some(ListRow::FolderHeader { .. }) => true,
             Some(ListRow::GroupHeader { collapsible, .. }) => *collapsible,
-            Some(ListRow::Spacer) => false,
+            Some(ListRow::FavoritesHeader) | Some(ListRow::Spacer) => false,
             None => idx < total,
         }
     }
@@ -3733,6 +3782,52 @@ impl AppState {
             }
         }
         self.snap_selection(false);
+    }
+
+    /// Whether `repo_idx` is marked a favorite.
+    pub fn is_favorite(&self, repo_idx: usize) -> bool {
+        self.repos
+            .get(repo_idx)
+            .is_some_and(|repo| self.favorites.contains(&repo.lock().unwrap().rel_path))
+    }
+
+    /// Toggle a repo's favorite state (persists), keyed by its relative path.
+    pub fn toggle_favorite(&mut self, repo_idx: usize) {
+        let Some(repo) = self.repos.get(repo_idx) else {
+            return;
+        };
+        let rel_path = repo.lock().unwrap().rel_path.clone();
+        if !self.favorites.remove(&rel_path) {
+            self.favorites.insert(rel_path);
+        }
+        let prev = self.selected_repo_index();
+        self.reselect_repo(prev);
+        self.save_state();
+    }
+
+    /// Toggle the favorite state of the currently-selected repo.
+    pub fn toggle_selected_favorite(&mut self) {
+        if let Some(repo_idx) = self.selected_repo_index() {
+            self.toggle_favorite(repo_idx);
+        }
+    }
+
+    /// Toggle the "★ Favorites pinned to top" mode, keeping the selection on the same repo.
+    pub fn toggle_favorites_first(&mut self) {
+        self.favorites_first = !self.favorites_first;
+        let prev = self.selected_repo_index();
+        self.reselect_repo(prev);
+        self.save_state();
+    }
+
+    /// Whether any repo is favorited (gates the favorites-first footer toggle + pinned section).
+    pub fn has_favorites(&self) -> bool {
+        !self.favorites.is_empty()
+    }
+
+    /// Visible repos that are favorited, in the active sort order.
+    fn favorite_visible(&self, visible: &[usize]) -> Vec<usize> {
+        visible.iter().copied().filter(|&idx| self.is_favorite(idx)).collect()
     }
 
     /// Enter name-filter input mode, remembering the current selection so Esc can restore it.
@@ -4299,6 +4394,7 @@ impl AppState {
             // View toggles need their data to exist.
             Command::GroupingToggle => !self.groups.is_empty(),
             Command::TreeToggle => !self.tree_nodes.is_empty(),
+            Command::FavoritesFirst => self.has_favorites(),
             // Selection moves need a non-empty list.
             Command::NavDown | Command::NavUp => !self.repos.is_empty(),
             // Retry/refetch reuse their existing no-op predicates.
@@ -4953,6 +5049,7 @@ impl AppState {
                     self.pr_pass_spawned = false;
                 }
             }
+            Column::Favorite => self.columns.favorite = !self.columns.favorite,
         }
     }
 
@@ -5006,6 +5103,8 @@ impl AppState {
             // Self-fills via `gh` in the background; always available when enabled (cells are
             // blank for repos without a PR or not yet resolved).
             Column::PullRequest => true,
+            // The star is always meaningful (it's how you favorite a repo).
+            Column::Favorite => true,
         }
     }
 
@@ -5023,6 +5122,7 @@ impl AppState {
                 && self.column_available(Column::PulledCommits),
             pulled_files: self.columns.pulled_files && self.column_available(Column::PulledFiles),
             pull_request: self.columns.pull_request && self.column_available(Column::PullRequest),
+            favorite: self.columns.favorite,
         }
     }
 
@@ -5159,6 +5259,8 @@ mod tests {
         state.collapsed_groups.clear();
         state.tree_enabled = false;
         state.collapsed_folders.clear();
+        state.favorites.clear();
+        state.favorites_first = false;
         // Auto-pull policy comes from the user's real state.json — pin it to the defaults so the
         // gate/settle tests are hermetic.
         state.auto_pull_on_launch = true;
@@ -5353,6 +5455,44 @@ mod tests {
             .map(|name| Arc::new(Mutex::new(RepoState::new(*name, PathBuf::from("/tmp")))))
             .collect();
         normalized(AppState::new(repos, 4, true))
+    }
+
+    #[test]
+    fn favorites_first_pins_a_top_section() {
+        let mut state = state_named(&["alpha", "beta", "gamma"]);
+        state.favorites_first = true;
+        // No favorites yet → no pinned section.
+        assert!(!matches!(state.visible_rows().first(), Some(ListRow::FavoritesHeader)));
+        // Favorite beta (absolute index 1).
+        state.toggle_favorite(1);
+        assert!(state.is_favorite(1));
+        assert!(state.has_favorites());
+        let rows = state.visible_rows();
+        assert_eq!(rows[0], ListRow::FavoritesHeader);
+        assert!(matches!(rows[1], ListRow::Repo { repo_idx: 1, .. }));
+        assert_eq!(rows[2], ListRow::Spacer);
+        // beta appears only in the pinned section, not again in the body.
+        let body_betas = rows
+            .iter()
+            .skip(3)
+            .filter(|row| matches!(row, ListRow::Repo { repo_idx: 1, .. }))
+            .count();
+        assert_eq!(body_betas, 0);
+        // Un-favoriting beta removes the pinned section.
+        state.toggle_favorite(1);
+        assert!(!state.has_favorites());
+        assert!(!matches!(state.visible_rows().first(), Some(ListRow::FavoritesHeader)));
+    }
+
+    #[test]
+    fn favorite_column_toggles_and_persists_in_flags() {
+        let mut state = state_named(&["a"]);
+        state.columns.favorite = false;
+        state.toggle_column(Column::Favorite);
+        assert!(state.columns.favorite);
+        assert!(state.effective_columns().favorite);
+        state.toggle_column(Column::Favorite);
+        assert!(!state.columns.favorite);
     }
 
     #[test]
@@ -5695,6 +5835,7 @@ mod tests {
                 ListRow::GroupHeader { group_idx, depth, .. } => {
                     format!("{}group:{}", "  ".repeat(depth as usize), state.group_name(group_idx))
                 }
+                ListRow::FavoritesHeader => "favorites".to_string(),
                 ListRow::Spacer => "spacer".to_string(),
             })
             .collect()
