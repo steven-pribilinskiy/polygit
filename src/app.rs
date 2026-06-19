@@ -3849,7 +3849,9 @@ impl AppState {
     /// settings row. Visual only (nav/clicks ignore the blank). Splits the Theming tab into
     /// Icons / palette+selection / button-hover groups: blank before Theme (4) and Button hover (8).
     pub fn settings_tabbed_blank_before(row: usize) -> bool {
-        row == 4 || row == 8
+        // Blank before Theme (4) — separates Icons from the palette group — and before List
+        // selection (7) — groups List selection + Button hover as the "selection/hover" pair.
+        row == 4 || row == 7
     }
 
     /// Which settings tab a global row belongs to.

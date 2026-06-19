@@ -2086,15 +2086,19 @@ fn build_info_lines(
                 ),
             ]));
         }
-        // Changes — hidden when everything is zero.
+        // Changes — hidden when everything is zero; each part shown only when non-zero.
         if details.dirty_count > 0 || details.stash_count > 0 || details.branch_count > 0 {
-            lines.push(plain(
-                "Changes",
-                format!(
-                    "{} uncommitted · {} stashed · {} feature branches",
-                    details.dirty_count, details.stash_count, details.branch_count
-                ),
-            ));
+            let mut parts: Vec<String> = Vec::new();
+            if details.dirty_count > 0 {
+                parts.push(format!("{} uncommitted", details.dirty_count));
+            }
+            if details.stash_count > 0 {
+                parts.push(format!("{} stashed", details.stash_count));
+            }
+            if details.branch_count > 0 {
+                parts.push(format!("{} feature branches", details.branch_count));
+            }
+            lines.push(plain("Changes", parts.join(" · ")));
         }
     } else {
         lines.push(plain("Ahead/behind", "(loading…)".to_string()));
@@ -3239,7 +3243,11 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ("resize".to_string(), hint, Some(Command::SplitWiden)),
         (" · ".to_string(), hint, None),
         ("b".to_string(), key, Some(Command::ToggleDock)),
-        (" dock".to_string(), if app.dock_repo_panel { active } else { hint }, Some(Command::ToggleDock)),
+        (
+            if app.dock_repo_panel { " docked".to_string() } else { " dock".to_string() },
+            if app.dock_repo_panel { active } else { hint },
+            Some(Command::ToggleDock),
+        ),
     ]);
     // When the column picker wrapped to a second row, it owns row 2 — render its second line
     // there instead of the find row (whose hidden clicks must not register).
@@ -3449,14 +3457,16 @@ fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Option<String
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let mut throwaway: Vec<(u16, u16, u16, usize, Option<usize>)> = Vec::new();
 
-    items.push((Line::from(Span::styled("Design System".to_string(), title_style)), None));
+    items.push((Line::from(Span::styled("DESIGN SYSTEM".to_string(), title_style)), None));
     items.push((Line::from(""), None));
     items.push((Line::from(Span::styled("Theming".to_string(), group_style)), None));
     for row_idx in [4usize, 5, 6, 7] {
         let (label, options) = design_radio_data(app, row_idx);
         // The Line is position-independent; real click regions are registered by render_help at the
         // row's actual screen position via the sentinel. Discard the dummy-position clicks here.
-        let line = settings_row_line(row_idx, false, label, &options, (0, 0), false, &mut throwaway);
+        let underline_idx = radio_underline_idx(app, row_idx);
+        let line =
+            settings_row_line(row_idx, false, label, &options, (0, 0), false, underline_idx, &mut throwaway);
         items.push((line, Some(format!("{DESIGN_RADIO_PREFIX}{row_idx}"))));
     }
     items.push((Line::from(""), None));
@@ -4048,10 +4058,10 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.help_tab_click.clear();
     let tabs = [
         ("Hotkeys", HelpTab::Hotkeys),
-        ("CLI & Flags", HelpTab::CliFlags),
+        ("CLI", HelpTab::CliFlags),
         ("Legend", HelpTab::Legend),
         ("About", HelpTab::About),
-        ("Design System", HelpTab::DesignSystem),
+        ("Design", HelpTab::DesignSystem),
     ];
     let mut tab_spans: Vec<Span> = Vec::new();
     let mut tab_col = tab_bar_area.x;
@@ -4120,6 +4130,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 // pre-built Line is position-independent; only the click columns need the row).
                 if let Ok(row_idx) = sentinel[DESIGN_RADIO_PREFIX.len()..].parse::<usize>() {
                     let (label, options) = design_radio_data(app, row_idx);
+                    let underline_idx = radio_underline_idx(app, row_idx);
                     let _ = settings_row_line(
                         row_idx,
                         false,
@@ -4127,6 +4138,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                         &options,
                         (content_area.x, row),
                         true,
+                        underline_idx,
                         &mut app.help_design_click,
                     );
                 }
@@ -5737,6 +5749,17 @@ const SETTINGS_LABEL_W: u16 = 22;
 
 /// Render one settings row — `> Label   ● value  ○ value` — and capture its label/chip click
 /// regions (keyed by the global `row_idx`). `left_x` is the row's left edge.
+/// The option index to underline for a radio row (Theme only): when `auto` is selected, underline
+/// the autodetected option it resolves to (`dark`=1 / `light`=2). `None` for every other row/state.
+fn radio_underline_idx(app: &AppState, row_idx: usize) -> Option<usize> {
+    if row_idx == 4 && app.theme == crate::app::Theme::Auto {
+        Some(if app.auto_dark { 1 } else { 2 })
+    } else {
+        None
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn settings_row_line(
     row_idx: usize,
     selected: bool,
@@ -5744,6 +5767,7 @@ fn settings_row_line(
     options: &[(&str, bool)],
     pos: (u16, u16),
     in_view: bool,
+    underline_idx: Option<usize>,
     clicks: &mut Vec<(u16, u16, u16, usize, Option<usize>)>,
 ) -> Line<'static> {
     let (left_x, row_y) = pos;
@@ -5767,11 +5791,15 @@ fn settings_row_line(
             spans.push(Span::raw("  "));
             col += 2;
         }
-        let style = if *active {
+        let mut style = if *active {
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
+        // Underline the autodetected option (the theme `auto` resolves to) for a subtle hint.
+        if underline_idx == Some(option_idx) {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
         let chip = format!("{} {text}", if *active { "●" } else { "○" });
         let chip_width = UnicodeWidthStr::width(chip.as_str()) as u16;
         if in_view {
@@ -5986,10 +6014,14 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.settings_tab_click.clear();
 
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    // Precomputed (not via `app` inside the closure, which would conflict with the closure's
+    // disjoint field borrows): the Theme row's autodetect underline.
+    let theme_underline = radio_underline_idx(app, 4);
     // A `>Label  ● value` row plus the optional "no groups" hint, given the row's left edge.
     let mut push_row = |row_idx: usize, left_x: u16, row_y: u16, out: &mut Vec<Line>| {
         let (label, options) = &all_rows[row_idx];
         let in_view = row_y < inner.y + inner.height;
+        let underline_idx = if row_idx == 4 { theme_underline } else { None };
         out.push(settings_row_line(
             row_idx,
             app.settings_selected == row_idx,
@@ -5997,6 +6029,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             options,
             (left_x, row_y),
             in_view,
+            underline_idx,
             &mut app.settings_click,
         ));
         if *label == "Grouping" && app.groups.is_empty() {
