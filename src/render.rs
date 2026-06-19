@@ -346,12 +346,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             && hrow < app.main_area.y + app.main_area.height
         {
             hits.push(Rect { x: app.divider_col, y: app.main_area.y, width: 1, height: app.main_area.height });
-        } else if let Some(idx) =
-            app.list_selection_at(hcol, hrow).filter(|&idx| idx < app.visible_rows().len())
-        {
-            // A real repo/group row — not the Result/Errors summary rows (those read as the whole
-            // result pane tinting under the cursor, which is noise). Hovering the *selected* row
-            // gets the stronger tint so it stays distinct instead of washing out.
+        } else if let Some(idx) = app.list_selection_at(hcol, hrow) {
+            // Any selectable list row — repo/group/folder rows plus the Result/Errors summary
+            // rows. Hovering the *selected* row gets the stronger tint so it stays distinct
+            // instead of washing out.
             let rect = Rect {
                 x: app.list_area.x,
                 y: hrow,
@@ -709,9 +707,10 @@ fn render_divider(frame: &mut Frame, app: &AppState) {
         && app.hover.is_some_and(|(hover_col, hover_row)| {
             (i32::from(hover_col) - i32::from(col)).abs() <= 1 && hover_row >= top && hover_row < bottom
         });
-    // The pane boundary is two adjacent border columns (list's right border + preview's left
-    // border); straddle both so the grip is ~2 cells wide and sits right in the middle.
-    let cols = [col.saturating_sub(1), col];
+    // The grip sits on the divider column itself (the right pane's first column). It must NOT
+    // straddle into `col - 1`: that's the left pane's last column, where the vertical scrollbar is
+    // drawn — a 2-wide grip would paint over the scrollbar.
+    let cols = [col];
     let buffer = frame.buffer_mut();
 
     if dragging {
@@ -1530,7 +1529,7 @@ fn group_header_item(
             head.push(Span::styled(format!(" {}", icons.warning), Style::default().fg(Color::Red)));
         }
     }
-    finish_header_line(head, tail, inner_width)
+    finish_header_line(head, tail, inner_width, !app.hide_folder_lines)
 }
 
 /// A directory-tree folder header: collapse marker, indented folder name, dash fill, then the
@@ -1557,7 +1556,7 @@ fn folder_header_item(
         format!("{name}/"),
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     ));
-    finish_header_line(head, tail, inner_width)
+    finish_header_line(head, tail, inner_width, !app.hide_folder_lines)
 }
 
 /// The pinned "★ Favorites" section header (favorites-first mode): a star, the label, a dash
@@ -1571,7 +1570,7 @@ fn favorites_header_item(app: &AppState, inner_width: usize, tick: u64) -> ListI
         Span::raw("  "),
         Span::styled("\u{2605} Favorites", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
     ];
-    finish_header_line(head, tail, inner_width)
+    finish_header_line(head, tail, inner_width, !app.hide_folder_lines)
 }
 
 /// The collapse marker for a header: two spaces (static), `▸ ` (collapsed), or `▾ ` (expanded).
@@ -1695,13 +1694,21 @@ fn status_tail_for(
     tail
 }
 
-/// Join a header's `head` spans and `tail` spans with a dash fill so the tail is right-aligned.
-fn finish_header_line(head: Vec<Span<'static>>, tail: Vec<Span<'static>>, inner_width: usize) -> ListItem<'static> {
+/// Join a header's `head` spans and `tail` spans so the tail is right-aligned. `draw_lines` fills
+/// the gap with a dim dash leader (default); when off it uses blank space (the "hide folder lines"
+/// setting) so the header reads cleaner.
+fn finish_header_line(
+    head: Vec<Span<'static>>,
+    tail: Vec<Span<'static>>,
+    inner_width: usize,
+    draw_lines: bool,
+) -> ListItem<'static> {
     let head_width: usize = head.iter().map(|span| span.width()).sum();
     let tail_width: usize = tail.iter().map(|span| span.width()).sum();
     let fill = inner_width.saturating_sub(head_width + tail_width + 3);
+    let leader = if draw_lines { "\u{2500}".repeat(fill) } else { " ".repeat(fill) };
     let mut spans = head;
-    spans.push(Span::styled(format!(" {}", "─".repeat(fill)), Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(format!(" {leader}"), Style::default().fg(Color::DarkGray)));
     spans.extend(tail);
     ListItem::new(Line::from(spans))
 }
@@ -6029,20 +6036,22 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     };
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     let hide_zero = app.hide_zero_counts;
+    let hide_lines = app.hide_folder_lines;
     // Sections of (label, option chips). Global row indices run across sections and must
     // match `set_setting_option` / `toggle_selected_setting`:
-    // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 hide-zeros · 5 theme · 6 background ·
-    // 7 contrast · 8 selection · 9 button-hover (Theming), 10 auto-pull · 11 auto-pull limit ·
+    // 0 grouping · 1 tree · 2 hide-folder-lines (Lists), 3 icons · 4 hide-zeros · 5 theme ·
+    // 6 background · 7 contrast · 8 selection · 9 button-hover (Theming), 10 auto-pull · 11 limit ·
     // 12 auto-pull-in-tree (Sync), 13 hover · 14 changed-row flash · 15 changed-row highlight
-    // (Interaction), 16 borders · 17 splitter · 18 repo-page tabs · 19 dock · 20 branch-check (Layout).
+    // (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-page tabs · 20 dock ·
+    // 21 branch-check (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
-            "General",
+            "Lists",
             vec![
-                ("Panel padding", vec![("on", app.panel_padding), ("off", !app.panel_padding)]),
                 ("Grouping", vec![("on", app.grouping_enabled), ("off", !app.grouping_enabled)]),
                 ("Tree view", vec![("on", app.tree_enabled), ("off", !app.tree_enabled)]),
+                ("Hide folder lines", vec![("on", hide_lines), ("off", !hide_lines)]),
             ],
         ),
         (
@@ -6132,6 +6141,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         (
             "Layout",
             vec![
+                ("Panel padding", vec![("on", app.panel_padding), ("off", !app.panel_padding)]),
                 ("Borders", vec![("on", app.show_borders), ("off", !app.show_borders)]),
                 ("Splitter", vec![("on", app.show_splitter), ("off", !app.show_splitter)]),
                 (
