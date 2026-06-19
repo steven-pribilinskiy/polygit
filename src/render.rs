@@ -919,6 +919,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     let dirty_w = 3 + col_extra; // glyph + up to 2 digits
     let count_w = 4 + col_extra; // glyph + count (worktrees / branches / stashes)
     let pr_w = 6; // `#NNNNN` — fits a 5-digit PR number
+    let fav_w = 1; // star is a compact 1-cell symbol in both icon sets
     let columns_width = usize::from(columns.status) * (STATUS_COL_W + 1)
         + usize::from(columns.ahead_behind) * 10
         + (dirty_w + 1)
@@ -928,7 +929,8 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         + usize::from(columns.stashes) * (count_w + 1)
         + usize::from(columns.pulled_commits) * (count_w + 1)
         + usize::from(columns.pulled_files) * (count_w + 1)
-        + usize::from(columns.pull_request) * (pr_w + 1);
+        + usize::from(columns.pull_request) * (pr_w + 1)
+        + usize::from(columns.favorite) * (fav_w + 1);
 
     let inner_width = inner.width as usize;
     let branch_col_width = inner_width
@@ -1135,6 +1137,17 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
                 };
                 spans.push(Span::styled(format!(" {}", pad_display(&text, pr_w)), style));
             }
+            if columns.favorite {
+                // Already holding this repo's lock — read favorites by rel_path, don't re-lock.
+                let favorited = app.favorites.contains(&state.rel_path);
+                let (glyph, style) = if favorited {
+                    (icons.fav_on, Style::default().fg(Color::Yellow))
+                } else {
+                    (icons.fav_off, Style::default().fg(Color::DarkGray))
+                };
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(pad_display(glyph, fav_w), style));
+            }
 
             ListItem::new(Line::from(spans))
     };
@@ -1149,6 +1162,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             ListRow::FolderHeader { node_idx, depth } => {
                 folder_header_item(app, node_idx, depth, inner_width, tick)
             }
+            ListRow::FavoritesHeader => favorites_header_item(app, inner_width, tick),
             ListRow::Spacer => ListItem::new(Line::from("")),
         })
         .collect();
@@ -1221,7 +1235,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         width: inner.width,
         height: inner.height.saturating_sub(header_height),
     };
-    let (header_lines, header_click) = if header_height > 0 {
+    let (header_lines, header_click, fav_range) = if header_height > 0 {
         build_list_header(
             inner,
             icon_width,
@@ -1231,11 +1245,12 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             count_w,
             dirty_w,
             pr_w,
+            fav_w,
             app.sort_column,
             app.sort_dir,
         )
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), None)
     };
     if header_height > 0 {
         let header_area = Rect { height: header_height, ..inner };
@@ -1305,6 +1320,20 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         }
     }
 
+    // Capture clickable favorite-star regions: each visible repo's star cell toggles its favorite.
+    app.fav_cell_click.clear();
+    if let Some((start, end)) = fav_range.filter(|_| columns.favorite) {
+        let offset = list_state.offset();
+        let height = rows_area.height as usize;
+        let mut clicks = Vec::new();
+        for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
+            if let ListRow::Repo { repo_idx, .. } = *row {
+                clicks.push((rows_area.y + visible as u16, start, end, repo_idx));
+            }
+        }
+        app.fav_cell_click = clicks;
+    }
+
     // Dwell tooltips for the group/folder count tails (right-aligned in each header row).
     {
         let offset = list_state.offset();
@@ -1317,6 +1346,10 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
                 }
                 ListRow::FolderHeader { node_idx, .. } => {
                     (Some(app.tree_subtree_repos(node_idx)), "folder")
+                }
+                ListRow::FavoritesHeader => {
+                    let favorites = (0..app.repos.len()).filter(|&idx| app.is_favorite(idx)).collect();
+                    (Some(favorites), "favorites")
                 }
                 _ => (None, ""),
             };
@@ -1337,6 +1370,10 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     list_state.offset()
 }
 
+/// `build_list_header` output: the 2 header lines, the clickable sort-cell regions
+/// `(col_start, col_end, column)`, and the favorite column's x-range (when shown).
+type ListHeader = (Vec<Line<'static>>, Vec<(u16, u16, SortColumn)>, Option<(u16, u16)>);
+
 /// Build the 2-row repo-list column header: titles aligned to the row column widths with a
 /// `▲`/`▼` indicator on the active sort column, plus the clickable sort-cell regions.
 #[allow(clippy::too_many_arguments)]
@@ -1349,56 +1386,70 @@ fn build_list_header(
     count_w: usize,
     dirty_w: usize,
     pr_w: usize,
+    fav_w: usize,
     sort_column: SortColumn,
     sort_dir: SortDir,
-) -> (Vec<Line<'static>>, Vec<(u16, u16, SortColumn)>) {
-    // (label, width, leading_space, sort) — mirrors the exact widths the rows use.
+) -> ListHeader {
+    // (label, width, leading_space, sort, fav) — mirrors the exact widths the rows use.
     struct Cell {
         label: &'static str,
         width: usize,
         lead: bool,
         sort: Option<SortColumn>,
+        fav: bool,
     }
+    let cell = |label: &'static str, width: usize, lead: bool, sort: Option<SortColumn>| Cell {
+        label,
+        width,
+        lead,
+        sort,
+        fav: false,
+    };
     let mut cells = vec![
-        Cell { label: "", width: icon_width, lead: false, sort: None },
-        Cell { label: "name", width: name_col_width, lead: false, sort: Some(SortColumn::Name) },
-        Cell { label: "", width: 1, lead: false, sort: None },
-        Cell { label: "branch", width: branch_col_width, lead: false, sort: Some(SortColumn::Branch) },
+        cell("", icon_width, false, None),
+        cell("name", name_col_width, false, Some(SortColumn::Name)),
+        cell("", 1, false, None),
+        cell("branch", branch_col_width, false, Some(SortColumn::Branch)),
     ];
     if columns.status {
-        cells.push(Cell { label: "status", width: STATUS_COL_W, lead: true, sort: Some(SortColumn::Status) });
+        cells.push(cell("status", STATUS_COL_W, true, Some(SortColumn::Status)));
     }
     if columns.ahead_behind {
-        cells.push(Cell { label: "↑↓", width: 9, lead: true, sort: Some(SortColumn::AheadBehind) });
+        cells.push(cell("↑↓", 9, true, Some(SortColumn::AheadBehind)));
     }
     // The dirty column is always present (the `t d` toggle controls the count, not visibility).
-    cells.push(Cell { label: "Δ", width: dirty_w, lead: true, sort: Some(SortColumn::Dirty) });
+    cells.push(cell("Δ", dirty_w, true, Some(SortColumn::Dirty)));
     if columns.last_commit {
-        cells.push(Cell { label: "age", width: 14, lead: true, sort: Some(SortColumn::LastCommit) });
+        cells.push(cell("age", 14, true, Some(SortColumn::LastCommit)));
     }
     if columns.worktrees {
-        cells.push(Cell { label: "wt", width: count_w, lead: true, sort: Some(SortColumn::Worktrees) });
+        cells.push(cell("wt", count_w, true, Some(SortColumn::Worktrees)));
     }
     if columns.branches {
-        cells.push(Cell { label: "br", width: count_w, lead: true, sort: Some(SortColumn::Branches) });
+        cells.push(cell("br", count_w, true, Some(SortColumn::Branches)));
     }
     if columns.stashes {
-        cells.push(Cell { label: "st", width: count_w, lead: true, sort: Some(SortColumn::Stashes) });
+        cells.push(cell("st", count_w, true, Some(SortColumn::Stashes)));
     }
     if columns.pulled_commits {
-        cells.push(Cell { label: "pull", width: count_w, lead: true, sort: Some(SortColumn::PulledCommits) });
+        cells.push(cell("pull", count_w, true, Some(SortColumn::PulledCommits)));
     }
     if columns.pulled_files {
-        cells.push(Cell { label: "chg", width: count_w, lead: true, sort: Some(SortColumn::PulledFiles) });
+        cells.push(cell("chg", count_w, true, Some(SortColumn::PulledFiles)));
     }
     if columns.pull_request {
-        cells.push(Cell { label: "pr", width: pr_w, lead: true, sort: Some(SortColumn::PullRequest) });
+        cells.push(cell("pr", pr_w, true, Some(SortColumn::PullRequest)));
+    }
+    if columns.favorite {
+        // Not sortable (favorites-first handles ordering) — a plain title, no click-to-sort region.
+        cells.push(Cell { label: "\u{2605}", width: fav_w, lead: true, sort: None, fav: true });
     }
 
     let active_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let title_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
     let mut spans: Vec<Span> = Vec::new();
     let mut clicks: Vec<(u16, u16, SortColumn)> = Vec::new();
+    let mut fav_range: Option<(u16, u16)> = None;
     let mut col = inner.x;
     for cell in &cells {
         if cell.lead {
@@ -1413,6 +1464,8 @@ fn build_list_header(
         let text = truncate_str(&text, cell.width.max(1));
         let style = if active {
             active_style
+        } else if cell.fav {
+            Style::default().fg(Color::Yellow)
         } else if cell.sort.is_some() {
             title_style
         } else {
@@ -1422,6 +1475,9 @@ fn build_list_header(
         if let Some(sort) = cell.sort {
             clicks.push((col, col + cell.width as u16, sort));
         }
+        if cell.fav {
+            fav_range = Some((col, col + cell.width as u16));
+        }
         col += cell.width as u16;
     }
 
@@ -1429,7 +1485,7 @@ fn build_list_header(
         "─".repeat(inner.width as usize),
         Style::default().fg(Color::DarkGray),
     ));
-    (vec![Line::from(spans), underline], clicks)
+    (vec![Line::from(spans), underline], clicks, fav_range)
 }
 
 /// Build a group-header list row: a collapse marker (collapsible headers only), the group
@@ -1501,6 +1557,20 @@ fn folder_header_item(
         format!("{name}/"),
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     ));
+    finish_header_line(head, tail, inner_width)
+}
+
+/// The pinned "★ Favorites" section header (favorites-first mode): a star, the label, a dash
+/// fill, then the aggregated status counts + total over the favorited repos.
+fn favorites_header_item(app: &AppState, inner_width: usize, tick: u64) -> ListItem<'static> {
+    let icons = app.icons();
+    let favorites: Vec<usize> =
+        (0..app.repos.len()).filter(|&idx| app.is_favorite(idx)).collect();
+    let tail = status_tail_for(app, &favorites, favorites.len(), icons, tick);
+    let head = vec![
+        Span::raw("  "),
+        Span::styled("\u{2605} Favorites", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+    ];
     finish_header_line(head, tail, inner_width)
 }
 
@@ -3335,6 +3405,13 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         row2_segments.push((" · ".to_string(), hint, None));
         row2_segments.push(("vt".to_string(), key, Some(Command::TreeToggle)));
         row2_segments.push((" tree".to_string(), tree_label, Some(Command::TreeToggle)));
+        // Favorites-first toggle — only meaningful (and only shown) once a repo is favorited.
+        if app.has_favorites() {
+            let fav_label = if app.favorites_first { active } else { hint };
+            row2_segments.push((" · ".to_string(), hint, None));
+            row2_segments.push(("M".to_string(), key, Some(Command::FavoritesFirst)));
+            row2_segments.push((" \u{2605}favs".to_string(), fav_label, Some(Command::FavoritesFirst)));
+        }
     }
     row2_segments.extend([
         (" · ".to_string(), hint, None),

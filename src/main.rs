@@ -450,6 +450,7 @@ fn dispatch_command(
         Cmd::SplitNarrow => app.adjust_split(-0.03),
         Cmd::SplitWiden => app.adjust_split(0.03),
         Cmd::GroupingToggle => app.toggle_grouping_view(),
+        Cmd::FavoritesFirst => app.toggle_favorites_first(),
         Cmd::TreeToggle => app.toggle_tree_view(),
         Cmd::FoldCollapseAll => app.collapse_all(),
         Cmd::FoldExpandAll => app.expand_all(),
@@ -1545,6 +1546,16 @@ async fn run_event_loop(
                                 }
                                 InfoAction::ToggleExpand(field) => app.toggle_info_expanded(&field),
                             }
+                        } else if let Some(repo_idx) = app
+                            .fav_cell_click
+                            .iter()
+                            .find(|(row, start, end, _)| {
+                                mouse.row == *row && mouse.column >= *start && mouse.column < *end
+                            })
+                            .map(|(_, _, _, repo_idx)| *repo_idx)
+                        {
+                            // Click the favorites column's star to toggle that repo's favorite.
+                            app.toggle_favorite(repo_idx);
                         } else if let Some(url) = app
                             .pr_cell_click
                             .iter()
@@ -2353,6 +2364,7 @@ async fn run_event_loop(
                         KeyCode::Char('p') => toggle_or_warn(&mut app, Column::PulledCommits, "pulled commits"),
                         KeyCode::Char('c') => toggle_or_warn(&mut app, Column::PulledFiles, "changed files"),
                         KeyCode::Char('r') => app.toggle_column(Column::PullRequest),
+                        KeyCode::Char('f') => app.toggle_column(Column::Favorite),
                         KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::Enter => {
                             // Exit toggle mode and let the key run normally below.
                             app.pending_leader = None;
@@ -2578,6 +2590,10 @@ async fn run_event_loop(
 
                     // Filter
                     (KeyCode::Char('/'), _) => app.begin_filter_input(),
+
+                    // Favorite the selected repo (★); `M` toggles the favorites-first pinned section.
+                    (KeyCode::Char('m'), _) => app.toggle_selected_favorite(),
+                    (KeyCode::Char('M'), _) => app.toggle_favorites_first(),
 
                     // Preview scroll (when preview focused)
                     (KeyCode::PageUp, _) if app.preview_focused => {
