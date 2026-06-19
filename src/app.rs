@@ -3925,6 +3925,7 @@ impl AppState {
 
     /// Open the folder picker, starting at the first root (or home) with the saved bookmarks.
     pub fn open_picker(&mut self) {
+        self.close_all_modals();
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let start = self.root_dirs.first().cloned().unwrap_or_else(|| home.clone());
         let bookmarks = self.folder_bookmarks.iter().map(PathBuf::from).collect();
@@ -4012,6 +4013,7 @@ impl AppState {
 
     /// Open the fzf-style finder over every repo (most-used first, mirroring goto-repo's default).
     pub fn open_finder(&mut self) {
+        self.close_all_modals();
         let rows: Vec<tui_pick::finder::FinderRow> = self
             .repos
             .iter()
@@ -4665,6 +4667,43 @@ impl AppState {
             || self.diff_modal.is_some()
             || self.copy_menu.is_some()
             || self.base_picker.is_some()
+    }
+
+    /// Close every overlay modal so a freshly-opened one is the only one on screen (single-modal
+    /// invariant — opening Settings while Help is up closes Help instead of stacking). The
+    /// full-screen repo page is a view, not a modal, so it's left untouched; the keyboard helper is
+    /// a child of Help and opens via its own path, which doesn't call this.
+    pub fn close_all_modals(&mut self) {
+        self.show_help = false;
+        self.show_settings = false;
+        self.show_keyboard = false;
+        self.show_build_info = false;
+        self.confirm = None;
+        self.diff_modal = None;
+        self.copy_menu = None;
+        self.base_picker = None;
+        self.finder = None;
+        self.picker = None;
+    }
+
+    /// Open the help modal as the only modal (resets scroll).
+    pub fn open_help(&mut self) {
+        self.close_all_modals();
+        self.show_help = true;
+        self.help_scroll = 0;
+    }
+
+    /// Open the settings modal as the only modal.
+    pub fn open_settings(&mut self) {
+        self.close_all_modals();
+        self.show_settings = true;
+        self.settings_selected = 0;
+    }
+
+    /// Open the build-info modal as the only modal.
+    pub fn open_build_info(&mut self) {
+        self.close_all_modals();
+        self.show_build_info = true;
     }
 
     /// Whether a footer `Command` is actionable in the current context (ignoring modal/leader
@@ -6723,6 +6762,28 @@ mod tests {
         state.show_settings = false;
         state.show_help = true;
         assert!(state.any_modal_open());
+    }
+
+    #[test]
+    fn opening_a_modal_closes_the_others() {
+        let mut state = state_named(&["a"]);
+        // Help up, then open settings — single-modal invariant: help must close.
+        state.open_help();
+        assert!(state.show_help && !state.show_settings);
+        state.open_settings();
+        assert!(state.show_settings && !state.show_help);
+        // Build info likewise replaces settings.
+        state.open_build_info();
+        assert!(state.show_build_info && !state.show_settings && !state.show_help);
+        // The finder/picker overlays also clear any open modal.
+        state.show_help = true;
+        state.open_finder();
+        assert!(state.finder.is_some() && !state.show_help);
+        state.open_picker();
+        assert!(state.picker.is_some() && state.finder.is_none());
+        // close_all_modals leaves nothing open.
+        state.close_all_modals();
+        assert!(!state.any_modal_open() && state.finder.is_none() && state.picker.is_none());
     }
 
     #[test]

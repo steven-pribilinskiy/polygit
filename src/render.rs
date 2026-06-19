@@ -139,7 +139,14 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let mut hits: Vec<Rect> = Vec::new();
     let mut strong_hits: Vec<Rect> = Vec::new();
     let mut button_hits: Vec<Rect> = Vec::new();
-    if app.confirm.is_some() {
+    // Footer status-bar commands stay clickable over any modal (only settings/help/quit keep a
+    // region there). Check them first, everywhere — so the live footer reacts to hover even with a
+    // modal on top, where the per-modal branches below only inspect that modal's own regions.
+    if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
+        for sibling in app.clickable.iter().filter(|c| c.command == region.command) {
+            button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+        }
+    } else if app.confirm.is_some() {
         if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
             button_hits.push(row_rect(region.row, region.col_start, region.col_end));
         }
@@ -309,13 +316,8 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         // No body-row hover tint on the repo page: a full-width row following the cursor reads as
         // the whole page tinting. Only the controls above stay reactive.
     } else {
-        // Main two-pane view.
-        if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
-            // Highlight every status-bar span that runs the same command (key + label together).
-            for sibling in app.clickable.iter().filter(|c| c.command == region.command) {
-                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
-            }
-        } else if let Some(column) = app.header_sort_at(hcol, hrow) {
+        // Main two-pane view. (Footer status-bar commands are handled by the top-level check above.)
+        if let Some(column) = app.header_sort_at(hcol, hrow) {
             // A sortable list column header cell — highlight it across the header's rows (a wide,
             // multi-row cell reads better tinted than reverse-video).
             if let Some(&(start, end, _)) =
