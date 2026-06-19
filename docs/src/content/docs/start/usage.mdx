@@ -90,6 +90,9 @@ vertical tabs — `←`/`→` or `Tab` switch, `↑`/`↓` move within a tab); p
 - **Panel padding** — a 1-cell inner padding inside every bordered panel and modal.
 - **Icons** — switch the status / column / marker glyphs between the default Unicode set and
   an emoji set.
+- **Hide zeros** — hide zero-count column cells (a dim `0` becomes blank), so only repos that
+  actually have ahead/behind/dirty/worktree/branch/stash counts show a number. Emoji mode always
+  hides zeros, so this row is force-selected and inert while emoji icons are active.
 - **Theme** — `dark` / `light` paint a full explicit palette (background, text, and every
   accent color) so the app looks identical in any terminal. `auto` detects whether the
   terminal background is dark or light at startup (OSC 11 query, then `COLORFGBG`, then the

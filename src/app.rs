@@ -1014,7 +1014,7 @@ impl RepoTabsMode {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 6), ("Sync", 3), ("Interaction", 3), ("Layout", 5)];
+    &[("General", 3), ("Theming", 7), ("Sync", 3), ("Interaction", 3), ("Layout", 5)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -2060,6 +2060,8 @@ pub struct AppState {
     pub panel_padding: bool,
     /// Which glyph set to render (Unicode vs emoji).
     pub icon_style: IconStyle,
+    /// Hide zero-count cells (emoji always hides; this extends it to the Unicode set).
+    pub hide_zero_counts: bool,
     /// Color theme (auto = detect terminal background; dark/light = forced).
     pub theme: Theme,
     /// Contrast level for the active palette (text + accent saturation).
@@ -2317,6 +2319,7 @@ impl AppState {
             root_dir: PathBuf::new(),
             panel_padding: persisted.panel_padding,
             icon_style: persisted.icon_style,
+            hide_zero_counts: persisted.hide_zero_counts,
             theme: persisted.theme,
             contrast: persisted.contrast,
             selection_style: persisted.selection_style,
@@ -2646,6 +2649,7 @@ impl AppState {
             dock_ratio: self.dock_ratio,
             panel_padding: self.panel_padding,
             icon_style: self.icon_style,
+            hide_zero_counts: self.hide_zero_counts,
             theme: self.theme,
             contrast: self.contrast,
             selection_style: self.selection_style,
@@ -2963,42 +2967,45 @@ impl AppState {
             }
             (3, 0) => self.icon_style = IconStyle::Unicode,
             (3, 1) => self.icon_style = IconStyle::Emoji,
-            (4, 0) => self.theme = Theme::Auto,
-            (4, 1) => self.theme = Theme::Dark,
-            (4, 2) => self.theme = Theme::Light,
-            (5, 0) => self.background = Background::Normal,
-            (5, 1) => self.background = Background::Soft,
-            (5, 2) => self.background = Background::Terminal,
-            (6, 0) => self.contrast = Contrast::Normal,
-            (6, 1) => self.contrast = Contrast::Soft,
-            (7, 0) => self.selection_style = SelectionStyle::Blue,
-            (7, 1) => self.selection_style = SelectionStyle::Subtle,
-            (8, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
-            (8, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
-            (9, 0) => self.auto_pull_on_launch = true,
-            (9, 1) => self.auto_pull_on_launch = false,
-            (10, 0) => self.auto_pull_max_repos = 50,
-            (10, 1) => self.auto_pull_max_repos = 100,
-            (10, 2) => self.auto_pull_max_repos = 250,
-            (10, 3) => self.auto_pull_max_repos = 0,
-            (11, 0) => self.auto_pull_in_tree = true,
-            (11, 1) => self.auto_pull_in_tree = false,
-            (12, 0) => self.hover_effects = true,
-            (12, 1) => self.hover_effects = false,
-            (13, 0) => self.changed_row_flash = true,
-            (13, 1) => self.changed_row_flash = false,
-            (14, 0) => self.changed_row_highlight = true,
-            (14, 1) => self.changed_row_highlight = false,
-            (15, 0) => self.show_borders = true,
-            (15, 1) => self.show_borders = false,
-            (16, 0) => self.show_splitter = true,
-            (16, 1) => self.show_splitter = false,
-            (17, 0) => self.repo_page_tabs = RepoTabsMode::Off,
-            (17, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
-            (18, 0) => self.dock_repo_panel = true,
-            (18, 1) => self.dock_repo_panel = false,
-            (19, 0) => self.branch_check = BranchCheck::Off,
-            (19, 1) => self.branch_check = BranchCheck::Auto,
+            // Hide zeros is forced on (and inert) in emoji mode — ignore clicks then.
+            (4, 0) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = true,
+            (4, 1) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = false,
+            (5, 0) => self.theme = Theme::Auto,
+            (5, 1) => self.theme = Theme::Dark,
+            (5, 2) => self.theme = Theme::Light,
+            (6, 0) => self.background = Background::Normal,
+            (6, 1) => self.background = Background::Soft,
+            (6, 2) => self.background = Background::Terminal,
+            (7, 0) => self.contrast = Contrast::Normal,
+            (7, 1) => self.contrast = Contrast::Soft,
+            (8, 0) => self.selection_style = SelectionStyle::Blue,
+            (8, 1) => self.selection_style = SelectionStyle::Subtle,
+            (9, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
+            (9, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
+            (10, 0) => self.auto_pull_on_launch = true,
+            (10, 1) => self.auto_pull_on_launch = false,
+            (11, 0) => self.auto_pull_max_repos = 50,
+            (11, 1) => self.auto_pull_max_repos = 100,
+            (11, 2) => self.auto_pull_max_repos = 250,
+            (11, 3) => self.auto_pull_max_repos = 0,
+            (12, 0) => self.auto_pull_in_tree = true,
+            (12, 1) => self.auto_pull_in_tree = false,
+            (13, 0) => self.hover_effects = true,
+            (13, 1) => self.hover_effects = false,
+            (14, 0) => self.changed_row_flash = true,
+            (14, 1) => self.changed_row_flash = false,
+            (15, 0) => self.changed_row_highlight = true,
+            (15, 1) => self.changed_row_highlight = false,
+            (16, 0) => self.show_borders = true,
+            (16, 1) => self.show_borders = false,
+            (17, 0) => self.show_splitter = true,
+            (17, 1) => self.show_splitter = false,
+            (18, 0) => self.repo_page_tabs = RepoTabsMode::Off,
+            (18, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
+            (19, 0) => self.dock_repo_panel = true,
+            (19, 1) => self.dock_repo_panel = false,
+            (20, 0) => self.branch_check = BranchCheck::Off,
+            (20, 1) => self.branch_check = BranchCheck::Auto,
             _ => return,
         }
         self.save_state();
@@ -3016,47 +3023,49 @@ impl AppState {
                 IconStyle::Unicode => 0,
                 IconStyle::Emoji => 1,
             },
-            4 => match self.theme {
+            // Emoji always hides zeros → force-selected "on" regardless of the stored flag.
+            4 => usize::from(!(self.hide_zero_counts || self.icon_style == IconStyle::Emoji)),
+            5 => match self.theme {
                 Theme::Auto => 0,
                 Theme::Dark => 1,
                 Theme::Light => 2,
             },
-            5 => match self.background {
+            6 => match self.background {
                 Background::Normal => 0,
                 Background::Soft => 1,
                 Background::Terminal => 2,
             },
-            6 => match self.contrast {
+            7 => match self.contrast {
                 Contrast::Normal => 0,
                 Contrast::Soft => 1,
             },
-            7 => match self.selection_style {
+            8 => match self.selection_style {
                 SelectionStyle::Blue => 0,
                 SelectionStyle::Subtle => 1,
             },
-            8 => match self.button_hover_style {
+            9 => match self.button_hover_style {
                 ButtonHoverStyle::Inverted => 0,
                 ButtonHoverStyle::Subtle => 1,
             },
-            9 => usize::from(!self.auto_pull_on_launch),
-            10 => match self.auto_pull_max_repos {
+            10 => usize::from(!self.auto_pull_on_launch),
+            11 => match self.auto_pull_max_repos {
                 50 => 0,
                 100 => 1,
                 250 => 2,
                 _ => 3,
             },
-            11 => usize::from(!self.auto_pull_in_tree),
-            12 => usize::from(!self.hover_effects),
-            13 => usize::from(!self.changed_row_flash),
-            14 => usize::from(!self.changed_row_highlight),
-            15 => usize::from(!self.show_borders),
-            16 => usize::from(!self.show_splitter),
-            17 => match self.repo_page_tabs {
+            12 => usize::from(!self.auto_pull_in_tree),
+            13 => usize::from(!self.hover_effects),
+            14 => usize::from(!self.changed_row_flash),
+            15 => usize::from(!self.changed_row_highlight),
+            16 => usize::from(!self.show_borders),
+            17 => usize::from(!self.show_splitter),
+            18 => match self.repo_page_tabs {
                 RepoTabsMode::Off => 0,
                 RepoTabsMode::Auto => 1,
             },
-            18 => usize::from(!self.dock_repo_panel),
-            19 => match self.branch_check {
+            19 => usize::from(!self.dock_repo_panel),
+            20 => match self.branch_check {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
             },
@@ -3793,7 +3802,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 20;
+    pub const SETTINGS_ROWS: usize = 21;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -3809,30 +3818,32 @@ impl AppState {
             (1, _) => "Render the repo list as named group sections (from groups.json)",
             (2, _) => "Render the repos as a collapsible directory tree",
             (3, _) => "Glyph set for statuses, columns, and markers",
-            (4, _) => "Color theme: auto-detect the terminal, or force dark / light",
-            (5, _) => "Surface tone: normal, soft, or terminal (let the terminal background show)",
-            (6, _) => "Strength of text + accent colors. normal = full-contrast text, vivid \
+            (4, _) => "Hide zero-count column cells (a dim 0 becomes blank). Emoji mode always \
+                       hides them.",
+            (5, _) => "Color theme: auto-detect the terminal, or force dark / light",
+            (6, _) => "Surface tone: normal, soft, or terminal (let the terminal background show)",
+            (7, _) => "Strength of text + accent colors. normal = full-contrast text, vivid \
                        accents; soft = dimmer text, desaturated accents (gentler, lower contrast)",
-            (7, _) => "Selected list-row highlight: a solid blue bar, or a subtle tint that keeps \
+            (8, _) => "Selected list-row highlight: a solid blue bar, or a subtle tint that keeps \
                        each column's own color",
-            (8, _) => "Button hover: reverse-video (inverted) or a soft tint, for footer/modal \
+            (9, _) => "Button hover: reverse-video (inverted) or a soft tint, for footer/modal \
                        hints, tabs, radio chips, and keyboard keys",
-            (9, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
-            (10, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
-            (11, _) => "Allow the launch auto-pull while the directory-tree view is active",
-            (12, _) => "Highlight actionable elements under the cursor (enables all-motion mouse \
+            (10, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
+            (11, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
+            (12, _) => "Allow the launch auto-pull while the directory-tree view is active",
+            (13, _) => "Highlight actionable elements under the cursor (enables all-motion mouse \
                         tracking, which takes over terminal text selection)",
-            (13, _) => "Pulse a row's changed cells after a pull. The status text column (t u) \
+            (14, _) => "Pulse a row's changed cells after a pull. The status text column (t u) \
                         also marks what changed.",
-            (14, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
+            (15, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
                         also marks what changed.",
-            (15, _) => "Draw the rounded borders around the two main panes",
-            (16, _) => "Draw the draggable splitter grip between the panes",
-            (17, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
+            (16, _) => "Draw the rounded borders around the two main panes",
+            (17, _) => "Draw the draggable splitter grip between the panes",
+            (18, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
                         sections have rows)",
-            (18, _) => "Show the repo page as a docked bottom panel instead of full-screen \
+            (19, _) => "Show the repo page as a docked bottom panel instead of full-screen \
                         (toggle with b)",
-            (19, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
+            (20, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
                         scales the interval with the repo count",
             _ => return None,
         })
@@ -3847,11 +3858,11 @@ impl AppState {
 
     /// Whether the tabbed settings view draws a blank group-separator row *before* this global
     /// settings row. Visual only (nav/clicks ignore the blank). Splits the Theming tab into
-    /// Icons / palette+selection / button-hover groups: blank before Theme (4) and Button hover (8).
+    /// Icons (+ Hide zeros) / palette / selection+hover groups.
     pub fn settings_tabbed_blank_before(row: usize) -> bool {
-        // Blank before Theme (4) — separates Icons from the palette group — and before List
-        // selection (7) — groups List selection + Button hover as the "selection/hover" pair.
-        row == 4 || row == 7
+        // Blank before Theme (5) — separates the Icons group (Icons + Hide zeros) from the palette
+        // group — and before List selection (8) — groups List selection + Button hover.
+        row == 5 || row == 8
     }
 
     /// Which settings tab a global row belongs to.
@@ -3923,22 +3934,26 @@ impl AppState {
                     IconStyle::Emoji => IconStyle::Unicode,
                 };
             }
-            4 => self.theme = self.theme.cycle(),
-            5 => self.background = self.background.cycle(),
-            6 => self.contrast = self.contrast.cycle(),
-            7 => self.selection_style = self.selection_style.cycle(),
-            8 => self.button_hover_style = self.button_hover_style.cycle(),
-            9 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
-            10 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
-            11 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
-            12 => self.hover_effects = !self.hover_effects,
-            13 => self.changed_row_flash = !self.changed_row_flash,
-            14 => self.changed_row_highlight = !self.changed_row_highlight,
-            15 => self.show_borders = !self.show_borders,
-            16 => self.show_splitter = !self.show_splitter,
-            17 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
-            18 => self.dock_repo_panel = !self.dock_repo_panel,
-            19 => self.branch_check = self.branch_check.cycle(),
+            // Inert in emoji mode (always hides zeros); only togglable with the Unicode set.
+            4 if self.icon_style != IconStyle::Emoji => {
+                self.hide_zero_counts = !self.hide_zero_counts;
+            }
+            5 => self.theme = self.theme.cycle(),
+            6 => self.background = self.background.cycle(),
+            7 => self.contrast = self.contrast.cycle(),
+            8 => self.selection_style = self.selection_style.cycle(),
+            9 => self.button_hover_style = self.button_hover_style.cycle(),
+            10 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            11 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            12 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            13 => self.hover_effects = !self.hover_effects,
+            14 => self.changed_row_flash = !self.changed_row_flash,
+            15 => self.changed_row_highlight = !self.changed_row_highlight,
+            16 => self.show_borders = !self.show_borders,
+            17 => self.show_splitter = !self.show_splitter,
+            18 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
+            19 => self.dock_repo_panel = !self.dock_repo_panel,
+            20 => self.branch_check = self.branch_check.cycle(),
             _ => {}
         }
         self.save_state();
@@ -5807,7 +5822,8 @@ mod tests {
 
     #[test]
     fn set_setting_option_sets_exact_values() {
-        // Row order: 0 padding · 1 grouping · 2 tree · 3 icons · 4 theme · 5 background · 6 contrast.
+        // Row order: 0 padding · 1 grouping · 2 tree · 3 icons · 4 hide-zeros · 5 theme ·
+        // 6 background · 7 contrast · 8 selection · 9 button-hover.
         let mut state = state_named(&["a"]);
         state.set_setting_option(0, 1);
         assert!(!state.panel_padding);
@@ -5821,31 +5837,42 @@ mod tests {
         assert!(state.tree_enabled);
         state.set_setting_option(2, 1);
         assert!(!state.tree_enabled);
+        // Hide zeros (row 4) toggles with the Unicode set.
+        state.set_setting_option(3, 0);
+        assert_eq!(state.icon_style, IconStyle::Unicode);
+        state.set_setting_option(4, 0);
+        assert!(state.hide_zero_counts);
+        state.set_setting_option(4, 1);
+        assert!(!state.hide_zero_counts);
         state.set_setting_option(3, 1);
         assert_eq!(state.icon_style, IconStyle::Emoji);
-        state.set_setting_option(4, 1);
-        assert_eq!(state.theme, Theme::Dark);
-        state.set_setting_option(4, 2);
-        assert_eq!(state.theme, Theme::Light);
+        // Under emoji, Hide zeros is inert — a click can't turn it on.
+        state.set_setting_option(4, 0);
+        assert!(!state.hide_zero_counts);
+        state.set_setting_option(3, 0);
         state.set_setting_option(5, 1);
-        assert_eq!(state.background, Background::Soft);
-        state.set_setting_option(5, 0);
-        assert_eq!(state.background, Background::Normal);
+        assert_eq!(state.theme, Theme::Dark);
+        state.set_setting_option(5, 2);
+        assert_eq!(state.theme, Theme::Light);
         state.set_setting_option(6, 1);
+        assert_eq!(state.background, Background::Soft);
+        state.set_setting_option(6, 0);
+        assert_eq!(state.background, Background::Normal);
+        state.set_setting_option(7, 1);
         assert_eq!(state.contrast, Contrast::Soft);
-        // Button hover lives in Theming now (row 8, right after List selection): inverted / subtle.
-        state.set_setting_option(8, 0);
+        // Button hover (Theming row 9, right after List selection): inverted / subtle.
+        state.set_setting_option(9, 0);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Inverted);
-        state.set_setting_option(8, 1);
+        state.set_setting_option(9, 1);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Subtle);
-        // Layout rows are unchanged by the move: row 15 = borders, 19 = branch check.
-        state.set_setting_option(15, 1);
+        // Layout rows: row 16 = borders, 20 = branch check.
+        state.set_setting_option(16, 1);
         assert!(!state.show_borders);
-        state.set_setting_option(19, 1);
+        state.set_setting_option(20, 1);
         assert_eq!(state.branch_check, crate::app::BranchCheck::Auto);
         // Out-of-range pairs are a no-op.
         let theme = state.theme;
-        state.set_setting_option(4, 9);
+        state.set_setting_option(5, 9);
         state.set_setting_option(25, 0);
         assert_eq!(state.theme, theme);
     }
@@ -5890,22 +5917,22 @@ mod tests {
         assert_eq!(state.settings_active_option(0), 0);
         state.set_setting_option(0, 1);
         assert_eq!(state.settings_active_option(0), 1);
-        // 3-radio: theme auto/dark/light → 0/1/2.
-        state.set_setting_option(4, 2);
-        assert_eq!(state.settings_active_option(4), 2);
-        // 4-radio: auto-pull limit 50/100/250/∞ → 0/1/2/3 (now row 10 after the button-hover move).
-        state.set_setting_option(10, 3);
-        assert_eq!(state.settings_active_option(10), 3);
-        // Button hover (Theming row 8): inverted/subtle → 0/1.
-        state.set_setting_option(8, 0);
-        assert_eq!(state.settings_active_option(8), 0);
-        state.set_setting_option(8, 1);
-        assert_eq!(state.settings_active_option(8), 1);
+        // 3-radio: theme auto/dark/light → 0/1/2 (row 5 after the hide-zeros insert).
+        state.set_setting_option(5, 2);
+        assert_eq!(state.settings_active_option(5), 2);
+        // 4-radio: auto-pull limit 50/100/250/∞ → 0/1/2/3 (row 11).
+        state.set_setting_option(11, 3);
+        assert_eq!(state.settings_active_option(11), 3);
+        // Button hover (Theming row 9): inverted/subtle → 0/1.
+        state.set_setting_option(9, 0);
+        assert_eq!(state.settings_active_option(9), 0);
+        state.set_setting_option(9, 1);
+        assert_eq!(state.settings_active_option(9), 1);
         // A click on the active option then cycling lands on the next value.
-        state.settings_selected = 8;
-        let active = state.settings_active_option(8);
+        state.settings_selected = 9;
+        let active = state.settings_active_option(9);
         state.toggle_selected_setting();
-        assert_ne!(state.settings_active_option(8), active);
+        assert_ne!(state.settings_active_option(9), active);
     }
 
     #[test]
