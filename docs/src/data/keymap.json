@@ -410,13 +410,13 @@
         "keys": [
           "/"
         ],
-        "action": "Filter repos by name"
+        "action": "Filter repos by name (selection follows the first match; Enter keeps it)"
       },
       {
         "keys": [
           "Esc"
         ],
-        "action": "Clear the filter, or quit when no filter"
+        "action": "Clear the filter and restore the pre-filter selection, or quit when no filter"
       },
       {
         "keys": [

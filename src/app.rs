@@ -1904,6 +1904,9 @@ pub struct AppState {
     pub sort_dir: SortDir,
     /// Filter input mode active?
     pub filter_input_mode: bool,
+    /// Repo selected when name-filter input began — restored on Esc (cancel), dropped on Enter
+    /// (commit). Lets `/` temporarily preview the first match while typing. Never persisted.
+    pub filter_prev_selection: Option<usize>,
     /// Wall-clock start time (reset to now whenever a fresh batch of work is kicked off).
     pub start: Instant,
     /// Frozen elapsed once everything finished; `None` while work is running. Restarts (back to
@@ -2257,6 +2260,7 @@ impl AppState {
             sort_column: persisted.sort_column,
             sort_dir: persisted.sort_dir,
             filter_input_mode: false,
+            filter_prev_selection: None,
             start: Instant::now(),
             finished_elapsed: None,
             all_done: false,
@@ -3729,6 +3733,44 @@ impl AppState {
             }
         }
         self.snap_selection(false);
+    }
+
+    /// Enter name-filter input mode, remembering the current selection so Esc can restore it.
+    pub fn begin_filter_input(&mut self) {
+        self.filter_input_mode = true;
+        if self.filter.is_none() {
+            self.filter = Some(String::new());
+        }
+        self.filter_prev_selection = self.selected_repo_index();
+    }
+
+    /// Commit the name filter (Enter / click the hint again): stop editing, keep the current
+    /// selection, and forget the remembered pre-filter repo.
+    pub fn commit_filter_input(&mut self) {
+        self.filter_input_mode = false;
+        self.filter_prev_selection = None;
+    }
+
+    /// Cancel name-filter input (Esc): clear the filter and restore the pre-filter selection.
+    pub fn cancel_filter_input(&mut self) {
+        self.filter_input_mode = false;
+        self.filter = None;
+        let prev = self.filter_prev_selection.take();
+        self.reselect_repo(prev);
+    }
+
+    /// While typing a non-empty filter, snap the selection to the first matching repo row so the
+    /// match is previewed live. A no-op for an empty filter (don't jump just for opening `/`).
+    pub fn select_first_filtered_row(&mut self) {
+        if self.filter.as_deref().unwrap_or("").is_empty() {
+            return;
+        }
+        let rows = self.visible_rows();
+        if let Some(pos) = rows.iter().position(|row| matches!(row, ListRow::Repo { .. })) {
+            self.selected = pos;
+        } else {
+            self.snap_selection(false);
+        }
     }
 
     /// Compare two repos by the active sort column (ascending). Missing details sort as 0.
@@ -5311,6 +5353,38 @@ mod tests {
             .map(|name| Arc::new(Mutex::new(RepoState::new(*name, PathBuf::from("/tmp")))))
             .collect();
         normalized(AppState::new(repos, 4, true))
+    }
+
+    #[test]
+    fn filter_input_previews_first_match_and_esc_restores() {
+        let mut state = state_named(&["alpha", "beta", "gamma"]);
+        state.selected = 2; // gamma (name-asc order)
+        assert_eq!(state.selected_repo_index(), Some(2));
+        state.begin_filter_input();
+        assert_eq!(state.filter_prev_selection, Some(2));
+        // Typing narrows to beta; the selection previews the first (only) match.
+        state.filter = Some("be".to_string());
+        state.select_first_filtered_row();
+        assert_eq!(state.selected_repo_index(), Some(1));
+        // Esc clears the filter and restores the original selection.
+        state.cancel_filter_input();
+        assert_eq!(state.filter, None);
+        assert!(!state.filter_input_mode);
+        assert_eq!(state.selected_repo_index(), Some(2));
+    }
+
+    #[test]
+    fn filter_commit_keeps_previewed_selection() {
+        let mut state = state_named(&["alpha", "beta", "gamma"]);
+        state.selected = 0;
+        state.begin_filter_input();
+        state.filter = Some("gam".to_string());
+        state.select_first_filtered_row();
+        assert_eq!(state.selected_repo_index(), Some(2)); // gamma
+        state.commit_filter_input();
+        assert_eq!(state.filter_prev_selection, None);
+        assert!(!state.filter_input_mode);
+        assert_eq!(state.selected_repo_index(), Some(2)); // kept
     }
 
     #[test]
