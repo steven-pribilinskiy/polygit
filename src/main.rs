@@ -1166,10 +1166,25 @@ async fn run_event_loop(
                                 mouse.row == row && mouse.column >= start && mouse.column < end
                             })
                             .map(|&(.., tab)| tab);
+                        let section_click = app
+                            .settings_section_click
+                            .iter()
+                            .find(|&&(row, start, end, _)| {
+                                mouse.row == row && mouse.column >= start && mouse.column < end
+                            })
+                            .map(|&(.., tab)| tab);
                         if region_hit(app.settings_close_click, mouse.column, mouse.row) {
                             app.show_settings = false;
                         } else if let Some(tab) = tab_click {
                             app.settings_select_tab(tab);
+                        } else if region_hit(
+                            app.settings_collapse_all_click,
+                            mouse.column,
+                            mouse.row,
+                        ) {
+                            app.toggle_all_settings_sections();
+                        } else if let Some(tab) = section_click {
+                            app.toggle_settings_section(tab);
                         } else if let Some((row_idx, option)) =
                             app.settings_hit_at(mouse.column, mouse.row)
                         {
@@ -1728,10 +1743,24 @@ async fn run_event_loop(
                         }
                         KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
                         KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
-                        KeyCode::Right | KeyCode::Tab => app.settings_cycle_tab(true),
-                        KeyCode::Left | KeyCode::BackTab => app.settings_cycle_tab(false),
+                        // In accordion mode ←/→ collapse/expand the selected section; in tabbed
+                        // mode they switch tabs; in flat mode they do nothing.
+                        KeyCode::Right | KeyCode::Tab => {
+                            if app.settings_layout == crate::app::SettingsLayout::Accordion {
+                                app.set_selected_settings_section(false);
+                            } else {
+                                app.settings_cycle_tab(true);
+                            }
+                        }
+                        KeyCode::Left | KeyCode::BackTab => {
+                            if app.settings_layout == crate::app::SettingsLayout::Accordion {
+                                app.set_selected_settings_section(true);
+                            } else {
+                                app.settings_cycle_tab(false);
+                            }
+                        }
                         KeyCode::Char(' ') | KeyCode::Enter => app.toggle_selected_setting(),
-                        // `v` toggles the tabbed/flat layout (hint shown in the bottom border).
+                        // `v` cycles the tabbed → accordion → flat layout (hint in the bottom border).
                         KeyCode::Char('v') => {
                             app.settings_layout = app.settings_layout.cycle();
                             app.settings_tab =

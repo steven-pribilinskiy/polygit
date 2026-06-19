@@ -859,21 +859,33 @@ impl ButtonHoverStyle {
 }
 
 /// Layout of the settings modal: `Tabbed` shows IDE-style vertical tabs (one section at a time);
-/// `Flat` stacks every section in one scroll (the original layout).
+/// `Accordion` stacks every section with a collapsible header; `Flat` stacks every section
+/// expanded (the original layout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SettingsLayout {
     #[default]
     Tabbed,
+    Accordion,
     Flat,
 }
 
 impl SettingsLayout {
-    /// Toggle Tabbed ↔ Flat.
+    /// Cycle Tabbed → Accordion → Flat → Tabbed.
     pub fn cycle(self) -> Self {
         match self {
-            SettingsLayout::Tabbed => SettingsLayout::Flat,
+            SettingsLayout::Tabbed => SettingsLayout::Accordion,
+            SettingsLayout::Accordion => SettingsLayout::Flat,
             SettingsLayout::Flat => SettingsLayout::Tabbed,
+        }
+    }
+
+    /// Short label for the *next* layout (footer hint: "press v for …").
+    pub fn next_label(self) -> &'static str {
+        match self {
+            SettingsLayout::Tabbed => " accordion view",
+            SettingsLayout::Accordion => " flat view",
+            SettingsLayout::Flat => " tabbed view",
         }
     }
 }
@@ -2080,10 +2092,16 @@ pub struct AppState {
     pub settings_selected: usize,
     /// Active settings tab (index into `SETTINGS_TABS`) in the tabbed layout.
     pub settings_tab: usize,
-    /// Settings modal layout (tabbed vs flat). Persisted.
+    /// Settings modal layout (tabbed / accordion / flat). Persisted.
     pub settings_layout: SettingsLayout,
+    /// Section names collapsed in the accordion settings layout. Persisted.
+    pub collapsed_settings: HashSet<String>,
     /// Clickable settings tab labels: (row, col_start, col_end, tab index). Rebuilt each render.
     pub settings_tab_click: Vec<(u16, u16, u16, usize)>,
+    /// Clickable accordion section headers: (row, col_start, col_end, tab index). Rebuilt each render.
+    pub settings_section_click: Vec<(u16, u16, u16, usize)>,
+    /// The accordion expand/collapse-all button region: (row, col_start, col_end). Rebuilt each render.
+    pub settings_collapse_all_click: Option<(u16, u16, u16)>,
     /// The repo-page `y` copy menu, when open: the selected option (0 = path, 1 = branch, 2 = both).
     pub copy_menu: Option<usize>,
     /// A transient toast (auto-dismisses after `TOAST_DURATION`).
@@ -2330,7 +2348,10 @@ impl AppState {
             settings_selected: 0,
             settings_tab: 0,
             settings_layout: persisted.settings_layout,
+            collapsed_settings: persisted.collapsed_settings.into_iter().collect(),
             settings_tab_click: Vec::new(),
+            settings_section_click: Vec::new(),
+            settings_collapse_all_click: None,
             copy_menu: None,
             toast: None,
             settings_area: Rect::default(),
@@ -2655,6 +2676,11 @@ impl AppState {
             selection_style: self.selection_style,
             button_hover_style: self.button_hover_style,
             settings_layout: self.settings_layout,
+            collapsed_settings: {
+                let mut sections: Vec<String> = self.collapsed_settings.iter().cloned().collect();
+                sections.sort();
+                sections
+            },
             background: Some(self.background),
             sort_column: self.sort_column,
             sort_dir: self.sort_dir,
@@ -3897,17 +3923,94 @@ impl AppState {
         self.settings_select_tab(next);
     }
 
+    /// Whether settings section `tab_idx` is collapsed (accordion layout only).
+    pub fn settings_section_collapsed(&self, tab_idx: usize) -> bool {
+        SETTINGS_TABS
+            .get(tab_idx)
+            .is_some_and(|(name, _)| self.collapsed_settings.contains(*name))
+    }
+
+    /// Whether a global settings row is currently visible (accordion: not in a collapsed section;
+    /// tabbed/flat: always). Used by keyboard nav to skip hidden rows.
+    fn settings_row_visible(&self, row: usize) -> bool {
+        if self.settings_layout != SettingsLayout::Accordion {
+            return true;
+        }
+        !self.settings_section_collapsed(Self::settings_tab_of_row(row))
+    }
+
+    /// Toggle a settings section's collapsed state (accordion layout). The selection stays on its
+    /// row — even when hidden — so its header stays highlighted and ←/→ can re-expand it.
+    pub fn toggle_settings_section(&mut self, tab_idx: usize) {
+        let Some((name, _)) = SETTINGS_TABS.get(tab_idx) else {
+            return;
+        };
+        if self.collapsed_settings.contains(*name) {
+            self.collapsed_settings.remove(*name);
+        } else {
+            self.collapsed_settings.insert((*name).to_string());
+        }
+        self.save_state();
+    }
+
+    /// Collapse (or expand) the section holding the current selection (accordion ←/→).
+    pub fn set_selected_settings_section(&mut self, collapse: bool) {
+        if self.settings_layout != SettingsLayout::Accordion {
+            return;
+        }
+        let tab = Self::settings_tab_of_row(self.settings_selected);
+        if self.settings_section_collapsed(tab) != collapse {
+            self.toggle_settings_section(tab);
+        }
+    }
+
+    /// Whether every settings section is collapsed (drives the expand/collapse-all label).
+    pub fn settings_all_collapsed(&self) -> bool {
+        SETTINGS_TABS.iter().all(|(name, _)| self.collapsed_settings.contains(*name))
+    }
+
+    /// Collapse every section, or expand every section if all are already collapsed (accordion).
+    pub fn toggle_all_settings_sections(&mut self) {
+        if self.settings_all_collapsed() {
+            self.collapsed_settings.clear();
+        } else {
+            for (name, _) in SETTINGS_TABS {
+                self.collapsed_settings.insert((*name).to_string());
+            }
+        }
+        self.save_state();
+    }
+
     /// Move the settings selection by `delta`, clamped to the active tab in the tabbed layout (and
-    /// to the whole list in the flat layout). Keeps `settings_tab` in sync with the selection.
+    /// to the whole list in flat/accordion). In accordion mode, rows in collapsed sections are
+    /// skipped. Keeps `settings_tab` in sync with the selection.
     pub fn settings_move(&mut self, delta: isize) {
-        let current = self.settings_selected as isize;
         let (lo, hi) = if self.settings_layout == SettingsLayout::Tabbed {
             let (start, len) = Self::settings_tab_range(self.settings_tab);
             (start as isize, (start + len).saturating_sub(1) as isize)
         } else {
             (0, Self::SETTINGS_ROWS.saturating_sub(1) as isize)
         };
-        self.settings_selected = (current + delta).clamp(lo, hi) as usize;
+        if self.settings_layout == SettingsLayout::Accordion {
+            let dir = delta.signum();
+            if dir != 0 {
+                let mut idx = self.settings_selected as isize;
+                for _ in 0..delta.abs() {
+                    let mut next = idx + dir;
+                    while next >= lo && next <= hi && !self.settings_row_visible(next as usize) {
+                        next += dir;
+                    }
+                    if next < lo || next > hi {
+                        break;
+                    }
+                    idx = next;
+                }
+                self.settings_selected = idx.clamp(lo, hi) as usize;
+            }
+        } else {
+            let current = self.settings_selected as isize;
+            self.settings_selected = (current + delta).clamp(lo, hi) as usize;
+        }
         self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
     }
 
@@ -4915,6 +5018,44 @@ mod tests {
         builder.values[1] = "3".to_string();
         builder.on[5] = true;
         assert_eq!(builder.command(), "polygit ~/projects --depth 3 --no-tui");
+    }
+
+    #[test]
+    fn accordion_collapse_hides_rows_and_nav_skips_them() {
+        let mut state = state_named(&["a"]);
+        state.settings_layout = SettingsLayout::Accordion;
+        state.collapsed_settings.clear();
+        // Fully expanded: every row visible, not all-collapsed.
+        assert!(state.settings_row_visible(0));
+        assert!(state.settings_row_visible(3));
+        assert!(!state.settings_all_collapsed());
+        // Collapse General (tab 0 = rows 0,1,2): those rows hide; the next section stays visible.
+        state.toggle_settings_section(0);
+        assert!(state.settings_section_collapsed(0));
+        assert!(!state.settings_row_visible(0));
+        assert!(state.settings_row_visible(3));
+        // Nav can't move up into the collapsed General section.
+        state.settings_selected = 3;
+        state.settings_move(-1);
+        assert_eq!(state.settings_selected, 3);
+        // Collapse-all then expand-all round-trips.
+        state.toggle_all_settings_sections();
+        assert!(state.settings_all_collapsed());
+        state.toggle_all_settings_sections();
+        assert!(state.collapsed_settings.is_empty());
+        // ←/→ helpers collapse / expand the selected row's section.
+        state.settings_selected = 3; // Theming
+        state.set_selected_settings_section(true);
+        assert!(state.settings_section_collapsed(AppState::settings_tab_of_row(3)));
+        state.set_selected_settings_section(false);
+        assert!(!state.settings_section_collapsed(AppState::settings_tab_of_row(3)));
+    }
+
+    #[test]
+    fn settings_layout_cycles_three_ways() {
+        assert_eq!(SettingsLayout::Tabbed.cycle(), SettingsLayout::Accordion);
+        assert_eq!(SettingsLayout::Accordion.cycle(), SettingsLayout::Flat);
+        assert_eq!(SettingsLayout::Flat.cycle(), SettingsLayout::Tabbed);
     }
 
     #[test]
