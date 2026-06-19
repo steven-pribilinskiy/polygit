@@ -1979,6 +1979,10 @@ pub struct AppState {
     pub divider_dragging: bool,
     /// Scroll offset of the list widget, read back after render for row hit-testing.
     pub list_offset: usize,
+    /// Manual list scroll position (viewport-top item row). The plain mouse wheel drives this
+    /// independently of the selection (web-app style); keyboard / Alt+wheel nav scrolls it only
+    /// enough to keep the selection visible.
+    pub list_scroll: usize,
     /// What the right pane shows for the selected repo (log, info, or diff).
     pub right_view: RightView,
     /// Whether a compact info section is pinned above the log/diff (`I`).
@@ -2313,6 +2317,7 @@ impl AppState {
             divider_col: 0,
             divider_dragging: false,
             list_offset: 0,
+            list_scroll: 0,
             right_view: RightView::Log,
             info_pinned: persisted.info_pinned,
             info_click: Vec::new(),
@@ -4496,6 +4501,56 @@ impl AppState {
         self.selected = self.list_len().saturating_sub(1);
     }
 
+    /// Physical list-item row of the current selection, accounting for the separator rows before
+    /// the Result and Errors summary items (mirrors the mapping in `render_list`).
+    pub fn selected_item_row(&self) -> usize {
+        let rows = self.visible_rows().len();
+        if self.selected < rows {
+            self.selected
+        } else if self.selected == rows {
+            rows + 1 // one separator before Result
+        } else {
+            rows + 3 // separator + Result + separator before Errors
+        }
+    }
+
+    /// Total physical item rows in the list widget (repo/header rows + separators + Result +
+    /// optional Errors + optional empty-state hint) — the basis for clamping the manual scroll.
+    pub fn total_item_rows(&self) -> usize {
+        let rows = self.visible_rows().len();
+        rows + 2 // separator + Result
+            + if self.has_errors() { 2 } else { 0 } // separator + Errors
+            + if self.discovery_done && self.repos.is_empty() { 2 } else { 0 } // blank + hint
+    }
+
+    /// The largest valid `list_scroll` for a given viewport height.
+    pub fn max_list_scroll(&self, viewport: usize) -> usize {
+        self.total_item_rows().saturating_sub(viewport)
+    }
+
+    /// Scroll the list by `delta` rows (plain mouse wheel), clamped to the content. Does NOT move
+    /// the selection — the selected row may scroll out of view, web-app style.
+    pub fn scroll_list(&mut self, delta: isize, viewport: usize) {
+        let max = self.max_list_scroll(viewport) as isize;
+        self.list_scroll = (self.list_scroll as isize + delta).clamp(0, max.max(0)) as usize;
+    }
+
+    /// Scroll the list only as far as needed to bring the selection into view (keyboard / Alt+wheel
+    /// nav). A selection already on screen leaves the scroll untouched — so e.g. moving up off the
+    /// bottom row doesn't shift the viewport.
+    pub fn ensure_list_selection_visible(&mut self, viewport: usize) {
+        if viewport == 0 {
+            return;
+        }
+        let item = self.selected_item_row();
+        if item < self.list_scroll {
+            self.list_scroll = item;
+        } else if item >= self.list_scroll + viewport {
+            self.list_scroll = item + 1 - viewport;
+        }
+        self.list_scroll = self.list_scroll.min(self.max_list_scroll(viewport));
+    }
+
     /// Move the selection up by `step` rows (PageUp), landing on a selectable row.
     pub fn nav_page_up(&mut self, step: usize) {
         self.user_navigated = true;
@@ -5532,6 +5587,34 @@ mod tests {
         assert!(state.effective_columns().favorite);
         state.toggle_column(Column::Favorite);
         assert!(!state.columns.favorite);
+    }
+
+    #[test]
+    fn wheel_scroll_is_independent_of_selection() {
+        let mut state = state_named(&["a", "b", "c", "d", "e", "f", "g", "h"]);
+        let viewport = 3;
+        state.selected = 0;
+        state.list_scroll = 0;
+        // Plain wheel scrolls the view without touching the selection.
+        state.scroll_list(2, viewport);
+        assert_eq!(state.list_scroll, 2);
+        assert_eq!(state.selected, 0);
+        // Scrolling is clamped to the content (8 repos + separator + Result = 10 rows).
+        let max = state.max_list_scroll(viewport);
+        state.scroll_list(100, viewport);
+        assert_eq!(state.list_scroll, max);
+        // Bringing the selection into view only scrolls as far as needed.
+        state.ensure_list_selection_visible(viewport);
+        assert_eq!(state.list_scroll, 0); // selection 0 was above → snap up to it
+        // A selection already on screen never moves the view (the bottom-row-press-up case).
+        state.selected = 1;
+        state.list_scroll = 0;
+        state.ensure_list_selection_visible(viewport);
+        assert_eq!(state.list_scroll, 0);
+        // A selection below the viewport scrolls just enough to reveal it.
+        state.selected = 5;
+        state.ensure_list_selection_visible(viewport);
+        assert_eq!(state.list_scroll, 5 + 1 - viewport);
     }
 
     #[test]

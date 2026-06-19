@@ -322,6 +322,10 @@ fn hint_key_event(hint: app::HintKey) -> KeyEvent {
     }
 }
 
+/// Rows the plain mouse wheel scrolls the repo list per notch (Alt+wheel moves the selection
+/// instead, one step per notch).
+const WHEEL_LIST_STEP: isize = 3;
+
 /// Wheel step for a scroll event, scaled by modifier keys: Ctrl/Alt → a full `page`, Shift → 5×
 /// the `base` step, otherwise `base`. (Some terminals don't report Shift on the wheel, hence Alt
 /// also stands in for a fast jump.)
@@ -813,6 +817,10 @@ async fn run_event_loop(
     // Whether the divider is currently being dragged with the mouse.
     let mut dragging_divider = false;
     let mut dragging_dock = false;
+    // Tracks the list selection between frames: when it changes (keyboard / Alt+wheel nav, filter
+    // preview, …) the view scrolls just enough to keep it visible. The plain wheel changes only
+    // `list_scroll`, not the selection, so it never triggers this — the view scrolls freely.
+    let mut last_list_selection: usize = usize::MAX;
     let mut last_branch_check = Instant::now();
     // Which scrollbar (if any) is currently being dragged.
     let mut scroll_drag: Option<app::ScrollKind> = None;
@@ -950,6 +958,14 @@ async fn run_event_loop(
         // Render
         {
             let mut app = app_state.lock().unwrap();
+            // Keep the selection in view whenever it moved this frame (keyboard / Alt+wheel nav,
+            // filter preview, reselect after a layout change). A plain wheel scroll leaves the
+            // selection unchanged, so this is skipped and the view stays where the wheel left it.
+            if app.selected != last_list_selection {
+                let viewport = app.list_rows_area.height as usize;
+                app.ensure_list_selection_visible(viewport);
+                last_list_selection = app.selected;
+            }
             // Sync all-motion mouse tracking (DEC 1003) to the hover-effects setting: on enables
             // `Moved` events for hover highlighting; off restores the terminal's own selection.
             if app.hover_effects != hover_tracking_on {
@@ -1628,10 +1644,14 @@ async fn run_event_loop(
                     }
                     MouseEventKind::ScrollUp => {
                         if mouse.column < app.divider_col {
-                            let step =
-                                wheel_step(mouse.modifiers, 1, app.list_rows_area.height as usize);
-                            for _ in 0..step {
+                            // Plain wheel scrolls the list view (selection untouched, web-app
+                            // style); Alt+wheel moves the selection like the Up key.
+                            let viewport = app.list_rows_area.height as usize;
+                            if mouse.modifiers.contains(KeyModifiers::ALT) {
                                 app.nav_up();
+                                app.ensure_list_selection_visible(viewport);
+                            } else {
+                                app.scroll_list(-WHEEL_LIST_STEP, viewport);
                             }
                         } else if let Some(repo_idx) = app.selected_repo_index() {
                             let step = wheel_step(mouse.modifiers, 3, app.preview_viewport);
@@ -1642,10 +1662,12 @@ async fn run_event_loop(
                     }
                     MouseEventKind::ScrollDown => {
                         if mouse.column < app.divider_col {
-                            let step =
-                                wheel_step(mouse.modifiers, 1, app.list_rows_area.height as usize);
-                            for _ in 0..step {
+                            let viewport = app.list_rows_area.height as usize;
+                            if mouse.modifiers.contains(KeyModifiers::ALT) {
                                 app.nav_down();
+                                app.ensure_list_selection_visible(viewport);
+                            } else {
+                                app.scroll_list(WHEEL_LIST_STEP, viewport);
                             }
                         } else if let Some(repo_idx) = app.selected_repo_index() {
                             // Clamp to the real content (works for log AND diff views) so wheel-up

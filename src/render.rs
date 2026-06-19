@@ -1215,15 +1215,15 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     }
 
     let mut list_state = ListState::default();
-    // Map the logical selection to a list index, skipping separator lines:
+    // Physical list-item row of the selection (skipping the separator lines):
     //   list rows → same index; Result → rows.len()+1; Errors → rows.len()+3.
-    if app.selected < rows.len() {
-        list_state.select(Some(app.selected));
+    let sel_item = if app.selected < rows.len() {
+        app.selected
     } else if app.selected == rows.len() {
-        list_state.select(Some(rows.len() + 1));
+        rows.len() + 1
     } else {
-        list_state.select(Some(rows.len() + 3));
-    }
+        rows.len() + 3
+    };
 
     // Split the inner area into a 2-row column header (titles + sort indicator) and the repo
     // rows beneath. Too short for a header → use the whole inner area for rows.
@@ -1273,7 +1273,21 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     }
 
     let total_items = items.len();
-    let list = List::new(items)
+    // Drive the scroll from the manual `list_scroll`, which the plain wheel moves independently of
+    // the selection. ratatui's List treats `select(None)` as `select(0)` and would snap the offset
+    // back to the top, so it can't give a selection-independent scroll via `ListState::offset` —
+    // instead we drop the scrolled-past items and render from the top of the remainder.
+    let viewport = rows_area.height as usize;
+    let scroll = app.list_scroll.min(total_items.saturating_sub(viewport));
+    app.list_scroll = scroll;
+    // Highlight the selected row only when it falls within the scrolled viewport.
+    if viewport > 0 && sel_item >= scroll && sel_item < scroll + viewport {
+        list_state.select(Some(sel_item - scroll));
+    } else {
+        list_state.select(None);
+    }
+    let visible_items: Vec<ListItem> = items.into_iter().skip(scroll).collect();
+    let list = List::new(visible_items)
         .highlight_style(selection_highlight_style(app))
         .highlight_symbol("");
 
@@ -1285,14 +1299,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         width: area.width,
         height: rows_area.height,
     };
-    render_scrollbar(
-        frame,
-        scrollbar_area,
-        list_state.offset(),
-        total_items,
-        rows_area.height as usize,
-        false,
-    );
+    render_scrollbar(frame, scrollbar_area, scroll, total_items, viewport, false);
 
     // Capture clickable PR-cell regions: for each visible repo with an open PR, the `#N` cell's
     // screen row + the PR column's x-range (taken from the header) opens the PR in the browser.
@@ -1304,7 +1311,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             .find(|&&(_, _, column)| column == SortColumn::PullRequest)
             .map(|&(start, end, _)| (start, end));
         if let Some((start, end)) = pr_x {
-            let offset = list_state.offset();
+            let offset = scroll;
             let height = rows_area.height as usize;
             let mut clicks = Vec::new();
             for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
@@ -1322,7 +1329,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     // Capture clickable favorite-star regions: each visible repo's star cell toggles its favorite.
     app.fav_cell_click.clear();
     if let Some((start, end)) = fav_range.filter(|_| columns.favorite) {
-        let offset = list_state.offset();
+        let offset = scroll;
         let height = rows_area.height as usize;
         let mut clicks = Vec::new();
         for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
@@ -1335,7 +1342,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
 
     // Dwell tooltips for the group/folder count tails (right-aligned in each header row).
     {
-        let offset = list_state.offset();
+        let offset = scroll;
         let height = rows_area.height as usize;
         let end = inner.x + inner.width.saturating_sub(2);
         for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
@@ -1366,7 +1373,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     }
 
     app.list_rows_area = rows_area;
-    list_state.offset()
+    scroll
 }
 
 /// `build_list_header` output: the 2 header lines, the clickable sort-cell regions
