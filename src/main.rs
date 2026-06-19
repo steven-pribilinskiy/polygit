@@ -355,7 +355,14 @@ fn dispatch_command(
 ) -> Option<i32> {
     match command {
         Cmd::Retry => {
-            if let Some(idx) = app.selected_repo_index() {
+            if let Some(repos) = app.selected_header_repos() {
+                // A folder/group header is selected → retry the retryable repos it covers.
+                let scoped: Vec<usize> = repos
+                    .into_iter()
+                    .filter(|&idx| app.repos[idx].lock().unwrap().status.is_retryable())
+                    .collect();
+                retry_queue.extend(scoped);
+            } else if let Some(idx) = app.selected_repo_index() {
                 if app.repos[idx].lock().unwrap().status.is_retryable() {
                     retry_queue.push(idx);
                 }
@@ -363,7 +370,14 @@ fn dispatch_command(
         }
         Cmd::RetryAll => retry_queue.extend(app.retryable_repos()),
         Cmd::Refetch => {
-            if let Some(idx) = app.selected_repo_index() {
+            if let Some(repos) = app.selected_header_repos() {
+                // A folder/group header is selected → re-pull every repo it covers (not running).
+                let scoped: Vec<usize> = repos
+                    .into_iter()
+                    .filter(|&idx| !app.repos[idx].lock().unwrap().status.is_running())
+                    .collect();
+                retry_queue.extend(scoped);
+            } else if let Some(idx) = app.selected_repo_index() {
                 if app.repos[idx].lock().unwrap().status.is_terminal() {
                     retry_queue.push(idx);
                 }

@@ -1287,9 +1287,12 @@ impl Command {
     /// A one-line description shown as a tooltip after dwelling on the command's status-bar hint.
     pub fn tooltip(self) -> &'static str {
         match self {
-            Command::Retry => "Retry the selected repo (only if it failed or was skipped)",
+            Command::Retry => {
+                "Retry the selected repo (or every repo in the selected folder/group) that failed \
+                 or was skipped"
+            }
             Command::RetryAll => "Retry every repo that failed or was skipped",
-            Command::Refetch => "Re-pull the selected repo from scratch",
+            Command::Refetch => "Re-pull the selected repo (or every repo in the selected folder/group)",
             Command::RefetchAll => "Re-pull every repo from scratch",
             Command::Info => "Toggle the info panel for the selected repo",
             Command::Help => "Open the help modal (keys, flags, glyphs, about)",
@@ -4344,6 +4347,31 @@ impl AppState {
         self.selected_status_matches(|status| !status.is_running())
     }
 
+    /// Repos covered by the selected folder/group header — a folder's whole subtree (recursively)
+    /// or a group's visible members — so `e`/`r` can act on just that section. `None` when the
+    /// selection isn't a folder/group header (a repo row, Result, etc.).
+    pub fn selected_header_repos(&self) -> Option<Vec<usize>> {
+        match self.selected_row()? {
+            ListRow::FolderHeader { node_idx, .. } => Some(self.tree_subtree_repos(node_idx)),
+            ListRow::GroupHeader { group_idx, .. } => Some(self.group_visible_members(group_idx)),
+            _ => None,
+        }
+    }
+
+    /// The selected folder/group header has at least one retryable repo (scoped `r`).
+    pub fn selected_header_retryable(&self) -> bool {
+        self.selected_header_repos().is_some_and(|repos| {
+            repos.iter().any(|&idx| self.repos[idx].lock().unwrap().status.is_retryable())
+        })
+    }
+
+    /// The selected folder/group header has at least one not-in-progress repo (scoped `e`).
+    pub fn selected_header_refetchable(&self) -> bool {
+        self.selected_header_repos().is_some_and(|repos| {
+            repos.iter().any(|&idx| !self.repos[idx].lock().unwrap().status.is_running())
+        })
+    }
+
     /// Any repo has an issue — `R` is meaningful.
     pub fn any_retryable(&self) -> bool {
         self.repos
@@ -4398,9 +4426,9 @@ impl AppState {
             // Selection moves need a non-empty list.
             Command::NavDown | Command::NavUp => !self.repos.is_empty(),
             // Retry/refetch reuse their existing no-op predicates.
-            Command::Retry => self.selected_repo_retryable(),
+            Command::Retry => self.selected_repo_retryable() || self.selected_header_retryable(),
             Command::RetryAll => self.any_retryable(),
-            Command::Refetch => self.selected_repo_refetchable(),
+            Command::Refetch => self.selected_repo_refetchable() || self.selected_header_refetchable(),
             Command::RefetchAll => self.any_refetchable(),
             // Everything else is always available (filters, sort, columns, resize, dock, focus,
             // result overlay, settings/help/quit, build info, menu items).
@@ -5839,6 +5867,34 @@ mod tests {
                 ListRow::Spacer => "spacer".to_string(),
             })
             .collect()
+    }
+
+    #[test]
+    fn scoped_fetch_targets_selected_folder_subtree() {
+        let mut state = tree_state(&["groupA/r1", "groupA/r2", "groupB/r3"]);
+        // Select the groupA folder header.
+        let rows = state.visible_rows();
+        let folder_a = rows
+            .iter()
+            .position(|row| {
+                matches!(row, ListRow::FolderHeader { node_idx, .. }
+                    if state.tree_nodes[*node_idx].name == "groupA")
+            })
+            .expect("groupA folder header present");
+        state.selected = folder_a;
+        // The header covers groupA's subtree (r1, r2) — not groupB's r3.
+        let mut covered = state.selected_header_repos().expect("folder header selected");
+        covered.sort();
+        assert_eq!(covered, vec![0, 1]);
+        assert!(!covered.contains(&2));
+        // Nothing retryable yet; marking r1 failed makes the scoped retry meaningful.
+        assert!(!state.selected_header_retryable());
+        state.repos[0].lock().unwrap().status = RepoStatus::Failed;
+        assert!(state.selected_header_retryable());
+        // Selecting a repo row instead yields no header scope (falls back to single-repo actions).
+        let repo_row = rows.iter().position(|row| matches!(row, ListRow::Repo { .. })).unwrap();
+        state.selected = repo_row;
+        assert!(state.selected_header_repos().is_none());
     }
 
     #[test]
