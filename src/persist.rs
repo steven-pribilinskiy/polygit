@@ -22,6 +22,10 @@ pub struct PersistedState {
     pub panel_padding: bool,
     /// Glyph set (Unicode vs emoji).
     pub icon_style: IconStyle,
+    /// Hide zero-count cells in the list columns (emoji mode always hides them; this extends it to
+    /// the Unicode set too).
+    #[serde(default)]
+    pub hide_zero_counts: bool,
     /// Color theme (auto / dark / light).
     pub theme: Theme,
     /// Contrast level (normal / soft) — text + accent saturation.

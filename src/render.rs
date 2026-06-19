@@ -429,10 +429,11 @@ fn count_cell_text(glyph: &str, count: Option<u32>) -> (String, bool) {
     }
 }
 
-/// Whether a list count cell should be hidden entirely (rendered blank) — true only for a zero
-/// count in emoji mode, where a colorful glyph beside `0` is clutter. Unicode keeps a dim `0`.
-fn count_cell_hidden(emoji: bool, count: Option<u32>) -> bool {
-    emoji && count == Some(0)
+/// Whether a list count cell should be hidden entirely (rendered blank): a zero count when emoji
+/// is active (a colorful glyph beside `0` is clutter) OR the explicit "hide zero values" setting is
+/// on. Otherwise a zero renders as a dim `{glyph}0`.
+fn count_cell_hidden(emoji: bool, hide_zero: bool, count: Option<u32>) -> bool {
+    (emoji || hide_zero) && count == Some(0)
 }
 
 /// A padded count-cell span: `color` when positive, dim gray when zero or still loading.
@@ -912,6 +913,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
     // data is fully loaded and trivially empty (e.g. no repo has a worktree) are hidden.
     let columns = app.effective_columns();
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
+    let hide_zero = app.hide_zero_counts;
     let col_extra = usize::from(emoji);
     let dirty_w = 3 + col_extra; // glyph + up to 2 digits
     let count_w = 4 + col_extra; // glyph + count (worktrees / branches / stashes)
@@ -1079,9 +1081,9 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
             }
             // Count cells render a dim `0` (not a blank) once loaded, and a dim `…` while pending.
             let count_span = |glyph: &str, count: Option<u32>, color: Color, flagged: bool| {
-                // Emoji mode hides zero cells (a colorful glyph beside `0` is clutter); Unicode
-                // keeps a dim `0`.
-                if count_cell_hidden(emoji, count) {
+                // Emoji mode (or the "hide zero values" setting) hides zero cells; Unicode
+                // otherwise keeps a dim `0`.
+                if count_cell_hidden(emoji, hide_zero, count) {
                     return Span::raw(format!(" {}", pad_display("", count_w)));
                 }
                 let (text, dim) = count_cell_text(glyph, count);
@@ -3408,12 +3410,12 @@ fn help_items_about(notes_expanded: bool) -> Vec<(Line<'static>, Option<String>)
 const DESIGN_RADIO_PREFIX: &str = "\u{1f}designradio:";
 
 /// The label + options (text, is-active) for a Design System radio, by the **settings** global row
-/// index it mirrors (Theme=4 · Background=5 · Contrast=6 · Selection=7). Owned/`'static` so the
+/// index it mirrors (Theme=5 · Background=6 · Contrast=7 · Selection=8). Owned/`'static` so the
 /// `&AppState` read ends before the caller mutably borrows `app.help_design_click`.
 fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str, Vec<(&'static str, bool)>) {
     use crate::app::{Background, Contrast, SelectionStyle, Theme};
     match row_idx {
-        4 => (
+        5 => (
             "Theme",
             vec![
                 ("auto", app.theme == Theme::Auto),
@@ -3421,7 +3423,7 @@ fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str, Vec<(&'st
                 ("light", app.theme == Theme::Light),
             ],
         ),
-        5 => (
+        6 => (
             "Background",
             vec![
                 ("normal", app.background == Background::Normal),
@@ -3429,7 +3431,7 @@ fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str, Vec<(&'st
                 ("terminal", app.background == Background::Terminal),
             ],
         ),
-        6 => (
+        7 => (
             "Contrast",
             vec![
                 ("normal", app.contrast == Contrast::Normal),
@@ -3460,13 +3462,14 @@ fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Option<String
     items.push((Line::from(Span::styled("DESIGN SYSTEM".to_string(), title_style)), None));
     items.push((Line::from(""), None));
     items.push((Line::from(Span::styled("Theming".to_string(), group_style)), None));
-    for row_idx in [4usize, 5, 6, 7] {
+    for row_idx in [5usize, 6, 7, 8] {
         let (label, options) = design_radio_data(app, row_idx);
         // The Line is position-independent; real click regions are registered by render_help at the
         // row's actual screen position via the sentinel. Discard the dummy-position clicks here.
         let underline_idx = radio_underline_idx(app, row_idx);
-        let line =
-            settings_row_line(row_idx, false, label, &options, (0, 0), false, underline_idx, &mut throwaway);
+        let line = settings_row_line(
+            row_idx, false, label, &options, (0, 0), false, underline_idx, false, &mut throwaway,
+        );
         items.push((line, Some(format!("{DESIGN_RADIO_PREFIX}{row_idx}"))));
     }
     items.push((Line::from(""), None));
@@ -4139,6 +4142,7 @@ fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                         (content_area.x, row),
                         true,
                         underline_idx,
+                        false,
                         &mut app.help_design_click,
                     );
                 }
@@ -5752,7 +5756,7 @@ const SETTINGS_LABEL_W: u16 = 22;
 /// The option index to underline for a radio row (Theme only): when `auto` is selected, underline
 /// the autodetected option it resolves to (`dark`=1 / `light`=2). `None` for every other row/state.
 fn radio_underline_idx(app: &AppState, row_idx: usize) -> Option<usize> {
-    if row_idx == 4 && app.theme == crate::app::Theme::Auto {
+    if row_idx == 5 && app.theme == crate::app::Theme::Auto {
         Some(if app.auto_dark { 1 } else { 2 })
     } else {
         None
@@ -5768,11 +5772,16 @@ fn settings_row_line(
     pos: (u16, u16),
     in_view: bool,
     underline_idx: Option<usize>,
+    disabled: bool,
     clicks: &mut Vec<(u16, u16, u16, usize, Option<usize>)>,
 ) -> Line<'static> {
     let (left_x, row_y) = pos;
     let cursor = if selected { "> " } else { "  " };
-    let label_style = if selected {
+    // A disabled row reads dim and inert (no click regions) — e.g. Hide zeros under emoji icons,
+    // which always hides zeros, so the radio is force-selected and not togglable.
+    let label_style = if disabled {
+        Style::default().fg(Color::DarkGray)
+    } else if selected {
         Style::default().add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Gray)
@@ -5782,7 +5791,7 @@ fn settings_row_line(
         Span::styled(format!("{label:<width$}", width = SETTINGS_LABEL_W as usize), label_style),
     ];
     let mut col = left_x + 4;
-    if in_view {
+    if in_view && !disabled {
         clicks.push((row_y, col, col + SETTINGS_LABEL_W, row_idx, None));
     }
     col += SETTINGS_LABEL_W;
@@ -5791,7 +5800,9 @@ fn settings_row_line(
             spans.push(Span::raw("  "));
             col += 2;
         }
-        let mut style = if *active {
+        let mut style = if disabled {
+            Style::default().fg(Color::DarkGray)
+        } else if *active {
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -5802,7 +5813,7 @@ fn settings_row_line(
         }
         let chip = format!("{} {text}", if *active { "●" } else { "○" });
         let chip_width = UnicodeWidthStr::width(chip.as_str()) as u16;
-        if in_view {
+        if in_view && !disabled {
             clicks.push((row_y, col, col + chip_width, row_idx, Some(option_idx)));
         }
         col += chip_width;
@@ -5818,12 +5829,13 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         Background, ButtonHoverStyle, Contrast, SelectionStyle, SettingsLayout, Theme, SETTINGS_TABS,
     };
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
+    let hide_zero = app.hide_zero_counts;
     // Sections of (label, option chips). Global row indices run across sections and must
     // match `set_setting_option` / `toggle_selected_setting`:
-    // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 theme · 5 background · 6 contrast ·
-    // 7 selection (Theming), 8 auto-pull · 9 auto-pull limit · 10 auto-pull-in-tree (Sync),
-    // 11 hover · 12 changed-row flash · 13 changed-row highlight (Interaction),
-    // 14 borders · 15 splitter · 16 repo-page tabs · 17 dock repo page · 18 auto branch-check (Layout).
+    // 0 padding · 1 grouping · 2 tree (General), 3 icons · 4 hide-zeros · 5 theme · 6 background ·
+    // 7 contrast · 8 selection · 9 button-hover (Theming), 10 auto-pull · 11 auto-pull limit ·
+    // 12 auto-pull-in-tree (Sync), 13 hover · 14 changed-row flash · 15 changed-row highlight
+    // (Interaction), 16 borders · 17 splitter · 18 repo-page tabs · 19 dock · 20 branch-check (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -5838,6 +5850,11 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             "Theming",
             vec![
                 ("Icons", vec![("unicode", !emoji), ("emoji", emoji)]),
+                // Emoji always hides zeros, so force "on" and let push_row render the row disabled.
+                (
+                    "Hide zeros",
+                    vec![("on", hide_zero || emoji), ("off", !hide_zero && !emoji)],
+                ),
                 (
                     "Theme",
                     vec![
@@ -6016,12 +6033,15 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     // Precomputed (not via `app` inside the closure, which would conflict with the closure's
     // disjoint field borrows): the Theme row's autodetect underline.
-    let theme_underline = radio_underline_idx(app, 4);
+    let theme_underline = radio_underline_idx(app, 5);
+    let emoji_icons = app.icon_style == crate::app::IconStyle::Emoji;
     // A `>Label  ● value` row plus the optional "no groups" hint, given the row's left edge.
     let mut push_row = |row_idx: usize, left_x: u16, row_y: u16, out: &mut Vec<Line>| {
         let (label, options) = &all_rows[row_idx];
         let in_view = row_y < inner.y + inner.height;
-        let underline_idx = if row_idx == 4 { theme_underline } else { None };
+        let underline_idx = if row_idx == 5 { theme_underline } else { None };
+        // Hide zeros (row 4) is inert under emoji icons (which always hide zeros).
+        let disabled = row_idx == 4 && emoji_icons;
         out.push(settings_row_line(
             row_idx,
             app.settings_selected == row_idx,
@@ -6030,6 +6050,7 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
             (left_x, row_y),
             in_view,
             underline_idx,
+            disabled,
             &mut app.settings_click,
         ));
         if *label == "Grouping" && app.groups.is_empty() {
@@ -6434,12 +6455,13 @@ mod tests {
     }
 
     #[test]
-    fn count_cell_hidden_only_for_emoji_zero() {
-        // Emoji mode hides a zero count entirely; everything else stays visible.
-        assert!(count_cell_hidden(true, Some(0)));
-        assert!(!count_cell_hidden(false, Some(0))); // Unicode keeps the dim 0
-        assert!(!count_cell_hidden(true, Some(2))); // non-zero always shows
-        assert!(!count_cell_hidden(true, None)); // loading "…" still shows
+    fn count_cell_hidden_for_emoji_or_hide_zero_setting() {
+        // Emoji mode OR the hide-zero setting hides a zero count; everything else stays visible.
+        assert!(count_cell_hidden(true, false, Some(0))); // emoji + zero
+        assert!(count_cell_hidden(false, true, Some(0))); // unicode + hide-zero setting
+        assert!(!count_cell_hidden(false, false, Some(0))); // unicode default keeps the dim 0
+        assert!(!count_cell_hidden(true, true, Some(2))); // non-zero always shows
+        assert!(!count_cell_hidden(true, true, None)); // loading "…" still shows
     }
 
     #[test]
