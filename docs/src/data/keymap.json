@@ -476,6 +476,34 @@
       },
       {
         "keys": [
+          "A"
+        ],
+        "action": "Open the folder picker to add a folder (or a single repo) to the workspace",
+        "note": "breadcrumbs + ←/Backspace parent, type to fuzzy-filter, Enter opens a folder / selects a git repo, ^S selects the current folder, ^B bookmark, ^H home; the chosen folder is scanned and persisted",
+        "keywords": [
+          "add",
+          "folder",
+          "picker",
+          "workspace",
+          "browse"
+        ]
+      },
+      {
+        "keys": [
+          "X",
+          "Delete"
+        ],
+        "action": "Remove the selected repo's (or folder header's) folder from the workspace",
+        "note": "drops the root from the persisted workspace and hides its repos; re-add via the picker",
+        "keywords": [
+          "remove",
+          "folder",
+          "workspace",
+          "delete"
+        ]
+      },
+      {
+        "keys": [
           "Esc"
         ],
         "action": "Clear the filter and restore the pre-filter selection, or quit when no filter"

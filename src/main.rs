@@ -684,6 +684,10 @@ async fn run_tui(
         let mut app = app_state.lock().unwrap();
         // The scanned roots drive the tree forest + the persisted workspace.
         app.root_dirs = roots.clone();
+        // Capture discovery settings so the picker can scan a runtime-added root the same way.
+        app.discovery_max_depth = max_depth;
+        app.discovery_timeout_secs = timeout_secs;
+        app.discovery_no_worktrees = no_worktrees;
         app.save_state(); // persist the union so a no-args relaunch restores these roots
         let group_errors = app.init_groups(groups_config, &groups_cache);
         if let Some(error) = groups_config_error.or_else(|| group_errors.into_iter().next()) {
@@ -728,6 +732,7 @@ async fn run_tui(
         timeout_secs,
         icon_style,
         no_worktrees,
+        true,
     ));
 
     // Resolve dynamic (command/url) group memberships in the background; the task no-ops when
@@ -1145,6 +1150,72 @@ async fn run_event_loop(
                         }
                     }
                     _ => {}
+                }
+
+                // Folder picker: footer hints inject keys; [x]/outside cancel; a breadcrumb navigates;
+                // a row click activates it (folder → open, repo → select). Other mouse events swallowed.
+                if app.picker.is_some() {
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        if let Some(hint) = app.hint_at(mouse.column, mouse.row) {
+                            synthetic_keys.push_back(hint_key_event(hint));
+                            continue;
+                        }
+                        if region_hit(app.picker_close_click, mouse.column, mouse.row) {
+                            app.sync_picker_bookmarks();
+                            app.picker = None;
+                            continue;
+                        }
+                        if let Some(target) = app
+                            .picker_crumbs_click
+                            .iter()
+                            .find(|(row, start, end, _)| {
+                                mouse.row == *row && mouse.column >= *start && mouse.column < *end
+                            })
+                            .map(|(.., path)| path.clone())
+                        {
+                            app.picker.as_mut().unwrap().navigate_to(target);
+                            continue;
+                        }
+                        if let Some(&(_, view_index)) =
+                            app.picker_rows_click.iter().find(|(row, _)| *row == mouse.row)
+                        {
+                            let picker = app.picker.as_mut().unwrap();
+                            picker.select_at(view_index);
+                            if let tui_pick::picker::PickerOutcome::Selected(path) =
+                                picker.activate_selected()
+                            {
+                                app.sync_picker_bookmarks();
+                                app.picker = None;
+                                if let Some(abs) = app.add_root(path) {
+                                    let throttle = app.throttle.clone();
+                                    let max_jobs = app.max_jobs;
+                                    let depth = app.discovery_max_depth;
+                                    let timeout = app.discovery_timeout_secs;
+                                    let icons = app.icon_style;
+                                    let no_wt = app.discovery_no_worktrees;
+                                    drop(app);
+                                    tokio::spawn(run_discovery(
+                                        Arc::clone(&app_state),
+                                        vec![abs],
+                                        depth,
+                                        throttle,
+                                        max_jobs,
+                                        timeout,
+                                        icons,
+                                        no_wt,
+                                        false,
+                                    ));
+                                }
+                            }
+                            continue;
+                        }
+                        if !point_in(app.picker_area, mouse.column, mouse.row) {
+                            app.sync_picker_bookmarks();
+                            app.picker = None;
+                            continue;
+                        }
+                    }
+                    continue;
                 }
 
                 // Finder overlay: footer hints inject their key; the [x]/outside close it; a row
@@ -1910,6 +1981,51 @@ async fn run_event_loop(
 
                 // Base-branch picker (`b` on the repo page): choose a base / auto-detect, then
                 // recompute that branch's stats against it.
+                // Folder picker (`A`): type to filter, ↑↓ move, Enter open-folder/select-repo,
+                // ←/Backspace parent, ^S select the current folder, ^B bookmark, ^H home, Esc cancel.
+                if app.picker.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    let outcome = app.picker.as_mut().unwrap().on_key(key);
+                    match outcome {
+                        tui_pick::picker::PickerOutcome::Pending => {}
+                        tui_pick::picker::PickerOutcome::Cancelled => {
+                            app.sync_picker_bookmarks();
+                            app.picker = None;
+                        }
+                        tui_pick::picker::PickerOutcome::Selected(path) => {
+                            app.sync_picker_bookmarks();
+                            app.picker = None;
+                            if let Some(abs) = app.add_root(path) {
+                                let throttle = app.throttle.clone();
+                                let max_jobs = app.max_jobs;
+                                let depth = app.discovery_max_depth;
+                                let timeout = app.discovery_timeout_secs;
+                                let icons = app.icon_style;
+                                let no_wt = app.discovery_no_worktrees;
+                                drop(app);
+                                tokio::spawn(run_discovery(
+                                    Arc::clone(&app_state),
+                                    vec![abs],
+                                    depth,
+                                    throttle,
+                                    max_jobs,
+                                    timeout,
+                                    icons,
+                                    no_wt,
+                                    false,
+                                ));
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // Fuzzy finder overlay (`P`): type to filter, ↑↓/PgUp/PgDn to move, ^S to cycle
                 // sort, Enter to jump the list to that repo (records the visit), Esc to close.
                 if app.finder.is_some() {
@@ -2712,6 +2828,13 @@ async fn run_event_loop(
 
                     // Open the fuzzy finder overlay (jump to any repo across all folders).
                     (KeyCode::Char('P'), _) => app.open_finder(),
+
+                    // Open the folder picker to add a folder/repo to the workspace.
+                    (KeyCode::Char('A'), _) => app.open_picker(),
+
+                    // Remove the selected repo's (or folder header's) root from the workspace
+                    // (`X` or Delete — Delete isn't reliably delivered by every terminal).
+                    (KeyCode::Delete, _) | (KeyCode::Char('X'), _) => app.remove_selected_root(),
 
                     // Preview scroll (when preview focused)
                     (KeyCode::PageUp, _) if app.preview_focused => {

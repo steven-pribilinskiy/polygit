@@ -683,6 +683,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     if app.finder.is_some() {
         render_finder_overlay(frame, app, area);
     }
+    if app.picker.is_some() {
+        render_picker_overlay(frame, app, area);
+    }
     // The keyboard viewer sits on top of help (it's launched from the Hotkeys tab).
     if app.show_keyboard {
         render_keyboard_modal(frame, app, area);
@@ -723,6 +726,38 @@ fn render_finder_overlay(frame: &mut Frame, app: &mut AppState, area: Rect) {
     );
     app.finder_close_click = geo.close;
     app.finder_rows_click = geo.rows;
+}
+
+/// Render the folder picker overlay (the `tui-pick` widget) and capture its click geometry.
+fn render_picker_overlay(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let Some(picker) = app.picker.as_ref() else {
+        return;
+    };
+    let mut crate_hints: Vec<tui_pick::HintClick> = Vec::new();
+    let geo = tui_pick::picker::render_picker(
+        frame,
+        area,
+        picker,
+        &tui_pick::PickerStyle::default(),
+        &mut crate_hints,
+    );
+    app.hint_click.clear();
+    for hint in crate_hints {
+        app.hint_click.push(HintClick {
+            row: hint.row,
+            col_start: hint.col_start,
+            col_end: hint.col_end,
+            key: map_crate_hint_key(hint.key),
+        });
+    }
+    app.picker_area = centered_rect(
+        area.width.saturating_sub(8).clamp(40, 110),
+        area.height.saturating_sub(4).max(10),
+        area,
+    );
+    app.picker_close_click = geo.close;
+    app.picker_rows_click = geo.rows;
+    app.picker_crumbs_click = geo.crumbs;
 }
 
 /// Map a `tui-pick` hint key to polygit's `HintKey` (the crate's subset has no ShiftEnter).
