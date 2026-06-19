@@ -1397,9 +1397,12 @@ impl LogBuffer {
 #[derive(Debug)]
 pub struct RepoState {
     pub name: String,
-    /// Path relative to the scan root, with `/` separators (e.g. "personal/polygit").
+    /// Path relative to THIS repo's discovery root, with `/` separators (e.g. "personal/polygit").
     /// Equals `name` for depth-1 repos. Drives display, name-filter, name-sort, and the tree.
     pub rel_path: String,
+    /// The root (one of `AppState::root_dirs`) this repo was discovered under — disambiguates
+    /// `rel_path` across multiple roots and groups repos into per-root sections in the tree.
+    pub root: PathBuf,
     /// Absolute index into `AppState::repos` (set at discovery). Lets a worker schedule its own
     /// backoff retry by index without threading the index through every call.
     pub index: usize,
@@ -1496,6 +1499,7 @@ impl RepoState {
         let name = name.into();
         RepoState {
             rel_path: name.clone(),
+            root: PathBuf::new(),
             name,
             index: 0,
             throttle_retries: 0,
@@ -1782,6 +1786,29 @@ pub struct TreeNode {
 /// Build the folder-tree node model from `(repo_idx, rel_path)` pairs. Repos whose `rel_path`
 /// has no `/` belong to the implicit root and get no node (they render at the top of the tree).
 /// Nodes are returned in a stable pre-order, children sorted by name. Pure + unit-tested.
+/// Favorite key for a repo: its absolute path as a string (unambiguous across roots).
+fn favorite_key(path: &std::path::Path) -> String {
+    path.display().to_string()
+}
+
+/// The last path component of a root (its display name), or the full path when it has none.
+fn root_basename(root: &std::path::Path) -> String {
+    root.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| root.display().to_string())
+}
+
+/// A root rendered relative to `$HOME` as `~/…`, falling back to the absolute path. Used to
+/// disambiguate root labels in the tree forest when two roots share a basename.
+fn home_relative(root: &std::path::Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(rest) = root.strip_prefix(&home) {
+            return format!("~/{}", rest.display().to_string().replace(std::path::MAIN_SEPARATOR, "/"));
+        }
+    }
+    root.display().to_string()
+}
+
 pub fn build_tree(repos: &[(usize, String)]) -> Vec<TreeNode> {
     use std::collections::BTreeMap;
     // Map folder rel_path → node index, creating ancestors on demand.
@@ -2099,8 +2126,9 @@ pub struct AppState {
     pub diff_files_area: Rect,
     /// Inner rect of the diff modal's diff panel (wheel routing).
     pub diff_body_area: Rect,
-    /// The directory being scanned (for re-running worktree discovery on refetch).
-    pub root_dir: PathBuf,
+    /// The directories/roots being scanned (each may itself be a single repo). Drives the per-root
+    /// tree forest and the persisted workspace; worktree re-discovery derives parents from the repos.
+    pub root_dirs: Vec<PathBuf>,
     // Settings (persisted):
     /// Draw 1-cell inner padding inside every bordered panel/modal.
     pub panel_padding: bool,
@@ -2378,7 +2406,7 @@ impl AppState {
             diff_files_viewport: 0,
             diff_files_area: Rect::default(),
             diff_body_area: Rect::default(),
-            root_dir: PathBuf::new(),
+            root_dirs: Vec::new(),
             panel_padding: persisted.panel_padding,
             icon_style: persisted.icon_style,
             hide_zero_counts: persisted.hide_zero_counts,
@@ -2537,14 +2565,50 @@ impl AppState {
 
     /// Rebuild the directory-tree node model from the current repos' relative paths. Called
     /// when the repo set changes (each discovery batch); cheap and pure via `build_tree`.
+    /// With multiple roots the tree is a **forest**: each repo's path is prefixed with a unique,
+    /// readable label for its root so every root becomes its own top-level node.
     pub fn rebuild_tree(&mut self) {
+        let labels = self.root_labels();
+        let multi = self.root_dirs.len() > 1;
         let pairs: Vec<(usize, String)> = self
             .repos
             .iter()
             .enumerate()
-            .map(|(idx, repo)| (idx, repo.lock().unwrap().rel_path.clone()))
+            .map(|(idx, repo)| {
+                let repo = repo.lock().unwrap();
+                let path = if multi {
+                    let label =
+                        labels.get(&repo.root).cloned().unwrap_or_else(|| repo.root.display().to_string());
+                    format!("{label}/{}", repo.rel_path)
+                } else {
+                    repo.rel_path.clone()
+                };
+                (idx, path)
+            })
             .collect();
         self.tree_nodes = build_tree(&pairs);
+    }
+
+    /// A unique, readable tree label per root: its basename, or — when basenames collide — its
+    /// home-relative path (`~/projects/personal`) so the forest's top-level nodes never merge.
+    fn root_labels(&self) -> std::collections::HashMap<PathBuf, String> {
+        let mut basename_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for root in &self.root_dirs {
+            *basename_counts.entry(root_basename(root)).or_insert(0) += 1;
+        }
+        self.root_dirs
+            .iter()
+            .map(|root| {
+                let base = root_basename(root);
+                let label = if basename_counts.get(&base).copied().unwrap_or(0) > 1 {
+                    home_relative(root)
+                } else {
+                    base
+                };
+                (root.clone(), label)
+            })
+            .collect()
     }
 
     /// Whether the list actually renders as a tree (the toggle is on AND there are folders).
@@ -2724,6 +2788,7 @@ impl AppState {
             icon_style: self.icon_style,
             hide_zero_counts: self.hide_zero_counts,
             hide_folder_lines: self.hide_folder_lines,
+            roots: self.root_dirs.iter().map(|root| root.display().to_string()).collect(),
             theme: self.theme,
             contrast: self.contrast,
             selection_style: self.selection_style,
@@ -3471,12 +3536,11 @@ impl AppState {
         }
 
         let mut rows = Vec::new();
-        // Root-level repos (rel_path has no '/'), in sort order — and grouped when grouping's on.
-        let root_repos: Vec<usize> = visible
-            .iter()
-            .copied()
-            .filter(|&idx| !self.repos[idx].lock().unwrap().rel_path.contains('/'))
-            .collect();
+        // Root-level repos: those not assigned to any folder node (the tree's implicit root), in
+        // sort order — and grouped when grouping's on. Uses the node ownership map rather than the
+        // raw rel_path so the multi-root forest (paths prefixed with a root label) partitions right.
+        let root_repos: Vec<usize> =
+            visible.iter().copied().filter(|idx| !owner.contains_key(idx)).collect();
         if !root_repos.is_empty() {
             if self.grouping_active() {
                 rows.extend(self.grouped_rows(&root_repos, None, 0));
@@ -3799,21 +3863,22 @@ impl AppState {
         self.snap_selection(false);
     }
 
-    /// Whether `repo_idx` is marked a favorite.
+    /// Whether `repo_idx` is marked a favorite. Keyed by **absolute path** so favorites stay
+    /// unambiguous across multiple roots (two roots can share a relative path).
     pub fn is_favorite(&self, repo_idx: usize) -> bool {
         self.repos
             .get(repo_idx)
-            .is_some_and(|repo| self.favorites.contains(&repo.lock().unwrap().rel_path))
+            .is_some_and(|repo| self.favorites.contains(&favorite_key(&repo.lock().unwrap().path)))
     }
 
-    /// Toggle a repo's favorite state (persists), keyed by its relative path.
+    /// Toggle a repo's favorite state (persists), keyed by its absolute path.
     pub fn toggle_favorite(&mut self, repo_idx: usize) {
         let Some(repo) = self.repos.get(repo_idx) else {
             return;
         };
-        let rel_path = repo.lock().unwrap().rel_path.clone();
-        if !self.favorites.remove(&rel_path) {
-            self.favorites.insert(rel_path);
+        let key = favorite_key(&repo.lock().unwrap().path);
+        if !self.favorites.remove(&key) {
+            self.favorites.insert(key);
         }
         let prev = self.selected_repo_index();
         self.reselect_repo(prev);
@@ -5546,7 +5611,7 @@ mod tests {
     fn state_named(names: &[&str]) -> AppState {
         let repos: Vec<SharedRepoState> = names
             .iter()
-            .map(|name| Arc::new(Mutex::new(RepoState::new(*name, PathBuf::from("/tmp")))))
+            .map(|name| Arc::new(Mutex::new(RepoState::new(*name, PathBuf::from(format!("/tmp/{name}"))))))
             .collect();
         normalized(AppState::new(repos, 4, true))
     }
@@ -5936,6 +6001,25 @@ mod tests {
         state.tree_enabled = true;
         state.rebuild_tree();
         state
+    }
+
+    #[test]
+    fn multi_root_tree_is_a_forest() {
+        // Two roots, one repo each — the tree must give each root its own top-level folder node.
+        let mut state = tree_state(&["x", "y"]);
+        state.root_dirs = vec![PathBuf::from("/work/alpha"), PathBuf::from("/work/beta")];
+        state.repos[0].lock().unwrap().root = PathBuf::from("/work/alpha");
+        state.repos[1].lock().unwrap().root = PathBuf::from("/work/beta");
+        state.rebuild_tree();
+        let desc = describe(&state);
+        assert!(desc.contains(&"folder:alpha".to_string()), "{desc:?}");
+        assert!(desc.contains(&"folder:beta".to_string()), "{desc:?}");
+        // x nests under alpha, y under beta (depth-1 repos).
+        let alpha = desc.iter().position(|d| d == "folder:alpha").unwrap();
+        assert_eq!(desc[alpha + 1], "  repo:x");
+        // A single root keeps the flat (no synthetic root node) layout.
+        let single = tree_state(&["a/b", "a/c"]);
+        assert!(!describe(&single).iter().any(|d| d.starts_with("folder:") && d.contains("tmp")));
     }
 
     /// Render the visible rows as readable `kind:label` strings (indented by depth) for asserts.

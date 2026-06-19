@@ -288,7 +288,7 @@ pub async fn run_worktree_discovery(app_state: Arc<Mutex<AppState>>) {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_discovery(
     app_state: Arc<Mutex<AppState>>,
-    root: std::path::PathBuf,
+    roots: Vec<std::path::PathBuf>,
     max_depth: usize,
     control: Arc<ThrottleControl>,
     max_jobs: usize,
@@ -296,28 +296,53 @@ pub async fn run_discovery(
     icon_style: IconStyle,
     no_worktrees: bool,
 ) {
-    let mut rx = crate::git::spawn_repo_walker(root.clone(), max_depth);
-    let mut batch: Vec<std::path::PathBuf> = Vec::new();
+    use std::collections::HashSet;
+    // Walk every root in parallel, tagging each discovered repo with the root it came from so the
+    // path can be rendered relative to that root and grouped under it in the tree forest.
+    let (merged_tx, mut rx) =
+        tokio::sync::mpsc::unbounded_channel::<(std::path::PathBuf, std::path::PathBuf)>();
+    for root in &roots {
+        let root = root.clone();
+        let mut walker = crate::git::spawn_repo_walker(root.clone(), max_depth);
+        let tx = merged_tx.clone();
+        tokio::spawn(async move {
+            while let Some(path) = walker.recv().await {
+                if tx.send((path, root.clone())).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(merged_tx); // close the merged channel once every per-root forwarder finishes
+
+    // Skip repos already present (overlapping roots, e.g. a parent root + a child repo root).
+    let mut seen: HashSet<std::path::PathBuf> =
+        { app_state.lock().unwrap().repos.iter().map(|repo| repo.lock().unwrap().path.clone()).collect() };
+    let mut batch: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
     loop {
         batch.clear();
         // Block for the first path, then drain whatever else is already queued (coalescing) so
         // a burst of discoveries is appended in one lock + one group recompute.
         let count = rx.recv_many(&mut batch, 128).await;
         if count == 0 {
-            break; // walker finished and the channel closed
+            break; // every walker finished and the merged channel closed
         }
 
         let new_repos: Vec<SharedRepoState> = {
             let mut app = app_state.lock().unwrap();
             let prev = app.selected_repo_index();
             let mut new_repos = Vec::with_capacity(batch.len());
-            for path in &batch {
+            for (path, root) in &batch {
+                if !seen.insert(path.clone()) {
+                    continue;
+                }
                 let name = path
                     .file_name()
                     .map(|name| name.to_string_lossy().to_string())
                     .unwrap_or_default();
                 let mut state = RepoState::new(name, path.clone());
-                state.rel_path = crate::git::relative_path(&root, path);
+                state.rel_path = crate::git::relative_path(root, path);
+                state.root = root.clone();
                 state.index = app.repos.len();
                 // Seed last-known status/details from the cache so the list is useful instantly
                 // (rendered dimmed with an age until pulled/refreshed this session).

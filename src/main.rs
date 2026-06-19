@@ -59,8 +59,9 @@ fn now_unix() -> i64 {
 #[derive(Parser, Debug)]
 #[command(name = "polygit", version, about)]
 struct Cli {
-    /// Directory to pull repos from (default: cwd)
-    dir: Option<PathBuf>,
+    /// Directories to pull repos from — each may itself be a single repo. Merged with the
+    /// persisted workspace; with none and nothing persisted, defaults to the cwd.
+    dirs: Vec<PathBuf>,
 
     /// Maximum concurrent pulls (default: nproc)
     #[arg(short = 'j', long, env = "PULL_JOBS")]
@@ -592,10 +593,10 @@ fn confirm_for_row(repo_idx: usize, row: &PageRow) -> Option<ConfirmDialog> {
 async fn run() -> Result<i32> {
     let cli = Cli::parse();
 
-    let cwd = match cli.dir {
-        Some(dir) => dir,
-        None => std::env::current_dir()?,
-    };
+    // Resolve the launch roots: the union of the persisted workspace and any CLI dirs (canonicalized
+    // + deduped, order preserved). With neither, fall back to the cwd. CLI dirs are merged in so they
+    // join the persisted set; the picker adds/removes roots at runtime.
+    let roots = resolve_roots(&cli.dirs)?;
 
     let max_jobs = cli
         .jobs
@@ -613,7 +614,7 @@ async fn run() -> Result<i32> {
 
     if !use_tui {
         return plain::run_plain(
-            &cwd,
+            &roots,
             max_jobs,
             max_depth,
             cli.timeout,
@@ -625,7 +626,7 @@ async fn run() -> Result<i32> {
     }
 
     run_tui(
-        cwd,
+        roots,
         max_jobs,
         max_depth,
         cli.timeout,
@@ -636,9 +637,31 @@ async fn run() -> Result<i32> {
     .await
 }
 
+/// The launch roots: the persisted workspace unioned with any CLI dirs (canonicalized + deduped,
+/// order preserved). Empty on both → the cwd. CLI dirs join the persisted set so they're remembered.
+fn resolve_roots(cli_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let add = |path: PathBuf, out: &mut Vec<PathBuf>| {
+        let abs = std::fs::canonicalize(&path).unwrap_or(path);
+        if !out.contains(&abs) {
+            out.push(abs);
+        }
+    };
+    for persisted in crate::persist::load().roots {
+        add(PathBuf::from(persisted), &mut out);
+    }
+    for dir in cli_dirs {
+        add(dir.clone(), &mut out);
+    }
+    if out.is_empty() {
+        out.push(std::env::current_dir()?);
+    }
+    Ok(out)
+}
+
 /// TUI entry point: sets up terminal, runs the event loop, and restores on exit.
 async fn run_tui(
-    cwd: PathBuf,
+    roots: Vec<PathBuf>,
     max_jobs: usize,
     max_depth: usize,
     timeout_secs: u64,
@@ -659,8 +682,9 @@ async fn run_tui(
     let groups_cache = groups::load_cache();
     let icon_style = {
         let mut app = app_state.lock().unwrap();
-        // The scanned directory drives worktree re-discovery on refetch.
-        app.root_dir = cwd.clone();
+        // The scanned roots drive the tree forest + the persisted workspace.
+        app.root_dirs = roots.clone();
+        app.save_state(); // persist the union so a no-args relaunch restores these roots
         let group_errors = app.init_groups(groups_config, &groups_cache);
         if let Some(error) = groups_config_error.or_else(|| group_errors.into_iter().next()) {
             app.show_toast(error);
@@ -697,7 +721,7 @@ async fn run_tui(
     // discovery kick off immediately, and worktree discovery runs once the walk completes.
     tokio::spawn(run_discovery(
         Arc::clone(&app_state),
-        cwd.clone(),
+        roots.clone(),
         max_depth,
         throttle,
         max_jobs,
