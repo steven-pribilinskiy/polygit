@@ -461,6 +461,21 @@
       },
       {
         "keys": [
+          "P"
+        ],
+        "action": "Open the fuzzy finder overlay — search every repo across all folders and jump to one",
+        "note": "type to fuzzy-filter, ↑↓/PgUp/PgDn move, ^S cycles sort (relevance/name/recent/most-used), Enter jumps the list to that repo (recorded in the shared ~/.config/goto-repo/history), Esc closes",
+        "keywords": [
+          "fuzzy",
+          "finder",
+          "fzf",
+          "jump",
+          "search",
+          "goto"
+        ]
+      },
+      {
+        "keys": [
           "Esc"
         ],
         "action": "Clear the filter and restore the pre-filter selection, or quit when no filter"

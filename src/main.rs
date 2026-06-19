@@ -1147,6 +1147,38 @@ async fn run_event_loop(
                     _ => {}
                 }
 
+                // Finder overlay: footer hints inject their key; the [x]/outside close it; a row
+                // click selects + jumps. All other mouse events are swallowed while it's open.
+                if app.finder.is_some() {
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        if let Some(hint) = app.hint_at(mouse.column, mouse.row) {
+                            synthetic_keys.push_back(hint_key_event(hint));
+                            continue;
+                        }
+                        if region_hit(app.finder_close_click, mouse.column, mouse.row) {
+                            app.finder = None;
+                            continue;
+                        }
+                        if let Some(&(_, view_index)) =
+                            app.finder_rows_click.iter().find(|(row, _)| *row == mouse.row)
+                        {
+                            let finder = app.finder.as_mut().unwrap();
+                            finder.select_at(view_index);
+                            let selected = finder.selected_row().map(|row| row.key.clone());
+                            if let Some(key) = selected {
+                                app.finder = None;
+                                app.finder_jump(&key);
+                            }
+                            continue;
+                        }
+                        if !point_in(app.finder_area, mouse.column, mouse.row) {
+                            app.finder = None;
+                            continue;
+                        }
+                    }
+                    continue;
+                }
+
                 // A clicked footer hint injects its key — works over the repo page and every modal
                 // footer, since only the visible footer's regions are registered this frame.
                 if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
@@ -1878,6 +1910,29 @@ async fn run_event_loop(
 
                 // Base-branch picker (`b` on the repo page): choose a base / auto-detect, then
                 // recompute that branch's stats against it.
+                // Fuzzy finder overlay (`P`): type to filter, ↑↓/PgUp/PgDn to move, ^S to cycle
+                // sort, Enter to jump the list to that repo (records the visit), Esc to close.
+                if app.finder.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    // Take the finder out so on_key can borrow app.finder_history (the MutexGuard
+                    // deref makes field borrows non-disjoint otherwise); put it back unless it closed.
+                    let mut finder = app.finder.take().unwrap();
+                    let outcome = finder.on_key(key, &app.finder_history);
+                    match outcome {
+                        tui_pick::finder::FinderOutcome::Cancelled => {}
+                        tui_pick::finder::FinderOutcome::Accepted { key, .. } => {
+                            app.finder_jump(&key);
+                        }
+                        tui_pick::finder::FinderOutcome::Pending => app.finder = Some(finder),
+                    }
+                    continue;
+                }
+
                 if app.base_picker.is_some() {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2654,6 +2709,9 @@ async fn run_event_loop(
                     // Favorite the selected repo (★); `M` toggles the favorites-first pinned section.
                     (KeyCode::Char('m'), _) => app.toggle_selected_favorite(),
                     (KeyCode::Char('M'), _) => app.toggle_favorites_first(),
+
+                    // Open the fuzzy finder overlay (jump to any repo across all folders).
+                    (KeyCode::Char('P'), _) => app.open_finder(),
 
                     // Preview scroll (when preview focused)
                     (KeyCode::PageUp, _) if app.preview_focused => {

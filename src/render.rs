@@ -680,6 +680,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     if app.show_build_info {
         render_build_info(frame, app, area);
     }
+    if app.finder.is_some() {
+        render_finder_overlay(frame, app, area);
+    }
     // The keyboard viewer sits on top of help (it's launched from the Hotkeys tab).
     if app.show_keyboard {
         render_keyboard_modal(frame, app, area);
@@ -687,6 +690,49 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // The new-build notice (top-right) and transient toast sit on top of everything.
     render_update_notice(frame, app, area, tick);
     render_toast(frame, app, area);
+}
+
+/// Render the fzf-style finder overlay (the `tui-pick` widget) and capture its click geometry. The
+/// crate emits its own `HintClick` type; map them into polygit's so the shared footer-click path works.
+fn render_finder_overlay(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let Some(finder) = app.finder.as_ref() else {
+        return;
+    };
+    let mut crate_hints: Vec<tui_pick::HintClick> = Vec::new();
+    let geo = tui_pick::finder::render_finder(
+        frame,
+        area,
+        finder,
+        &app.finder_history,
+        &tui_pick::FinderStyle::default(),
+        &mut crate_hints,
+    );
+    app.hint_click.clear();
+    for hint in crate_hints {
+        app.hint_click.push(HintClick {
+            row: hint.row,
+            col_start: hint.col_start,
+            col_end: hint.col_end,
+            key: map_crate_hint_key(hint.key),
+        });
+    }
+    app.finder_area = centered_rect(
+        area.width.saturating_sub(8).clamp(40, 120),
+        area.height.saturating_sub(4).max(8),
+        area,
+    );
+    app.finder_close_click = geo.close;
+    app.finder_rows_click = geo.rows;
+}
+
+/// Map a `tui-pick` hint key to polygit's `HintKey` (the crate's subset has no ShiftEnter).
+fn map_crate_hint_key(key: tui_pick::HintKey) -> HintKey {
+    match key {
+        tui_pick::HintKey::Char(ch) => HintKey::Char(ch),
+        tui_pick::HintKey::Enter => HintKey::Enter,
+        tui_pick::HintKey::Tab => HintKey::Tab,
+        tui_pick::HintKey::Esc => HintKey::Esc,
+    }
 }
 
 /// Draw a grip marker at the center of the pane divider so it reads as draggable, and—while a

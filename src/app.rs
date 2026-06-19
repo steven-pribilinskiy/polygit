@@ -2212,6 +2212,14 @@ pub struct AppState {
     pub base_picker_close_click: Option<(u16, u16, u16)>,
     /// Base-picker option rows: (screen row, option index — 0 = detected, then candidates).
     pub base_picker_click: Vec<(u16, usize)>,
+    /// The fzf-style finder overlay (`P`), when open. Searches all repos to jump the selection.
+    pub finder: Option<tui_pick::finder::FinderState>,
+    /// Shared goto-repo usage history, consulted for recent/most-used sort and appended on jump.
+    pub finder_history: tui_pick::History,
+    pub finder_area: Rect,
+    pub finder_close_click: Option<(u16, u16, u16)>,
+    /// Finder row hit map: (screen row, view index). Rebuilt each render.
+    pub finder_rows_click: Vec<(u16, usize)>,
     /// Clickable `base` cells on the repo page: `(row, col_start, col_end, selectable index)`.
     pub base_cell_click: Vec<(u16, u16, u16, usize)>,
     /// Persisted base-branch overrides, keyed `"{repo_abs_path}\u{1f}{branch}"` → base ref.
@@ -2453,6 +2461,11 @@ impl AppState {
             base_picker_area: Rect::default(),
             base_picker_close_click: None,
             base_picker_click: Vec::new(),
+            finder: None,
+            finder_history: tui_pick::History::load_default(),
+            finder_area: Rect::default(),
+            finder_close_click: None,
+            finder_rows_click: Vec::new(),
             base_cell_click: Vec::new(),
             base_overrides: persisted.base_overrides,
             update_available: false,
@@ -3879,6 +3892,42 @@ impl AppState {
             }
         }
         self.snap_selection(false);
+    }
+
+    /// Open the fzf-style finder over every repo (most-used first, mirroring goto-repo's default).
+    pub fn open_finder(&mut self) {
+        let rows: Vec<tui_pick::finder::FinderRow> = self
+            .repos
+            .iter()
+            .map(|repo| {
+                let state = repo.lock().unwrap();
+                let path = state.path.display().to_string();
+                tui_pick::finder::FinderRow {
+                    key: path.clone(),
+                    kind: "repo".to_string(),
+                    display: path,
+                }
+            })
+            .collect();
+        self.finder = Some(tui_pick::finder::FinderState::new(
+            rows,
+            tui_pick::SortMode::MostUsed,
+            &self.finder_history,
+        ));
+    }
+
+    /// Jump the list selection to the repo with absolute path `key` (a finder accept) and record the
+    /// visit in the shared goto-repo history so recent/most-used reflect it next time.
+    pub fn finder_jump(&mut self, key: &str) {
+        if let Some(idx) =
+            self.repos.iter().position(|repo| repo.lock().unwrap().path.display().to_string() == key)
+        {
+            self.finder_history.record_use(key);
+            self.user_navigated = true;
+            self.result_overlay = false;
+            self.reselect_repo(Some(idx));
+            self.ensure_list_selection_visible(self.list_rows_area.height as usize);
+        }
     }
 
     /// Whether `repo_idx` is marked a favorite. Keyed by **absolute path** so favorites stay
