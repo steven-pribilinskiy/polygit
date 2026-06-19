@@ -4089,6 +4089,55 @@ impl AppState {
             .any(|repo| !repo.lock().unwrap().status.is_running())
     }
 
+    /// Whether any overlay modal is open over the main two-pane view (settings / help / keyboard /
+    /// build-info / diff / copy / base picker / confirm). The dedicated repo page is excluded — it
+    /// has its own footer, not the main status bar.
+    pub fn any_modal_open(&self) -> bool {
+        self.show_settings
+            || self.show_help
+            || self.show_keyboard
+            || self.show_build_info
+            || self.confirm.is_some()
+            || self.diff_modal.is_some()
+            || self.copy_menu.is_some()
+            || self.base_picker.is_some()
+    }
+
+    /// Whether a footer `Command` is actionable in the current context (ignoring modal/leader
+    /// state, which the footer handles separately). Drives the disabled-look of footer hints.
+    pub fn command_applicable(&self, command: Command) -> bool {
+        match command {
+            // Need a real repo row selected (not Result/Errors or a header).
+            Command::Info
+            | Command::DiffView
+            | Command::OpenPage
+            | Command::Claude
+            | Command::Lazygit
+            | Command::OpenRemote
+            | Command::CopyPath
+            | Command::CopyRemote => self.selected_repo_index().is_some(),
+            // Folding only applies in tree or grouped view.
+            Command::NavLeft
+            | Command::NavRight
+            | Command::FoldCollapseAll
+            | Command::FoldExpandAll
+            | Command::FoldExpandSubtree => self.tree_active() || self.grouping_active(),
+            // View toggles need their data to exist.
+            Command::GroupingToggle => !self.groups.is_empty(),
+            Command::TreeToggle => !self.tree_nodes.is_empty(),
+            // Selection moves need a non-empty list.
+            Command::NavDown | Command::NavUp => !self.repos.is_empty(),
+            // Retry/refetch reuse their existing no-op predicates.
+            Command::Retry => self.selected_repo_retryable(),
+            Command::RetryAll => self.any_retryable(),
+            Command::Refetch => self.selected_repo_refetchable(),
+            Command::RefetchAll => self.any_refetchable(),
+            // Everything else is always available (filters, sort, columns, resize, dock, focus,
+            // result overlay, settings/help/quit, build info, menu items).
+            _ => true,
+        }
+    }
+
     /// Navigate selection up, returns true if changed. Skips static group headers. The
     /// right-pane view is intentionally preserved so an open info view (`i`) follows the
     /// selection across repos.
@@ -5797,6 +5846,38 @@ mod tests {
         state.set_setting_option(4, 9);
         state.set_setting_option(25, 0);
         assert_eq!(state.theme, theme);
+    }
+
+    #[test]
+    fn command_applicable_tracks_context() {
+        let mut state = state_named(&["a"]);
+        // Always available regardless of context.
+        assert!(state.command_applicable(Command::Settings));
+        assert!(state.command_applicable(Command::Help));
+        assert!(state.command_applicable(Command::Quit));
+        assert!(state.command_applicable(Command::FilterLeader));
+        // Folding needs tree or grouping active — both off by default.
+        assert!(!state.command_applicable(Command::NavLeft));
+        assert!(!state.command_applicable(Command::FoldCollapseAll));
+        // View toggles need their data: no groups configured, not a nested tree.
+        assert!(!state.command_applicable(Command::GroupingToggle));
+        assert!(!state.command_applicable(Command::TreeToggle));
+        // Repo-only actions track the selection (a single repo is selected by default).
+        assert_eq!(
+            state.command_applicable(Command::Info),
+            state.selected_repo_index().is_some()
+        );
+    }
+
+    #[test]
+    fn any_modal_open_reflects_modal_state() {
+        let mut state = state_named(&["a"]);
+        assert!(!state.any_modal_open());
+        state.show_settings = true;
+        assert!(state.any_modal_open());
+        state.show_settings = false;
+        state.show_help = true;
+        assert!(state.any_modal_open());
     }
 
     #[test]

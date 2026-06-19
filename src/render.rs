@@ -2790,27 +2790,65 @@ fn compose_status_row(
     line
 }
 
+/// Style a footer segment list for the current footer state, returning inert (`None`-command),
+/// dimmed segments where a command can't run right now. When a **modal** is open everything goes
+/// inert except `settings`/`help`/`quit` (which stay live); when a **leader** menu is armed
+/// everything goes inert except the leader's trigger (which gets a highlight pill); otherwise each
+/// command dims when `command_applicable` is false. Non-command separators recede with the row only
+/// under a modal/leader, so a single disabled command doesn't dim its neighbors' separators.
+fn style_footer(
+    app: &AppState,
+    segments: Vec<(String, Style, Option<Command>)>,
+    modal_open: bool,
+    leader_active: bool,
+    leader_trigger: Option<Command>,
+    dim: Style,
+) -> Vec<(String, Style, Option<Command>)> {
+    let pill = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    segments
+        .into_iter()
+        .map(|(text, style, command)| match command {
+            Some(cmd) if modal_open => {
+                if matches!(cmd, Command::Settings | Command::Help | Command::Quit) {
+                    (text, style, Some(cmd))
+                } else {
+                    (text, dim, None)
+                }
+            }
+            Some(cmd) if leader_active => {
+                if Some(cmd) == leader_trigger {
+                    (text, pill, Some(cmd))
+                } else {
+                    (text, dim, None)
+                }
+            }
+            Some(cmd) if !app.command_applicable(cmd) => (text, dim, None),
+            Some(cmd) => (text, style, Some(cmd)),
+            None if modal_open || leader_active => (text, dim, None),
+            None => (text, style, None),
+        })
+        .collect()
+}
+
 fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let hint = Style::default().fg(Color::DarkGray);
     let active = Style::default().fg(Color::Gray);
-    // Keycaps: accent + bold when the action is available, faded toward the background
-    // (via the DIM materialization in `apply_palette`) when it would be a no-op.
+    // Keycaps: accent + bold when the action is available; `style_footer` fades them to `dim_style`
+    // and makes them inert when the command can't run (no-op, leader armed, or a modal is open).
     let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let key_off = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
-
-    let style_retry_one = if app.selected_repo_retryable() { key } else { key_off };
-    let style_retry_all = if app.any_retryable() { key } else { key_off };
-    let style_refetch_one = if app.selected_repo_refetchable() { key } else { key_off };
-    let style_refetch_all = if app.any_refetchable() { key } else { key_off };
-    // Fade the whole "r/R retry" group (label included) when the action is a no-op, so the
-    // disabled state reads at a glance.
-    let hint_retry = if app.any_retryable() { hint } else { hint.add_modifier(Modifier::DIM) };
-    let hint_refetch =
-        if app.any_refetchable() { hint } else { hint.add_modifier(Modifier::DIM) };
+    let dim_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
 
     let filtering = app.filter_input_mode;
     let filter_text = app.filter.clone().unwrap_or_default();
     let leader = app.pending_leader;
+    let modal_open = app.any_modal_open();
+    let leader_active = leader.is_some();
+    let leader_trigger = match leader {
+        Some(Leader::Filter) => Some(Command::FilterLeader),
+        Some(Leader::Sort) => Some(Command::SortLeader),
+        Some(Leader::Toggle) => Some(Command::ToggleLeader),
+        _ => None,
+    };
     let columns = app.columns;
     let avail = (
         app.column_available(Column::Worktrees),
@@ -2826,9 +2864,6 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let sort_dir = app.sort_dir;
     let grouping_on = app.grouping_active();
     let tree_on = app.tree_active();
-    // Repo-specific actions (open page, claude, lazygit, open remote, copy) only make sense when a
-    // real repo row is selected — not the Result/Errors summary row or a folder/group header.
-    let has_repo = app.selected_repo_index().is_some();
 
     // Right-aligned fragments (justify-between): the list title already shows done/elapsed,
     // so the right side carries the version, the binary's build age, and the meta actions.
@@ -2853,7 +2888,8 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         (" help".to_string(), hint, Some(Command::Help)),
         (" · ".to_string(), hint, None),
         ("q".to_string(), key, Some(Command::Quit)),
-        (" quit".to_string(), hint, Some(Command::Quit)),
+        // Inside a modal, `q` closes the modal rather than quitting — label it dynamically.
+        (if modal_open { " close" } else { " quit" }.to_string(), hint, Some(Command::Quit)),
     ];
 
     let mut clickable: Vec<ClickRegion> = Vec::new();
@@ -3099,55 +3135,35 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
             ("tab".to_string(), key, Some(Command::FocusToggle)),
             (" focus".to_string(), hint, Some(Command::FocusToggle)),
         ];
-        // Fold hints appear only when there's something to fold (a tree or groups are active).
-        if tree_on || grouping_on {
-            row1_segments.extend([
-                (" · ".to_string(), hint, None),
-                ("←/".to_string(), key, Some(Command::NavLeft)),
-                ("→".to_string(), key, Some(Command::NavRight)),
-                (" fold".to_string(), hint, Some(Command::NavRight)),
-                (" · ".to_string(), hint, None),
-                ("-".to_string(), key, Some(Command::FoldCollapseAll)),
-                ("/".to_string(), hint, None),
-                ("+".to_string(), key, Some(Command::FoldExpandAll)),
-                (" all".to_string(), hint, Some(Command::FoldExpandAll)),
-                (" · ".to_string(), hint, None),
-                ("*".to_string(), key, Some(Command::FoldExpandSubtree)),
-                (" subtree".to_string(), hint, Some(Command::FoldExpandSubtree)),
-            ]);
-        }
-        compose_status_row(row1_segments, right_version.clone(), area, area.y, &mut clickable, hint)
+        // Fold hints are always shown; `style_footer` dims+inerts them when nothing is foldable
+        // (no tree or groups active).
+        row1_segments.extend([
+            (" · ".to_string(), hint, None),
+            ("←/".to_string(), key, Some(Command::NavLeft)),
+            ("→".to_string(), key, Some(Command::NavRight)),
+            (" fold".to_string(), hint, Some(Command::NavRight)),
+            (" · ".to_string(), hint, None),
+            ("-".to_string(), key, Some(Command::FoldCollapseAll)),
+            ("/".to_string(), hint, None),
+            ("+".to_string(), key, Some(Command::FoldExpandAll)),
+            (" all".to_string(), hint, Some(Command::FoldExpandAll)),
+            (" · ".to_string(), hint, None),
+            ("*".to_string(), key, Some(Command::FoldExpandSubtree)),
+            (" subtree".to_string(), hint, Some(Command::FoldExpandSubtree)),
+        ]);
+        compose_status_row(
+            style_footer(app, row1_segments, modal_open, leader_active, leader_trigger, dim_style),
+            style_footer(app, right_version.clone(), modal_open, leader_active, leader_trigger, dim_style),
+            area,
+            area.y,
+            &mut clickable,
+            hint,
+        )
     };
 
-    // While a leader menu is armed (row 1 shows it), the rest of the footer recedes and goes
-    // inert — except the armed leader's own trigger, which gets a highlight pill so it's obvious
-    // which menu is open.
-    let leader_active = leader.is_some();
-    let leader_trigger = match leader {
-        Some(Leader::Filter) => Some(Command::FilterLeader),
-        Some(Leader::Sort) => Some(Command::SortLeader),
-        Some(Leader::Toggle) => Some(Command::ToggleLeader),
-        _ => None,
-    };
-    let dim_inactive = |segments: Vec<(String, Style, Option<Command>)>| {
-        if !leader_active {
-            return segments;
-        }
-        segments
-            .into_iter()
-            .map(|(text, style, command)| {
-                if command.is_some() && command == leader_trigger {
-                    (
-                        text,
-                        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
-                        command,
-                    )
-                } else {
-                    (text, style.add_modifier(Modifier::DIM), None)
-                }
-            })
-            .collect::<Vec<_>>()
-    };
+    // `style_footer(app, …)` makes the footer recede + inert under a modal or an armed leader menu
+    // (row 1 shows the menu then), and dims per-command when an action would be a no-op. Called
+    // directly (not via a closure) so it doesn't hold an `&app` borrow across `app.clickable.extend`.
 
     // Row 2 — find & layout. Each active tag sits right after its hint and is clickable:
     // `[needle]` clears the name filter, `{status}` resets to all, `⟪column ▲⟫` flips direction.
@@ -3184,15 +3200,13 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ("t".to_string(), key, Some(Command::ToggleLeader)),
         (" cols".to_string(), hint, Some(Command::ToggleLeader)),
     ]);
-    // View toggles: `v g` grouped (only when groups are configured) and `v t` tree (only when
-    // the scan found nested folders). Each label brightens while its view is active.
-    if !app.groups.is_empty() {
+    // View toggles: `v g` grouped + `v t` tree, always shown — `style_footer` dims+inerts them when
+    // not applicable (no groups.json / no nested folders). Each label brightens while its view is on.
+    {
         let groups_label = if app.grouping_active() { active } else { hint };
         row2_segments.push((" · ".to_string(), hint, None));
         row2_segments.push(("vg".to_string(), key, Some(Command::GroupingToggle)));
         row2_segments.push((" groups".to_string(), groups_label, Some(Command::GroupingToggle)));
-    }
-    if !app.tree_nodes.is_empty() {
         let tree_label = if app.tree_active() { active } else { hint };
         row2_segments.push((" · ".to_string(), hint, None));
         row2_segments.push(("vt".to_string(), key, Some(Command::TreeToggle)));
@@ -3214,8 +3228,8 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         second[1].clone()
     } else {
         compose_status_row(
-            dim_inactive(row2_segments),
-            dim_inactive(right_built),
+            style_footer(app, row2_segments, modal_open, leader_active, leader_trigger, dim_style),
+            style_footer(app, right_built, modal_open, leader_active, leader_trigger, dim_style),
             area,
             area.y + 1,
             &mut clickable,
@@ -3223,42 +3237,37 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         )
     };
 
-    // Row 3 — actions. r/R/e/E dim when they'd be a no-op. The label words are clickable too;
-    // clicking the "refetch"/"retry" label runs the all-repos (capital) variant. The repo-only
-    // actions (page/claude/lazygit/open/copy) are hidden entirely when no repo is selected (the
-    // Result/Errors row or a header) — there's nothing for them to act on.
-    let mut row3_segments: Vec<(String, Style, Option<Command>)> = vec![
-        ("e/".to_string(), style_refetch_one, Some(Command::Refetch)),
-        ("E".to_string(), style_refetch_all, Some(Command::RefetchAll)),
-        (" refetch".to_string(), hint_refetch, Some(Command::RefetchAll)),
+    // Row 3 — actions. The keys + label words are all clickable; clicking "refetch"/"retry" runs
+    // the all-repos (capital) variant. `style_footer` dims+inerts each command when it'd be a no-op
+    // (e.g. the repo-only page/claude/lazygit/open/copy actions when no repo is selected).
+    let row3_segments: Vec<(String, Style, Option<Command>)> = vec![
+        ("e/".to_string(), key, Some(Command::Refetch)),
+        ("E".to_string(), key, Some(Command::RefetchAll)),
+        (" refetch".to_string(), hint, Some(Command::RefetchAll)),
         (" · ".to_string(), hint, None),
-        ("r/".to_string(), style_retry_one, Some(Command::Retry)),
-        ("R".to_string(), style_retry_all, Some(Command::RetryAll)),
-        (" retry".to_string(), hint_retry, Some(Command::RetryAll)),
+        ("r/".to_string(), key, Some(Command::Retry)),
+        ("R".to_string(), key, Some(Command::RetryAll)),
+        (" retry".to_string(), hint, Some(Command::RetryAll)),
+        (" · ".to_string(), hint, None),
+        ("enter".to_string(), key, Some(Command::OpenPage)),
+        (" page".to_string(), hint, Some(Command::OpenPage)),
+        (" · ".to_string(), hint, None),
+        ("c".to_string(), key, Some(Command::Claude)),
+        (" claude".to_string(), hint, Some(Command::Claude)),
+        (" · ".to_string(), hint, None),
+        ("l".to_string(), key, Some(Command::Lazygit)),
+        (" lazygit".to_string(), hint, Some(Command::Lazygit)),
+        (" · ".to_string(), hint, None),
+        ("o".to_string(), key, Some(Command::OpenRemote)),
+        (" open".to_string(), hint, Some(Command::OpenRemote)),
+        (" · ".to_string(), hint, None),
+        ("y/".to_string(), key, Some(Command::CopyPath)),
+        ("Y ".to_string(), key, Some(Command::CopyRemote)),
+        ("copy".to_string(), hint, Some(Command::CopyPath)),
     ];
-    if has_repo {
-        row3_segments.extend([
-            (" · ".to_string(), hint, None),
-            ("enter".to_string(), key, Some(Command::OpenPage)),
-            (" page".to_string(), hint, Some(Command::OpenPage)),
-            (" · ".to_string(), hint, None),
-            ("c".to_string(), key, Some(Command::Claude)),
-            (" claude".to_string(), hint, Some(Command::Claude)),
-            (" · ".to_string(), hint, None),
-            ("l".to_string(), key, Some(Command::Lazygit)),
-            (" lazygit".to_string(), hint, Some(Command::Lazygit)),
-            (" · ".to_string(), hint, None),
-            ("o".to_string(), key, Some(Command::OpenRemote)),
-            (" open".to_string(), hint, Some(Command::OpenRemote)),
-            (" · ".to_string(), hint, None),
-            ("y/".to_string(), key, Some(Command::CopyPath)),
-            ("Y ".to_string(), key, Some(Command::CopyRemote)),
-            ("copy".to_string(), hint, Some(Command::CopyPath)),
-        ]);
-    }
     let row3 = compose_status_row(
-        dim_inactive(row3_segments),
-        dim_inactive(right_meta),
+        style_footer(app, row3_segments, modal_open, leader_active, leader_trigger, dim_style),
+        style_footer(app, right_meta, modal_open, leader_active, leader_trigger, dim_style),
         area,
         area.y + 2,
         &mut clickable,
