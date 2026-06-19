@@ -2500,8 +2500,41 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(130);
                     }
-                    // Interactive CLI builder (CLI & Flags tab) intercepts its own keys.
-                    if app.help_tab == app::HelpTab::CliFlags {
+                    // `/` search applies to every tab. While active, printable chars edit the query
+                    // (Esc clears, Backspace deletes); arrows/Tab fall through to scroll/switch.
+                    if app.help_filter.is_some() {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.help_filter = None;
+                                continue;
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(query) = app.help_filter.as_mut() {
+                                    query.pop();
+                                }
+                                continue;
+                            }
+                            KeyCode::Char(ch)
+                                if !key.modifiers.intersects(
+                                    KeyModifiers::CONTROL | KeyModifiers::ALT,
+                                ) =>
+                            {
+                                if let Some(query) = app.help_filter.as_mut() {
+                                    query.push(ch);
+                                }
+                                app.help_scroll = 0;
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    } else if key.code == KeyCode::Char('/') {
+                        app.help_filter = Some(String::new());
+                        app.help_scroll = 0;
+                        continue;
+                    }
+                    // Interactive CLI builder (CLI & Flags tab) intercepts its own keys — but not
+                    // while a search is active (then typing edits the query, handled above).
+                    if app.help_tab == app::HelpTab::CliFlags && app.help_filter.is_none() {
                         if app.cli_builder.editing.is_some() {
                             match key.code {
                                 KeyCode::Esc => app.cli_builder.editing = None,
@@ -2557,30 +2590,6 @@ async fn run_event_loop(
                                 continue;
                             }
                             _ => {}
-                        }
-                    }
-                    // Hotkeys tab `/` filter: while active, keys edit the query (esc clears).
-                    if app.help_tab == app::HelpTab::Hotkeys {
-                        if app.help_filter.is_some() {
-                            match key.code {
-                                KeyCode::Esc => app.help_filter = None,
-                                KeyCode::Backspace => {
-                                    if let Some(query) = app.help_filter.as_mut() {
-                                        query.pop();
-                                    }
-                                }
-                                KeyCode::Char(ch) => {
-                                    if let Some(query) = app.help_filter.as_mut() {
-                                        query.push(ch);
-                                    }
-                                }
-                                _ => {}
-                            }
-                            continue;
-                        }
-                        if key.code == KeyCode::Char('/') {
-                            app.help_filter = Some(String::new());
-                            continue;
                         }
                     }
                     match key.code {
