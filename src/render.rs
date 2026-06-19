@@ -5215,21 +5215,40 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     let stash_count = rows.iter().filter(|row| row.kind == PageRowKind::Stash).count();
     let columns = app.effective_repo_page_columns();
 
-    // Cap the branch-name column so a very long branch name can't push the columns that follow
-    // off the screen; longer names truncate with `…`.
-    const NAME_MAX: usize = 40;
-    let name_pad = rows
-        .iter()
-        .map(|row| row.branch.chars().count())
-        .max()
-        .unwrap_or(8)
-        .min(NAME_MAX)
-        // +1 so the sort ▲/▼ never overflows the "branch" header when names are very short.
-        .max("branch".len() + 1);
-
     // The optional columns after the name, in a fixed order. The header row and every data row
     // are built from the same widths so they stay aligned. Count cells render a dim zero.
     let count_w = 5usize;
+
+    // Width allocator: distribute the inner width across the visible columns. The fixed-width
+    // optional columns take their share; whatever's left flows to `branch` (uncapped up to the
+    // available space) and `subject` (the remainder), so hiding columns reclaims that space for
+    // the text columns instead of leaving them truncated.
+    let inner_w = inner.width as usize;
+    let count_cell_w = 1 + count_w; // count_cell prefixes a single space
+    let fixed_after_branch = if columns.ahead_behind { 12 } else { 0 } // "  " + 10
+        + usize::from(columns.dirty) * count_cell_w
+        + usize::from(columns.added) * count_cell_w
+        + usize::from(columns.modified) * count_cell_w
+        + usize::from(columns.deleted) * count_cell_w
+        + usize::from(columns.total) * count_cell_w
+        + if columns.upstream { 30 } else { 0 } // "  " + 28
+        + if columns.base { 30 } else { 0 } // "  " + 28
+        + if columns.age { 16 } else { 0 }; // "  " + 14
+    let branch_floor = "branch".len() + 1; // +1 so the sort ▲/▼ never overflows the header
+    let natural_branch =
+        rows.iter().map(|row| row.branch.chars().count()).max().unwrap_or(8).max(branch_floor);
+    const MIN_SUBJECT: usize = 24;
+    // Branch may grow to its natural width, but leaves room for a readable subject when shown.
+    let branch_budget = inner_w
+        .saturating_sub(2 + fixed_after_branch + if columns.subject { 2 + MIN_SUBJECT } else { 0 })
+        .max(branch_floor);
+    let name_pad = natural_branch.min(branch_budget).max(branch_floor);
+    // Subject takes whatever's left after branch + the fixed columns (its own "  " prefix aside).
+    let subject_w = if columns.subject {
+        inner_w.saturating_sub(2 + name_pad + fixed_after_branch + 2).max(10)
+    } else {
+        0
+    };
     // Returns the row's optional-column spans plus the index of the `base` span within them (so
     // the caller can compute that cell's screen-column range for click hit-testing).
     let data_cells = |ahead: Option<u32>,
@@ -5292,7 +5311,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
             spans.push(Span::styled(format!("  {:<14}", truncate_str(age, 14)), label));
         }
         if columns.subject {
-            spans.push(Span::styled(format!("  {}", truncate_str(subject, 50)), label));
+            spans.push(Span::styled(format!("  {}", truncate_str(subject, subject_w)), label));
         }
         (spans, base_index)
     };
