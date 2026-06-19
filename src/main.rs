@@ -1372,6 +1372,8 @@ async fn run_event_loop(
                             .map(|&(.., tab)| tab);
                         if region_hit(app.settings_close_click, mouse.column, mouse.row) {
                             app.show_settings = false;
+                        } else if region_hit(app.settings_search_click, mouse.column, mouse.row) {
+                            app.settings_begin_search();
                         } else if let Some(tab) = tab_click {
                             app.settings_select_tab(tab);
                         } else if region_hit(
@@ -1945,8 +1947,37 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(130);
                     }
+                    // Search input focused: typing edits the query; Enter/Down jumps to the results;
+                    // Esc clears + unfocuses; everything else is captured as text.
+                    if app.settings_search_focused {
+                        match key.code {
+                            KeyCode::Esc => app.settings_clear_search(),
+                            KeyCode::Enter | KeyCode::Down | KeyCode::Up => {
+                                app.settings_search_focused = false;
+                            }
+                            KeyCode::Backspace => app.settings_search_backspace(),
+                            KeyCode::Char(ch)
+                                if !key.modifiers.intersects(
+                                    KeyModifiers::CONTROL | KeyModifiers::ALT,
+                                ) =>
+                            {
+                                app.settings_search_push(ch);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => {
+                        // `/` focuses the search box (filters rows across all tabs).
+                        KeyCode::Char('/') => app.settings_begin_search(),
+                        KeyCode::Esc => {
+                            if app.settings_search.is_empty() {
+                                app.show_settings = false;
+                            } else {
+                                app.settings_clear_search();
+                            }
+                        }
+                        KeyCode::Char('q') | KeyCode::Char(',') => {
                             app.show_settings = false;
                         }
                         KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
