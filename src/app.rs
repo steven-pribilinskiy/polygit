@@ -1403,6 +1403,9 @@ pub struct RepoState {
     /// The root (one of `AppState::root_dirs`) this repo was discovered under — disambiguates
     /// `rel_path` across multiple roots and groups repos into per-root sections in the tree.
     pub root: PathBuf,
+    /// Hidden from the list (its root was removed from the workspace). The repos vec is append-only
+    /// — indices must stay stable for in-flight workers — so removal hides rather than deletes.
+    pub hidden: bool,
     /// Absolute index into `AppState::repos` (set at discovery). Lets a worker schedule its own
     /// backoff retry by index without threading the index through every call.
     pub index: usize,
@@ -1500,6 +1503,7 @@ impl RepoState {
         RepoState {
             rel_path: name.clone(),
             root: PathBuf::new(),
+            hidden: false,
             name,
             index: 0,
             throttle_retries: 0,
@@ -2220,6 +2224,21 @@ pub struct AppState {
     pub finder_close_click: Option<(u16, u16, u16)>,
     /// Finder row hit map: (screen row, view index). Rebuilt each render.
     pub finder_rows_click: Vec<(u16, usize)>,
+    /// The folder picker overlay (`A`), when open. Selecting a folder/repo adds it as a root.
+    pub picker: Option<tui_pick::picker::PickerState>,
+    pub picker_area: Rect,
+    pub picker_close_click: Option<(u16, u16, u16)>,
+    /// Picker row hit map: (screen row, view index). Rebuilt each render.
+    pub picker_rows_click: Vec<(u16, usize)>,
+    /// Picker breadcrumb hit map: (row, col_start, col_end, target path). Rebuilt each render.
+    pub picker_crumbs_click: Vec<(u16, u16, u16, PathBuf)>,
+    /// Bookmarked folders for the picker (persisted; absolute paths).
+    pub folder_bookmarks: Vec<String>,
+    /// Discovery config captured at launch so a root added at runtime (via the picker) can be
+    /// scanned with the same settings from the event loop.
+    pub discovery_max_depth: usize,
+    pub discovery_timeout_secs: u64,
+    pub discovery_no_worktrees: bool,
     /// Clickable `base` cells on the repo page: `(row, col_start, col_end, selectable index)`.
     pub base_cell_click: Vec<(u16, u16, u16, usize)>,
     /// Persisted base-branch overrides, keyed `"{repo_abs_path}\u{1f}{branch}"` → base ref.
@@ -2466,6 +2485,15 @@ impl AppState {
             finder_area: Rect::default(),
             finder_close_click: None,
             finder_rows_click: Vec::new(),
+            picker: None,
+            picker_area: Rect::default(),
+            picker_close_click: None,
+            picker_rows_click: Vec::new(),
+            picker_crumbs_click: Vec::new(),
+            folder_bookmarks: persisted.folder_bookmarks.clone(),
+            discovery_max_depth: 16,
+            discovery_timeout_secs: 30,
+            discovery_no_worktrees: false,
             base_cell_click: Vec::new(),
             base_overrides: persisted.base_overrides,
             update_available: false,
@@ -2794,6 +2822,7 @@ impl AppState {
                 favorites
             },
             favorites_first: self.favorites_first,
+            folder_bookmarks: self.folder_bookmarks.clone(),
             info_pinned: self.info_pinned,
             split_ratio: self.split_ratio,
             dock_ratio: self.dock_ratio,
@@ -3409,7 +3438,7 @@ impl AppState {
             .enumerate()
             .filter_map(|(index, repo)| {
                 let state = repo.lock().unwrap();
-                if !self.status_filter.matches(&state.status) {
+                if state.hidden || !self.status_filter.matches(&state.status) {
                     return None;
                 }
                 match filter.as_deref() {
@@ -3892,6 +3921,93 @@ impl AppState {
             }
         }
         self.snap_selection(false);
+    }
+
+    /// Open the folder picker, starting at the first root (or home) with the saved bookmarks.
+    pub fn open_picker(&mut self) {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let start = self.root_dirs.first().cloned().unwrap_or_else(|| home.clone());
+        let bookmarks = self.folder_bookmarks.iter().map(PathBuf::from).collect();
+        self.picker = Some(tui_pick::picker::PickerState::new(start, home, bookmarks));
+    }
+
+    /// Add a folder/repo as a workspace root (canonicalized, deduped) and persist. Returns the
+    /// canonical path when it's newly added (so the caller can kick off discovery for it).
+    pub fn add_root(&mut self, path: PathBuf) -> Option<PathBuf> {
+        let abs = std::fs::canonicalize(&path).unwrap_or(path);
+        if self.root_dirs.contains(&abs) {
+            self.show_toast(format!("Already in the workspace: {}", abs.display()));
+            return None;
+        }
+        self.root_dirs.push(abs.clone());
+        // Re-adding a previously-removed root: un-hide its repos (discovery's dedup would otherwise
+        // skip them, leaving them hidden). The discovery pass then fills in any genuinely new ones.
+        let mut unhidden = false;
+        for repo in &self.repos {
+            let mut state = repo.lock().unwrap();
+            if state.root == abs && state.hidden {
+                state.hidden = false;
+                unhidden = true;
+            }
+        }
+        if unhidden {
+            self.rebuild_tree();
+        }
+        self.save_state();
+        self.show_toast(format!("Added {}", abs.display()));
+        Some(abs)
+    }
+
+    /// Remove the workspace root that the selected repo (or selected folder header) belongs to:
+    /// drop it from `root_dirs`, persist, and hide its repos (kept in the append-only vec so worker
+    /// indices stay valid). No-op when there's only one root or nothing is selected.
+    pub fn remove_selected_root(&mut self) {
+        let Some(root) = self.selected_root() else {
+            return;
+        };
+        if self.root_dirs.len() <= 1 {
+            self.show_toast("Can't remove the only folder in the workspace".to_string());
+            return;
+        }
+        let mut hidden = 0;
+        for repo in &self.repos {
+            let mut state = repo.lock().unwrap();
+            if state.root == root && !state.hidden {
+                state.hidden = true;
+                hidden += 1;
+            }
+        }
+        self.root_dirs.retain(|dir| dir != &root);
+        self.save_state();
+        self.rebuild_tree();
+        self.recompute_group_assignments();
+        self.snap_selection(false);
+        self.show_toast(format!("Removed {} ({hidden} repos)", root.display()));
+    }
+
+    /// The root of the current selection — a folder header's root, else the selected repo's root.
+    fn selected_root(&self) -> Option<PathBuf> {
+        match self.selected_row()? {
+            ListRow::Repo { repo_idx, .. } => Some(self.repos[repo_idx].lock().unwrap().root.clone()),
+            ListRow::FolderHeader { node_idx, .. } => {
+                // A top-level folder node maps to a root; find a repo under it to read its root.
+                let repos = self.tree_subtree_repos(node_idx);
+                repos.first().map(|&idx| self.repos[idx].lock().unwrap().root.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Persist any bookmark changes the picker made back into the saved set (call on close).
+    pub fn sync_picker_bookmarks(&mut self) {
+        if let Some(picker) = self.picker.as_ref() {
+            let bookmarks: Vec<String> =
+                picker.bookmarks.iter().map(|path| path.display().to_string()).collect();
+            if bookmarks != self.folder_bookmarks {
+                self.folder_bookmarks = bookmarks;
+                self.save_state();
+            }
+        }
     }
 
     /// Open the fzf-style finder over every repo (most-used first, mirroring goto-repo's default).
@@ -4388,6 +4504,9 @@ impl AppState {
         let mut throttled = 0;
         for repo in &self.repos {
             let state = repo.lock().unwrap();
+            if state.hidden {
+                continue;
+            }
             match &state.status {
                 RepoStatus::Queued => queued += 1,
                 RepoStatus::Running { .. } => running += 1,
@@ -6068,6 +6187,30 @@ mod tests {
         state.tree_enabled = true;
         state.rebuild_tree();
         state
+    }
+
+    #[test]
+    fn remove_root_hides_repos_and_re_add_unhides() {
+        let mut state = tree_state(&["x", "y"]);
+        state.root_dirs = vec![PathBuf::from("/work/alpha"), PathBuf::from("/work/beta")];
+        state.repos[0].lock().unwrap().root = PathBuf::from("/work/alpha");
+        state.repos[1].lock().unwrap().root = PathBuf::from("/work/beta");
+        state.rebuild_tree();
+        // Select repo 0 (under alpha) and remove its root.
+        state.selected = state
+            .visible_rows()
+            .iter()
+            .position(|row| matches!(row, ListRow::Repo { repo_idx: 0, .. }))
+            .unwrap();
+        state.remove_selected_root();
+        assert!(state.repos[0].lock().unwrap().hidden);
+        assert!(!state.repos[1].lock().unwrap().hidden);
+        assert_eq!(state.root_dirs, vec![PathBuf::from("/work/beta")]);
+        assert!(!state.visible_indices().contains(&0));
+        // Re-adding the root un-hides its repos (canonicalize fails on the fake path → kept as-is).
+        state.add_root(PathBuf::from("/work/alpha"));
+        assert!(!state.repos[0].lock().unwrap().hidden);
+        assert!(state.visible_indices().contains(&0));
     }
 
     #[test]

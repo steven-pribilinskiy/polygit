@@ -46,6 +46,9 @@ pub struct PersistedState {
     /// Pin a "★ Favorites" section to the top of the list (default off).
     #[serde(default)]
     pub favorites_first: bool,
+    /// Bookmarked folders (absolute paths) for the folder picker.
+    #[serde(default)]
+    pub folder_bookmarks: Vec<String>,
     /// Hide the dash-fill leader lines in group / folder headers (default off).
     #[serde(default)]
     pub hide_folder_lines: bool,

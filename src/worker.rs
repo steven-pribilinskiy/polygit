@@ -295,6 +295,9 @@ pub async fn run_discovery(
     timeout_secs: u64,
     icon_style: IconStyle,
     no_worktrees: bool,
+    // The initial scan auto-pulls per the Sync policy; a root added at runtime only discovers (its
+    // repos pull on demand) so adding a folder never re-pulls the whole workspace.
+    pull_after: bool,
 ) {
     use std::collections::HashSet;
     // Walk every root in parallel, tagging each discovered repo with the root it came from so the
@@ -372,8 +375,10 @@ pub async fn run_discovery(
     let (should_pull, all_repos) = {
         let mut app = app_state.lock().unwrap();
         app.discovery_done = true;
-        let should = app.should_auto_pull(app.repos.len());
-        app.auto_pull_suppressed = !should;
+        let should = pull_after && app.should_auto_pull(app.repos.len());
+        if pull_after {
+            app.auto_pull_suppressed = !should;
+        }
         (should, app.repos.clone())
     };
     if should_pull {
