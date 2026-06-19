@@ -286,6 +286,20 @@
       },
       {
         "keys": [
+          "I"
+        ],
+        "action": "Toggle the result/log panel (the bottom of the preview)",
+        "note": "info and result are independent panels in the right pane, split by a draggable boundary; hide the result panel and the info panel fills the pane (reads like the repo list). Persisted; clickable 'I log' footer hint",
+        "keywords": [
+          "result",
+          "log",
+          "panel",
+          "split",
+          "hide"
+        ]
+      },
+      {
+        "keys": [
           "d"
         ],
         "action": "Toggle the per-repo diff view"
