@@ -1014,7 +1014,7 @@ impl RepoTabsMode {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("General", 3), ("Theming", 5), ("Sync", 3), ("Interaction", 4), ("Layout", 5)];
+    &[("General", 3), ("Theming", 6), ("Sync", 3), ("Interaction", 3), ("Layout", 5)];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -2968,22 +2968,22 @@ impl AppState {
             (6, 1) => self.contrast = Contrast::Soft,
             (7, 0) => self.selection_style = SelectionStyle::Blue,
             (7, 1) => self.selection_style = SelectionStyle::Subtle,
-            (8, 0) => self.auto_pull_on_launch = true,
-            (8, 1) => self.auto_pull_on_launch = false,
-            (9, 0) => self.auto_pull_max_repos = 50,
-            (9, 1) => self.auto_pull_max_repos = 100,
-            (9, 2) => self.auto_pull_max_repos = 250,
-            (9, 3) => self.auto_pull_max_repos = 0,
-            (10, 0) => self.auto_pull_in_tree = true,
-            (10, 1) => self.auto_pull_in_tree = false,
-            (11, 0) => self.hover_effects = true,
-            (11, 1) => self.hover_effects = false,
-            (12, 0) => self.changed_row_flash = true,
-            (12, 1) => self.changed_row_flash = false,
-            (13, 0) => self.changed_row_highlight = true,
-            (13, 1) => self.changed_row_highlight = false,
-            (14, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
-            (14, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
+            (8, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
+            (8, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
+            (9, 0) => self.auto_pull_on_launch = true,
+            (9, 1) => self.auto_pull_on_launch = false,
+            (10, 0) => self.auto_pull_max_repos = 50,
+            (10, 1) => self.auto_pull_max_repos = 100,
+            (10, 2) => self.auto_pull_max_repos = 250,
+            (10, 3) => self.auto_pull_max_repos = 0,
+            (11, 0) => self.auto_pull_in_tree = true,
+            (11, 1) => self.auto_pull_in_tree = false,
+            (12, 0) => self.hover_effects = true,
+            (12, 1) => self.hover_effects = false,
+            (13, 0) => self.changed_row_flash = true,
+            (13, 1) => self.changed_row_flash = false,
+            (14, 0) => self.changed_row_highlight = true,
+            (14, 1) => self.changed_row_highlight = false,
             (15, 0) => self.show_borders = true,
             (15, 1) => self.show_borders = false,
             (16, 0) => self.show_splitter = true,
@@ -3029,21 +3029,21 @@ impl AppState {
                 SelectionStyle::Blue => 0,
                 SelectionStyle::Subtle => 1,
             },
-            8 => usize::from(!self.auto_pull_on_launch),
-            9 => match self.auto_pull_max_repos {
+            8 => match self.button_hover_style {
+                ButtonHoverStyle::Inverted => 0,
+                ButtonHoverStyle::Subtle => 1,
+            },
+            9 => usize::from(!self.auto_pull_on_launch),
+            10 => match self.auto_pull_max_repos {
                 50 => 0,
                 100 => 1,
                 250 => 2,
                 _ => 3,
             },
-            10 => usize::from(!self.auto_pull_in_tree),
-            11 => usize::from(!self.hover_effects),
-            12 => usize::from(!self.changed_row_flash),
-            13 => usize::from(!self.changed_row_highlight),
-            14 => match self.button_hover_style {
-                ButtonHoverStyle::Inverted => 0,
-                ButtonHoverStyle::Subtle => 1,
-            },
+            11 => usize::from(!self.auto_pull_in_tree),
+            12 => usize::from(!self.hover_effects),
+            13 => usize::from(!self.changed_row_flash),
+            14 => usize::from(!self.changed_row_highlight),
             15 => usize::from(!self.show_borders),
             16 => usize::from(!self.show_splitter),
             17 => match self.repo_page_tabs {
@@ -3806,20 +3806,21 @@ impl AppState {
             (3, _) => "Glyph set for statuses, columns, and markers",
             (4, _) => "Color theme: auto-detect the terminal, or force dark / light",
             (5, _) => "Surface tone: normal, soft, or terminal (let the terminal background show)",
-            (6, _) => "Text + accent saturation (normal vs softer)",
+            (6, _) => "Strength of text + accent colors. normal = full-contrast text, vivid \
+                       accents; soft = dimmer text, desaturated accents (gentler, lower contrast)",
             (7, _) => "Selected list-row highlight: a solid blue bar, or a subtle tint that keeps \
                        each column's own color",
-            (8, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
-            (9, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
-            (10, _) => "Allow the launch auto-pull while the directory-tree view is active",
-            (11, _) => "Highlight actionable elements under the cursor (enables all-motion mouse \
+            (8, _) => "Button hover: reverse-video (inverted) or a soft tint, for footer/modal \
+                       hints, tabs, radio chips, and keyboard keys",
+            (9, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
+            (10, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
+            (11, _) => "Allow the launch auto-pull while the directory-tree view is active",
+            (12, _) => "Highlight actionable elements under the cursor (enables all-motion mouse \
                         tracking, which takes over terminal text selection)",
-            (12, _) => "Pulse a row's changed cells after a pull. The status text column (t u) \
+            (13, _) => "Pulse a row's changed cells after a pull. The status text column (t u) \
                         also marks what changed.",
-            (13, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
+            (14, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
                         also marks what changed.",
-            (14, _) => "Button hover: reverse-video (inverted) or a soft tint, for footer/modal \
-                        hints, tabs, radio chips, and keyboard keys",
             (15, _) => "Draw the rounded borders around the two main panes",
             (16, _) => "Draw the draggable splitter grip between the panes",
             (17, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
@@ -3837,6 +3838,13 @@ impl AppState {
         let start: usize = SETTINGS_TABS.iter().take(tab).map(|(_, count)| count).sum();
         let len = SETTINGS_TABS.get(tab).map_or(0, |(_, count)| *count);
         (start, len)
+    }
+
+    /// Whether the tabbed settings view draws a blank group-separator row *before* this global
+    /// settings row. Visual only (nav/clicks ignore the blank). Splits the Theming tab into
+    /// Icons / palette+selection / button-hover groups: blank before Theme (4) and Button hover (8).
+    pub fn settings_tabbed_blank_before(row: usize) -> bool {
+        row == 4 || row == 8
     }
 
     /// Which settings tab a global row belongs to.
@@ -3912,13 +3920,13 @@ impl AppState {
             5 => self.background = self.background.cycle(),
             6 => self.contrast = self.contrast.cycle(),
             7 => self.selection_style = self.selection_style.cycle(),
-            8 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
-            9 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
-            10 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
-            11 => self.hover_effects = !self.hover_effects,
-            12 => self.changed_row_flash = !self.changed_row_flash,
-            13 => self.changed_row_highlight = !self.changed_row_highlight,
-            14 => self.button_hover_style = self.button_hover_style.cycle(),
+            8 => self.button_hover_style = self.button_hover_style.cycle(),
+            9 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            10 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            11 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            12 => self.hover_effects = !self.hover_effects,
+            13 => self.changed_row_flash = !self.changed_row_flash,
+            14 => self.changed_row_highlight = !self.changed_row_highlight,
             15 => self.show_borders = !self.show_borders,
             16 => self.show_splitter = !self.show_splitter,
             17 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
@@ -5769,12 +5777,12 @@ mod tests {
         assert_eq!(state.background, Background::Normal);
         state.set_setting_option(6, 1);
         assert_eq!(state.contrast, Contrast::Soft);
-        // Button hover (Interaction row 14): inverted / subtle.
-        state.set_setting_option(14, 0);
+        // Button hover lives in Theming now (row 8, right after List selection): inverted / subtle.
+        state.set_setting_option(8, 0);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Inverted);
-        state.set_setting_option(14, 1);
+        state.set_setting_option(8, 1);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Subtle);
-        // Layout rows shifted +1 after inserting button-hover: row 15 = borders, 19 = branch check.
+        // Layout rows are unchanged by the move: row 15 = borders, 19 = branch check.
         state.set_setting_option(15, 1);
         assert!(!state.show_borders);
         state.set_setting_option(19, 1);
@@ -5782,7 +5790,7 @@ mod tests {
         // Out-of-range pairs are a no-op.
         let theme = state.theme;
         state.set_setting_option(4, 9);
-        state.set_setting_option(9, 0);
+        state.set_setting_option(25, 0);
         assert_eq!(state.theme, theme);
     }
 
@@ -5797,19 +5805,19 @@ mod tests {
         // 3-radio: theme auto/dark/light → 0/1/2.
         state.set_setting_option(4, 2);
         assert_eq!(state.settings_active_option(4), 2);
-        // 4-radio: auto-pull limit 50/100/250/∞ → 0/1/2/3.
-        state.set_setting_option(9, 3);
-        assert_eq!(state.settings_active_option(9), 3);
-        // The new button-hover row (14): inverted/subtle → 0/1.
-        state.set_setting_option(14, 0);
-        assert_eq!(state.settings_active_option(14), 0);
-        state.set_setting_option(14, 1);
-        assert_eq!(state.settings_active_option(14), 1);
+        // 4-radio: auto-pull limit 50/100/250/∞ → 0/1/2/3 (now row 10 after the button-hover move).
+        state.set_setting_option(10, 3);
+        assert_eq!(state.settings_active_option(10), 3);
+        // Button hover (Theming row 8): inverted/subtle → 0/1.
+        state.set_setting_option(8, 0);
+        assert_eq!(state.settings_active_option(8), 0);
+        state.set_setting_option(8, 1);
+        assert_eq!(state.settings_active_option(8), 1);
         // A click on the active option then cycling lands on the next value.
-        state.settings_selected = 14;
-        let active = state.settings_active_option(14);
+        state.settings_selected = 8;
+        let active = state.settings_active_option(8);
         state.toggle_selected_setting();
-        assert_ne!(state.settings_active_option(14), active);
+        assert_ne!(state.settings_active_option(8), active);
     }
 
     #[test]

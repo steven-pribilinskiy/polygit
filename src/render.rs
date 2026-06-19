@@ -5802,6 +5802,13 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                         ("subtle", app.selection_style == SelectionStyle::Subtle),
                     ],
                 ),
+                (
+                    "Button hover",
+                    vec![
+                        ("inverted", app.button_hover_style == ButtonHoverStyle::Inverted),
+                        ("subtle", app.button_hover_style == ButtonHoverStyle::Subtle),
+                    ],
+                ),
             ],
         ),
         (
@@ -5837,13 +5844,6 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 (
                     "Changed-row highlight",
                     vec![("on", app.changed_row_highlight), ("off", !app.changed_row_highlight)],
-                ),
-                (
-                    "Button hover",
-                    vec![
-                        ("inverted", app.button_hover_style == ButtonHoverStyle::Inverted),
-                        ("subtle", app.button_hover_style == ButtonHoverStyle::Subtle),
-                    ],
                 ),
             ],
         ),
@@ -5993,6 +5993,11 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         let (start, len) = AppState::settings_tab_range(app.settings_tab);
         let mut content_lines: Vec<Line> = Vec::new();
         for offset in 0..len {
+            // Visual-only group separators (tabbed view): a blank row before certain settings.
+            // Nav skips them (it moves by row index) and they register no click region.
+            if AppState::settings_tabbed_blank_before(start + offset) {
+                content_lines.push(Line::from(""));
+            }
             let row_y = inner.y + content_lines.len() as u16;
             push_row(start + offset, content_x, row_y, &mut content_lines);
         }
