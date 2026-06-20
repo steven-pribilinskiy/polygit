@@ -159,6 +159,11 @@ pub struct AppState {
     pub cli_flag_click: Vec<(u16, usize)>,
     /// The clickable `[Copy]` button in the CLI builder: (row, col_start, col_end).
     pub cli_copy_click: Option<(u16, u16, u16)>,
+    /// Clickable help-display-mode chips in the CLI builder: (row, col_start, col_end, mode index).
+    pub cli_helpmode_click: Vec<(u16, u16, u16, usize)>,
+    /// Clickable tokens in the built-command preview: (row, flag index) — click removes that flag,
+    /// hover highlights its row above. One token per line, so a row hit-test suffices.
+    pub cli_command_click: Vec<(u16, usize)>,
     /// Clickable help-modal tab chips: (row, col_start, col_end, tab). Rebuilt each render.
     pub help_tab_click: Vec<(u16, u16, u16, HelpTab)>,
     /// The clickable `[esc]` close region in the help modal: (row, col_start, col_end).
@@ -617,11 +622,14 @@ impl AppState {
                 selected: 0,
                 on: vec![false; CLI_FLAGS.len()],
                 values: vec![String::new(); CLI_FLAGS.len()],
+                use_short: vec![false; CLI_FLAGS.len()],
                 editing: None,
-                show_help: true,
+                help_mode: persisted.cli_help_mode,
             },
             cli_flag_click: Vec::new(),
             cli_copy_click: None,
+            cli_helpmode_click: Vec::new(),
+            cli_command_click: Vec::new(),
             help_tab_click: Vec::new(),
             help_close_click: None,
             help_design_click: Vec::new(),

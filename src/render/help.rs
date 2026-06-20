@@ -287,16 +287,24 @@ pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Op
 /// Click sentinels carried in the CLI tab's URL slot (recognized by `render_help`).
 pub(crate) const CLI_FLAG_PREFIX: &str = "\u{1f}cliflag:";
 pub(crate) const CLI_COPY: &str = "\u{1f}clicopy";
+/// The help-display-mode chip row (always / on hover / never) — 3 chips, columns captured in render.
+pub(crate) const CLI_HELPMODE: &str = "\u{1f}clihelpmode";
+/// A built-command token line, tagged with its flag index — click removes it, hover highlights it.
+pub(crate) const CLI_CMD_PREFIX: &str = "\u{1f}clicmd:";
 
 /// The help modal's "CLI & Flags" tab — an interactive command builder. Each flag is a row you
 /// toggle (boolean) or fill in (value); the constructed `polygit …` command + a `[Copy]` button
 /// sit below the exit codes. Rows carry click sentinels so `render_help` can hit-test them.
-pub(crate) fn help_items_cli(builder: &crate::app::CliBuilder) -> Vec<(Line<'static>, Option<String>)> {
-    use crate::app::{CliFlagKind, CLI_FLAGS};
+pub(crate) fn help_items_cli(
+    builder: &crate::app::CliBuilder,
+    hovered_flag: Option<usize>,
+) -> Vec<(Line<'static>, Option<String>)> {
+    use crate::app::{CliFlagKind, CliHelpMode, CLI_FLAGS};
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Cyan);
     let meta_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
     let on_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let faint = Style::default().fg(Color::DarkGray);
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
     let plain = |text: &str| (Line::from(text.to_string()), None);
@@ -304,29 +312,42 @@ pub(crate) fn help_items_cli(builder: &crate::app::CliBuilder) -> Vec<(Line<'sta
     items.push(header("BUILD A COMMAND"));
     items.push((
         Line::from(Span::styled(
-            "  ↑↓ move · space/enter toggle · type a value (auto-applies) · h help".to_string(),
+            "  ↑↓ move · space toggle · type a value · f short/long · h help".to_string(),
             meta_style,
         )),
         None,
     ));
-    // Every flag is a checkbox row; value flags check on once a value is set. Children
-    // (e.g. --no-recursive, --profile-out) indent under their parent. The flag+value body is
-    // padded to a fixed width so the help comments line up; `h` hides the help column.
-    let body_w = 28usize;
+    // Help-display mode: a clickable [always] [on hover] [never] chip group (columns captured in
+    // render_help via the CLI_HELPMODE sentinel; `h` cycles it).
+    let mut mode_spans = vec![Span::styled("  help text:  ".to_string(), faint)];
+    for mode in CliHelpMode::ALL {
+        let label = mode.label();
+        let active = builder.help_mode == mode;
+        let style = if active {
+            Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
+        } else {
+            faint
+        };
+        mode_spans.push(Span::styled(format!(" {label} "), style));
+        mode_spans.push(Span::raw(" "));
+    }
+    items.push((Line::from(mode_spans), Some(CLI_HELPMODE.to_string())));
+
+    // Every flag is a checkbox row (toggles, value flags, and the positional alike). A child
+    // (e.g. --no-recursive under --depth) is disabled — dim and inert — while its parent is off.
+    let body_w = 26usize;
     for (idx, flag) in CLI_FLAGS.iter().enumerate() {
         let selected = idx == builder.selected;
         let cursor = if selected { "> " } else { "  " };
-        let on = builder.on.get(idx).copied().unwrap_or(false);
+        let enabled = builder.enabled(idx);
+        let on = builder.on.get(idx).copied().unwrap_or(false) && enabled;
         let value = builder.values.get(idx).cloned().unwrap_or_default();
         let editing = selected && builder.editing.is_some();
-        let active = match flag.kind {
-            CliFlagKind::Toggle => on,
-            _ => editing || !value.is_empty(),
-        };
         let indent = if flag.parent.is_some() { "  " } else { "" };
+        let form = builder.form(idx);
         let body = match flag.kind {
-            CliFlagKind::Toggle => format!("{indent}{}", flag.flag),
-            CliFlagKind::Value(placeholder) | CliFlagKind::Positional(placeholder) => {
+            CliFlagKind::Toggle => format!("{indent}{form}"),
+            CliFlagKind::Value(placeholder) => {
                 let shown = if editing {
                     format!("{}\u{2588}", builder.editing.clone().unwrap_or_default())
                 } else if value.is_empty() {
@@ -334,40 +355,86 @@ pub(crate) fn help_items_cli(builder: &crate::app::CliBuilder) -> Vec<(Line<'sta
                 } else {
                     value.clone()
                 };
-                let label = match flag.kind {
-                    CliFlagKind::Positional(_) => "[DIR]",
-                    _ => flag.flag,
+                format!("{indent}{form} {shown}")
+            }
+            CliFlagKind::Positional(placeholder) => {
+                let shown = if editing {
+                    format!("{}\u{2588}", builder.editing.clone().unwrap_or_default())
+                } else if value.is_empty() {
+                    placeholder.to_string()
+                } else {
+                    value.clone()
                 };
-                format!("{indent}{label} = {shown}")
+                format!("{indent}[DIR] = {shown}")
             }
         };
+        // A flag with a short form shows its alternate dimly so it's clear `f` can swap.
+        let alt = flag.short.map(|short| if form == short { flag.flag } else { short });
+        let (checkbox_style, body_style) = if !enabled {
+            (faint, faint)
+        } else if on {
+            (on_style, on_style)
+        } else {
+            (meta_style, key_style)
+        };
         let mut spans = vec![
-            Span::styled(cursor.to_string(), key_style),
-            Span::styled(
-                format!("{} ", if active { "[x]" } else { "[ ]" }),
-                if active { on_style } else { meta_style },
-            ),
-            Span::styled(
-                format!("{body:<body_w$}"),
-                if active { on_style } else { key_style },
-            ),
+            Span::styled(cursor.to_string(), if enabled { key_style } else { faint }),
+            Span::styled(format!("{} ", if on { "[x]" } else { "[ ]" }), checkbox_style),
+            Span::styled(format!("{body:<body_w$}"), body_style),
         ];
-        if builder.show_help {
-            spans.push(Span::styled(format!(" {}", flag.help), meta_style));
+        if let Some(alt) = alt.filter(|_| enabled) {
+            spans.push(Span::styled(format!(" (f: {alt})"), faint));
         }
-        items.push((Line::from(spans), Some(format!("{CLI_FLAG_PREFIX}{idx}"))));
+        let show_help = match builder.help_mode {
+            CliHelpMode::Always => true,
+            CliHelpMode::OnHover => selected || hovered_flag == Some(idx),
+            CliHelpMode::Never => false,
+        };
+        if show_help {
+            spans.push(Span::styled(format!("  {}", flag.help), meta_style));
+        }
+        // Disabled rows aren't clickable (no sentinel).
+        let sentinel = enabled.then(|| format!("{CLI_FLAG_PREFIX}{idx}"));
+        items.push((Line::from(spans), sentinel));
     }
     items.push(plain(""));
 
-    // The constructed command (clickable → copies) + an explicit copy button.
+    // The constructed command as an aligned, multiline preview. Each token is its own line tagged
+    // with its flag index (CLI_CMD_PREFIX) so it's clickable (removes the flag) and hoverable.
     items.push(header("COMMAND"));
-    items.push((
-        Line::from(Span::styled(
-            format!("  {}", builder.command()),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        )),
-        Some(CLI_COPY.to_string()),
-    ));
+    let tokens = builder.command_tokens();
+    if tokens.is_empty() {
+        items.push((Line::from(Span::styled("  polygit", key_style.add_modifier(Modifier::BOLD))), Some(CLI_COPY.to_string())));
+    } else {
+        items.push((
+            Line::from(vec![
+                Span::styled("  polygit", key_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" \\", faint),
+            ]),
+            Some(CLI_COPY.to_string()),
+        ));
+        // Align the value column: pad each token's first word (the flag form) to the widest.
+        let form_w = tokens
+            .iter()
+            .map(|(_, token)| token.split_once(' ').map(|(form, _)| form.len()).unwrap_or(token.len()))
+            .max()
+            .unwrap_or(0);
+        let last = tokens.len() - 1;
+        for (line_idx, (flag_idx, token)) in tokens.iter().enumerate() {
+            let cont = if line_idx == last { "" } else { " \\" };
+            let body = match token.split_once(' ') {
+                Some((form, value)) => format!("    {form:<form_w$}  {value}"),
+                None => format!("    {token}"),
+            };
+            items.push((
+                Line::from(vec![
+                    Span::styled(body, key_style.add_modifier(Modifier::BOLD)),
+                    Span::styled(cont.to_string(), faint),
+                ]),
+                Some(format!("{CLI_CMD_PREFIX}{flag_idx}")),
+            ));
+        }
+    }
     items.push((
         Line::from(Span::styled(
             "  [ copy ]".to_string(),
@@ -756,7 +823,11 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     };
     // Build all tabs so the modal size stays stable when switching; show only the active one.
     let hotkeys = help_items_hotkeys(view);
-    let cli = help_items_cli(&app.cli_builder);
+    // For "help on hover" mode, the flag under the cursor (mapped via last frame's click regions).
+    let hovered_flag = app.hover.and_then(|(_, row)| {
+        app.cli_flag_click.iter().find(|(click_row, _)| *click_row == row).map(|(_, idx)| *idx)
+    });
+    let cli = help_items_cli(&app.cli_builder, hovered_flag);
     let legend = help_items_legend();
     let about = help_items_about(app.help_notes_expanded);
     let design = help_items_design_system(app);
@@ -982,6 +1053,8 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.help_notes_toggle_row = None;
     app.cli_flag_click.clear();
     app.cli_copy_click = None;
+    app.cli_helpmode_click.clear();
+    app.cli_command_click.clear();
     app.help_design_click.clear();
     app.help_preview_click = None;
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
@@ -1021,6 +1094,20 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
             Some(sentinel) if sentinel.starts_with(CLI_FLAG_PREFIX) => {
                 if let Ok(idx) = sentinel[CLI_FLAG_PREFIX.len()..].parse::<usize>() {
                     app.cli_flag_click.push((row, idx));
+                }
+            }
+            Some(sentinel) if sentinel.starts_with(CLI_CMD_PREFIX) => {
+                if let Ok(idx) = sentinel[CLI_CMD_PREFIX.len()..].parse::<usize>() {
+                    app.cli_command_click.push((row, idx));
+                }
+            }
+            Some(CLI_HELPMODE) => {
+                // Capture each [label] chip's columns: "  help text:  " prefix, then ` label `+space.
+                let mut col = content_area.x + UnicodeWidthStr::width("  help text:  ") as u16;
+                for (mode_idx, mode) in crate::app::CliHelpMode::ALL.iter().enumerate() {
+                    let width = UnicodeWidthStr::width(mode.label()) as u16 + 2; // ` label `
+                    app.cli_helpmode_click.push((row, col, col + width, mode_idx));
+                    col += width + 1;
                 }
             }
             Some(url) => app.help_links.push((row, url.to_string())),

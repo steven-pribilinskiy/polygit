@@ -9,24 +9,63 @@
         assert_eq!(AppState::branch_check_interval_secs(10_000), 60); // ceiling 60s
     }
 
-    #[test]
-    fn cli_builder_command_assembles_flags() {
-        let mut builder = CliBuilder {
+    fn fresh_cli_builder() -> CliBuilder {
+        CliBuilder {
             selected: 0,
             on: vec![false; CLI_FLAGS.len()],
             values: vec![String::new(); CLI_FLAGS.len()],
+            use_short: vec![false; CLI_FLAGS.len()],
             editing: None,
-            show_help: true,
-        };
+            help_mode: crate::app::CliHelpMode::OnHover,
+        }
+    }
+
+    fn cli_index(flag: &str) -> usize {
+        CLI_FLAGS.iter().position(|candidate| candidate.flag == flag).unwrap()
+    }
+
+    #[test]
+    fn cli_builder_command_assembles_flags() {
+        let mut builder = fresh_cli_builder();
         assert_eq!(builder.command(), "polygit");
-        // index 0 = positional DIR, 1 = --depth, 5 = --no-tui (per CLI_FLAGS order).
-        builder.values[0] = "~/projects".to_string();
-        builder.values[1] = "3".to_string();
-        builder.on[5] = true;
+        let dir = 0; // positional DIR
+        let depth = cli_index("--depth");
+        let no_tui = cli_index("--no-tui");
+        let jobs = cli_index("--jobs");
+        // Every flag (value flags included) needs its checkbox on to be emitted.
+        builder.values[dir] = "~/projects".to_string();
+        builder.set_on(dir, true);
+        builder.values[depth] = "3".to_string();
+        builder.set_on(depth, true);
+        builder.set_on(no_tui, true);
         assert_eq!(builder.command(), "polygit ~/projects --depth 3 --no-tui");
-        // --jobs (index 3) is the long form (was `-j`).
-        builder.values[3] = "8".to_string();
+        // --jobs has a short form; `use_short` swaps it.
+        builder.values[jobs] = "8".to_string();
+        builder.set_on(jobs, true);
         assert!(builder.command().contains("--jobs 8"));
+        builder.toggle_short(jobs);
+        assert!(builder.command().contains("-j 8") && !builder.command().contains("--jobs 8"));
+    }
+
+    #[test]
+    fn cli_builder_parent_child_cascade() {
+        let mut builder = fresh_cli_builder();
+        let profile = cli_index("--profile");
+        let profile_out = cli_index("--profile-out");
+        // The child is disabled while the parent is off; checking it is a no-op.
+        assert!(!builder.enabled(profile_out));
+        builder.set_on(profile_out, true);
+        assert!(!builder.on[profile_out]);
+        // Check the parent → the child becomes enabled and can be set.
+        builder.set_on(profile, true);
+        assert!(builder.enabled(profile_out));
+        builder.values[profile_out] = "out.txt".to_string();
+        builder.set_on(profile_out, true);
+        assert!(builder.command().contains("--profile-out out.txt"));
+        // Unchecking the parent cascades: the child is force-unchecked and disabled again.
+        builder.set_on(profile, false);
+        assert!(!builder.on[profile_out] && !builder.enabled(profile_out));
+        assert!(!builder.command().contains("--profile"));
     }
 
     #[test]

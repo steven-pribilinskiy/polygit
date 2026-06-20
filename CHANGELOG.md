@@ -3,6 +3,20 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.64.0 — 2026-06-20
+CLI builder overhaul: source-driven flags, checkboxes, multiline clickable command
+- source-driven flag list now includes the missing `-w/--workspace` (and `-j/--jobs`
+  short forms); `f` swaps a flag's short ⇄ long form.
+- every flag (value flags included) is a checkbox: Space toggles, Enter edits a value
+  (typed values auto-apply and check the flag on).
+- child flags (e.g. `--no-recursive` under `--depth`, `--profile-out` under `--profile`)
+  disable + dim and are removed when their parent is unchecked (generic cascade).
+- help-text display is a persisted button-group: always / on hover / never (`h` cycles,
+  chips clickable); default on hover.
+- the built command is an aligned, multiline `polygit … \` preview whose tokens are
+  clickable to remove that flag (hover highlights its row, with a "click to remove"
+  tooltip); the whole command stays clickable to copy.
+
 ## v2.63.2 — 2026-06-20
 help modal: switching to About no longer forgets the last useful tab
 - the persisted/reopened help tab is now the last non-About tab; opening About

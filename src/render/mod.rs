@@ -264,6 +264,24 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             if section != app.design_section {
                 button_hits.push(row_rect(row, start, end));
             }
+        } else if let Some((row, start, end, _)) =
+            app.cli_helpmode_click.iter().find(|&&(r, s, e, _)| contains(r, s, e)).copied()
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(flag) =
+            app.cli_command_click.iter().find(|&&(row, _)| row == hrow).map(|&(_, idx)| idx)
+        {
+            // Hovering a built-command token tints it AND the matching flag row above (so you can
+            // see which flag a click would remove).
+            hits.push(inner_row(app.help_area));
+            if let Some(&(flag_row, _)) = app.cli_flag_click.iter().find(|&&(_, idx)| idx == flag) {
+                hits.push(Rect {
+                    x: app.help_area.x + 1,
+                    y: flag_row,
+                    width: app.help_area.width.saturating_sub(2),
+                    height: 1,
+                });
+            }
         } else if let Some((row, start, end)) =
             app.help_preview_click.filter(|&(r, s, e)| contains(r, s, e))
         {

@@ -1248,6 +1248,17 @@ async fn run_event_loop(
                 None
             };
             app.status_hint = help_url.clone();
+            // Hovering a built-command token (CLI builder tab) dwells a "click to remove" tip.
+            let cli_cmd_tip = if app.show_help && app.help_tab == app::HelpTab::CliFlags {
+                app.hover.and_then(|(_, row)| {
+                    app.cli_command_click
+                        .iter()
+                        .any(|(token_row, _)| *token_row == row)
+                        .then(|| "click to remove this flag from the command".to_string())
+                })
+            } else {
+                None
+            };
             let settings_tip = if app.show_settings {
                 app.hover.and_then(|(col, row)| {
                     app.settings_hit_at(col, row)
@@ -1277,6 +1288,9 @@ async fn run_event_loop(
                         help_url
                             .filter(|_| tips.enabled && tips.links)
                             .and_then(|url| cursor_tip(cursor, url))
+                    })
+                    .or_else(|| {
+                        cli_cmd_tip.filter(|_| tips.enabled).and_then(|tip| cursor_tip(cursor, tip))
                     })
                     .or_else(|| {
                         if !tips.enabled {
@@ -2072,21 +2086,43 @@ async fn run_event_loop(
                                 app.show_toast("command copied");
                                 drop(app);
                                 copy_to_clipboard(&command);
+                            } else if let Some(mode) = app
+                                .cli_helpmode_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., mode)| mode)
+                            {
+                                // Click a help-display-mode chip (always / on hover / never).
+                                app.cli_builder.help_mode = app::CliHelpMode::ALL[mode];
+                                app.save_state();
+                            } else if let Some(idx) = app
+                                .cli_command_click
+                                .iter()
+                                .find(|&&(row, _)| row == mouse.row)
+                                .map(|&(_, idx)| idx)
+                            {
+                                // Click a token in the built command to remove (uncheck) that flag.
+                                app.cli_builder.set_on(idx, false);
+                                app.cli_builder.selected = idx;
                             } else if let Some(idx) = app
                                 .cli_flag_click
                                 .iter()
                                 .find(|&&(row, _)| row == mouse.row)
                                 .map(|&(_, idx)| idx)
                             {
-                                // Click a CLI-builder flag row: select + toggle (boolean) or edit.
+                                // Click a CLI-builder flag row: commit any edit, select, then toggle
+                                // the checkbox (or edit a value flag).
+                                app.cli_builder.editing = None;
                                 app.cli_builder.selected = idx;
-                                match app::CLI_FLAGS[idx].kind {
-                                    app::CliFlagKind::Toggle => {
-                                        app.cli_builder.on[idx] = !app.cli_builder.on[idx];
-                                    }
-                                    _ => {
-                                        app.cli_builder.editing =
-                                            Some(app.cli_builder.values[idx].clone());
+                                if app.cli_builder.enabled(idx) {
+                                    match app::CLI_FLAGS[idx].kind {
+                                        app::CliFlagKind::Toggle => app.cli_builder.toggle(idx),
+                                        _ => {
+                                            app.cli_builder.editing =
+                                                Some(app.cli_builder.values[idx].clone());
+                                        }
                                     }
                                 }
                             } else if let Some((row_idx, option)) = app
@@ -3161,41 +3197,61 @@ async fn run_event_loop(
                                         buffer.pop();
                                     }
                                 }
-                                KeyCode::Char(ch) => {
+                                KeyCode::Char(ch)
+                                    if !key.modifiers.intersects(
+                                        KeyModifiers::CONTROL | KeyModifiers::ALT,
+                                    ) =>
+                                {
                                     if let Some(buffer) = app.cli_builder.editing.as_mut() {
                                         buffer.push(ch);
                                     }
                                 }
                                 _ => {}
                             }
-                            // Auto-apply: the command updates live as you type.
+                            // Auto-apply live: the command updates as you type; a non-empty value
+                            // checks the flag on so it's included.
                             if let Some(buffer) = app.cli_builder.editing.clone() {
-                                app.cli_builder.values[idx] = buffer.trim().to_string();
+                                let value = buffer.trim().to_string();
+                                let non_empty = !value.is_empty();
+                                app.cli_builder.values[idx] = value;
+                                if non_empty {
+                                    app.cli_builder.set_on(idx, true);
+                                }
                             }
                             continue;
                         }
+                        let idx = app.cli_builder.selected;
                         match key.code {
                             KeyCode::Down | KeyCode::Char('j') => {
                                 let last = app::CLI_FLAGS.len().saturating_sub(1);
-                                app.cli_builder.selected = (app.cli_builder.selected + 1).min(last);
+                                app.cli_builder.selected = (idx + 1).min(last);
                                 continue;
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
-                                app.cli_builder.selected =
-                                    app.cli_builder.selected.saturating_sub(1);
+                                app.cli_builder.selected = idx.saturating_sub(1);
                                 continue;
                             }
-                            KeyCode::Char(' ') | KeyCode::Enter => {
-                                let idx = app.cli_builder.selected;
-                                match app::CLI_FLAGS[idx].kind {
-                                    app::CliFlagKind::Toggle => {
-                                        app.cli_builder.on[idx] = !app.cli_builder.on[idx];
-                                    }
-                                    _ => {
-                                        app.cli_builder.editing =
-                                            Some(app.cli_builder.values[idx].clone());
+                            // Space toggles the checkbox (cascades to children when unchecked).
+                            KeyCode::Char(' ') => {
+                                app.cli_builder.toggle(idx);
+                                continue;
+                            }
+                            // Enter edits a value/positional flag; on a toggle it flips the checkbox.
+                            KeyCode::Enter => {
+                                if app.cli_builder.enabled(idx) {
+                                    match app::CLI_FLAGS[idx].kind {
+                                        app::CliFlagKind::Toggle => app.cli_builder.toggle(idx),
+                                        _ => {
+                                            app.cli_builder.editing =
+                                                Some(app.cli_builder.values[idx].clone());
+                                        }
                                     }
                                 }
+                                continue;
+                            }
+                            // `f` swaps the selected flag's short/long form.
+                            KeyCode::Char('f') => {
+                                app.cli_builder.toggle_short(idx);
                                 continue;
                             }
                             KeyCode::Char('y') => {
@@ -3205,8 +3261,10 @@ async fn run_event_loop(
                                 copy_to_clipboard(&command);
                                 continue;
                             }
+                            // `h` cycles the help-display mode (always / on hover / never).
                             KeyCode::Char('h') => {
-                                app.cli_builder.show_help = !app.cli_builder.show_help;
+                                app.cli_builder.help_mode = app.cli_builder.help_mode.cycle();
+                                app.save_state();
                                 continue;
                             }
                             _ => {}
