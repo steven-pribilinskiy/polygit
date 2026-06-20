@@ -282,6 +282,20 @@ impl AppState {
     pub fn open_build_info(&mut self) {
         self.close_all_modals();
         self.show_build_info = true;
+        self.build_info_scroll = 0;
+        // Snapshot the binary size + the config-dir contents for the modal (cheap, on open only).
+        self.build_info_binary_size = std::fs::metadata(&self.exe_path).map(|meta| meta.len()).unwrap_or(0);
+        let settings = crate::persist::state_path();
+        self.build_info_settings_path =
+            settings.as_ref().map(|path| path.display().to_string()).unwrap_or_default();
+        self.build_info_config_count = crate::persist::config_dir()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .map(|entries| entries.filter(|entry| entry.is_ok()).count())
+            .unwrap_or(0);
+        self.build_info_settings_preview = settings
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|text| text.lines().map(str::to_string).collect())
+            .unwrap_or_default();
     }
 
     /// Whether a footer `Command` is actionable in the current context (ignoring modal/leader

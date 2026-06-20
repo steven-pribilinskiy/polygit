@@ -205,9 +205,11 @@ dismisses the notice until the binary changes again. The notice rides on top of 
 click away.
 
 Clicking the `built … ago` tag in the status bar opens a **Build info** modal showing the
-running version, the watched executable path, when it was built, how the watch works, and
-whether a newer build is waiting. `r` (a clickable hint in the bottom border, next to `esc
-close`) exec-restarts into the latest build; any other key or click closes it.
+running version, when it was built, the **binary size** + watched path, the **settings file
+location** + config-dir file count, whether a newer build is waiting, and a **scrollable,
+syntax-highlighted preview of `state.json`** (`j`/`k`/`PgUp`/`PgDn`/wheel scroll). `r` (a
+clickable hint in the bottom border, next to `esc close`) exec-restarts into the latest build;
+any other key or click closes it.
 
 ## Reading the result
 

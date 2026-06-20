@@ -260,7 +260,7 @@ Everything actionable is clickable like a web page:
 
 While running, polygit watches its own binary on disk. When a newer build is installed (e.g. `make install`'s atomic rename), a persistent notice appears in the top-right (inset with the panel-padding setting, with a glint sweeping its border): `↺ new build installed · [reload] [x]`. It rides on top of every screen — the repo list, the repo page, and any open modal — so it's never hidden. `[reload]` restores the terminal and `exec`s the new binary with the same arguments — the fresh process re-scans and re-pulls (instant when everything is already up to date). `[x]` dismisses the notice; it re-arms if the binary changes again.
 
-Clicking the **`built … ago`** tag in the status bar opens a **Build info** modal: the running version, the watched executable path, when it was built, how the new-build watch works, and whether a newer build is currently waiting. `r` (a clickable hint in the bottom border, alongside `esc close`) exec-restarts into the latest build; any other key or click closes it.
+Clicking the **`built … ago`** tag in the status bar opens a **Build info** modal: the running version, when it was built, the **binary size** + watched path, the **settings file location** + how many files live in the config dir, whether a newer build is waiting, and a **scrollable, syntax-highlighted preview of `state.json`** (`j`/`k`/`PgUp`/`PgDn`/wheel scroll). `r` (a clickable hint in the bottom border, alongside `esc close`) exec-restarts into the latest build; any other key or click closes it.
 
 ## Testing
 

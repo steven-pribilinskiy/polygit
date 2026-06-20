@@ -380,6 +380,14 @@ pub struct AppState {
     pub show_build_info: bool,
     /// The build-info modal's `[x]` close button region.
     pub build_info_close_click: Option<(u16, u16, u16)>,
+    /// Build-info details, captured when the modal opens: running binary size (bytes), the
+    /// settings file path, the count of files in the config dir, the settings JSON as lines (for
+    /// the scrollable, syntax-highlighted preview), and the preview's scroll offset.
+    pub build_info_binary_size: u64,
+    pub build_info_settings_path: String,
+    pub build_info_config_count: usize,
+    pub build_info_settings_preview: Vec<String>,
+    pub build_info_scroll: usize,
     // Grouping (`z`, groups from ~/.config/polygit/groups.json):
     /// Render the list grouped (`z` toggles; persisted). Inert while `groups` is empty.
     pub grouping_enabled: bool,
@@ -656,6 +664,11 @@ impl AppState {
                 .unwrap_or_else(|_| "polygit".to_string()),
             show_build_info: false,
             build_info_close_click: None,
+            build_info_binary_size: 0,
+            build_info_settings_path: String::new(),
+            build_info_config_count: 0,
+            build_info_settings_preview: Vec::new(),
+            build_info_scroll: 0,
             grouping_enabled: persisted.grouping_enabled,
             groups: Vec::new(),
             repo_group_map: Vec::new(),
