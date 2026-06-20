@@ -1,10 +1,13 @@
 ---
 title: Repo page & diff modal
-description: The full-screen per-repo view for branches, worktrees, and stashes, and the inline diff modal.
+description: The per-repo view (panel 4) for branches, worktrees, and stashes, and the inline diff modal.
 ---
 
-Press `Enter` (or double-click) on a repo in the list to open its **repo page** — a
-full-screen view that runs `git fetch` and then lists everything about the repo.
+Press `Enter` (or double-click) on a repo in the list to open its **repo page** (panel `[4]`) —
+which runs `git fetch` and then lists everything about the repo. By default it opens **restored**
+(a docked panel across the bottom, so the list stays live above it and selecting another repo
+retargets the page); press `m` or the `▢` title-bar button (left of `[esc back]`) to **maximize**
+it full-screen, `▣`/`m` to restore. The state is sticky (Settings → Layout → **Repo page**).
 
 ## What the page shows
 
@@ -54,6 +57,7 @@ Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / a click), then:
 | `y` | Copy the selected row's path |
 | `c` | Start claude code in the row's path |
 | `l` | Open [lazygit](https://github.com/jesseduffield/lazygit) in the row's path |
+| `m` | Maximize / restore the page (restored = docked panel `[4]`; maximized = full-screen) |
 | `Esc` / `q` | Return to the repo list |
 
 ### The `d` key, by row type

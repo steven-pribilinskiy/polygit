@@ -11,9 +11,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
     AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, HelpTab,
-    HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow, PageRowKind, RepoPageColumn,
-    RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit, ScrollKind, SortColumn, SortDir,
-    StatusFilter,
+    HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow, PageRowKind, Pane,
+    RepoPageColumn, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit, ScrollKind,
+    SortColumn, SortDir, StatusFilter,
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
@@ -309,6 +309,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some((row, start, end)) =
+            app.repo_page_window_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
             app.repo_page_back_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
@@ -570,9 +574,10 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     app.clickable.clear();
     app.hint_click.clear();
 
-    // The dedicated repo page is full-screen and replaces the normal layout — unless the user
-    // docks it (then it falls through to render as a bottom panel below the two panes).
-    if app.repo_page.is_some() && !app.dock_repo_panel {
+    // A maximized repo page is full-screen and replaces the normal layout. A restored one falls
+    // through to render as a docked bottom panel below the two panes (panel [4]).
+    if app.repo_page.is_some() && app.repo_page_maximized {
+        app.dock_rect = Rect::default();
         render_repo_page(frame, app, area, tick);
         render_throttle_banner(frame, app, area);
         if app.confirm.is_some() {
@@ -620,7 +625,8 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // The boundary is a draggable horizontal splitter (height = dock_ratio of the main area).
     app.dock_full_area = full_main_area;
     app.dock_divider_row = None;
-    let dock_area = if app.repo_page.is_some() && app.dock_repo_panel {
+    app.dock_rect = Rect::default();
+    let dock_area = if app.repo_page.is_some() && !app.repo_page_maximized {
         let dock_height = (f64::from(full_main_area.height) * app.dock_ratio).round() as u16;
         let dock_height = dock_height.clamp(6, full_main_area.height.saturating_sub(6).max(6));
         let split = Layout::default()
@@ -658,9 +664,11 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // Render right pane
     render_preview(frame, app, preview_area, tick);
 
-    // Docked repo page: render the open repo page into the bottom panel (it captures its own
-    // geometry from the area it's given, so selection/scroll/clicks work there too).
+    // Restored repo page (panel [4]): render into the bottom panel (it captures its own geometry
+    // from the area it's given, so selection/scroll/clicks work there too). `dock_rect` lets the
+    // event loop route clicks outside it to the list/preview (master-detail).
     if let Some((_, dock)) = dock_area {
+        app.dock_rect = dock;
         render_repo_page(frame, app, dock, tick);
     }
 
@@ -975,7 +983,7 @@ fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> 
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(!app.preview_focused, modal_open));
+        .border_style(pane_border_style(app.focus == Pane::List, modal_open));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -1975,12 +1983,12 @@ fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, _tick: u64)
 
     let modal_open = app.any_modal_open();
     let mut block = Block::default()
-        .title(format!(" [2]{header_text}"))
+        .title(format!(" [3]{header_text}"))
         .title_style(pane_title_style(modal_open))
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(app.preview_focused, modal_open));
+        .border_style(pane_border_style(app.focus == Pane::Result, modal_open));
 
     // A `⧉` copy button on the top border copies the repo's log when it has output, otherwise the
     // repo path — so it's always useful (an up-to-date repo's log is empty). Same clipboard handler
@@ -2480,7 +2488,7 @@ fn render_info_panel(frame: &mut Frame, app: &mut AppState, area: Rect, repo_idx
     let name = app.repos[repo_idx].lock().unwrap().name.clone();
     let info_width = area.width.saturating_sub(if app.panel_padding { 4 } else { 2 }) as usize;
     let (lines, clicks) = build_info_lines(app, repo_idx, info_width);
-    render_info_block(frame, app, area, format!(" {name} · info "), lines, clicks);
+    render_info_block(frame, app, area, format!(" [2] {name} · info "), lines, clicks);
 }
 
 /// Render the placeholder shown when the result/log panel is hidden and there's no info panel to
@@ -2488,12 +2496,12 @@ fn render_info_panel(frame: &mut Frame, app: &mut AppState, area: Rect, repo_idx
 fn render_preview_hidden_hint(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let modal_open = app.any_modal_open();
     let block = Block::default()
-        .title(" [2] ")
+        .title(" [3] ")
         .title_style(pane_title_style(modal_open))
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(app.preview_focused, modal_open));
+        .border_style(pane_border_style(app.focus == Pane::Result, modal_open));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height >= 1 {
@@ -2522,7 +2530,7 @@ fn render_info_block(
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(app.preview_focused, modal_open));
+        .border_style(pane_border_style(app.focus == Pane::Info, modal_open));
     let inner = block.inner(area);
     let total = lines.len();
     frame.render_widget(block, area);
@@ -3594,13 +3602,6 @@ fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ("[ ".to_string(), key, Some(Command::SplitNarrow)),
         ("] ".to_string(), key, Some(Command::SplitWiden)),
         ("resize".to_string(), hint, Some(Command::SplitWiden)),
-        (" · ".to_string(), hint, None),
-        ("b".to_string(), key, Some(Command::ToggleDock)),
-        (
-            if app.dock_repo_panel { " docked".to_string() } else { " dock".to_string() },
-            if app.dock_repo_panel { active } else { hint },
-            Some(Command::ToggleDock),
-        ),
     ]);
     // When the column picker wrapped to a second row, it owns row 2 — render its second line
     // there instead of the find row (whose hidden clicks must not register).
@@ -5430,7 +5431,7 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
 
     // Animated spinner in the title while a pull runs or the page (re)fetches branches.
     let icons = app.icons();
-    let mut title = format!(" {name} · {head_branch} · {path} ");
+    let mut title = format!(" [4] {name} · {head_branch} · {path} ");
     if pulling {
         title.push_str(&format!("· {} pulling… ", spinner_frame(tick, icons)));
     } else if loading || !fetched {
@@ -5474,6 +5475,13 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
         ("?".to_string(), key, Some(HintKey::Char('?'))),
         (" help".to_string(), hint, Some(HintKey::Char('?'))),
         sep(),
+        ("m".to_string(), key, Some(HintKey::Char('m'))),
+        (
+            if app.repo_page_maximized { " restore".to_string() } else { " maximize".to_string() },
+            hint,
+            Some(HintKey::Char('m')),
+        ),
+        sep(),
         ("esc".to_string(), key, Some(HintKey::Esc)),
         (" back".to_string(), hint, Some(HintKey::Esc)),
     ]);
@@ -5481,23 +5489,34 @@ fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64
     // its click columns are predictable.
     let footer_row = area.y + area.height.saturating_sub(1);
     let footer_line = build_hint_footer(footer_segments, area.x + 1, footer_row, &mut app.hint_click);
-    // The top-border `[esc back]` button stays as a redundant always-visible affordance.
+    // Top-border window controls (Windows-style): a maximize/restore icon, then the `[esc back]`
+    // close button. The icon's glyph reflects the current state (restored → maximize; maximized →
+    // restore). Both are always-visible, clickable affordances.
+    let win_glyph = if app.repo_page_maximized { icons.win_restore } else { icons.win_maximize };
     let back_text = "[esc back]";
-    let back_line = Line::from(Span::styled(
-        back_text,
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
-    ))
+    let title_top = Line::from(vec![
+        Span::styled(win_glyph, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(back_text, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+    ])
     .right_aligned();
     let back_end = area.x + area.width.saturating_sub(1);
     let back_start = back_end.saturating_sub(back_text.len() as u16);
     app.repo_page_back_click = Some((area.y, back_start, back_end));
+    // The single-cell icon sits one space to the left of `[esc back]`.
+    let win_end = back_start.saturating_sub(1);
+    let win_start = win_end.saturating_sub(1);
+    app.repo_page_window_click = Some((area.y, win_start, win_end));
+    // Focused when restored and panel [4] holds focus, or always when maximized (it's the only pane).
+    let focused = app.repo_page_maximized || app.focus == Pane::RepoPage;
+    let modal_open = app.any_modal_open();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(pane_border_style(focused, modal_open))
         .title(title)
-        .title_top(back_line)
+        .title_top(title_top)
         .title_bottom(footer_line);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -6343,8 +6362,8 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // 0 grouping · 1 tree · 2 hide-folder-lines (Lists), 3 icons · 4 hide-zeros · 5 theme ·
     // 6 background · 7 contrast · 8 selection · 9 button-hover (Theming), 10 auto-pull · 11 limit ·
     // 12 auto-pull-in-tree (Sync), 13 hover · 14 changed-row flash · 15 changed-row highlight
-    // (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-page tabs · 20 dock ·
-    // 21 branch-check (Layout).
+    // (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-page tabs ·
+    // 20 repo-page (restored/maximized) · 21 branch-check (Layout).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -6453,8 +6472,11 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
                     ],
                 ),
                 (
-                    "Dock repo page",
-                    vec![("on", app.dock_repo_panel), ("off", !app.dock_repo_panel)],
+                    "Repo page",
+                    vec![
+                        ("restored", !app.repo_page_maximized),
+                        ("maximized", app.repo_page_maximized),
+                    ],
                 ),
                 (
                     "Auto branch-check",

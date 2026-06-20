@@ -245,6 +245,17 @@ pub enum DiffFocus {
     Diff,
 }
 
+/// Which main panel has keyboard focus. `Tab`/`Shift-Tab` cycle the *visible* panels; `1`-`4` jump.
+/// The number labels are stable (List=1, Info=2, Result=3, RepoPage=4) even when a panel is hidden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pane {
+    #[default]
+    List,
+    Info,
+    Result,
+    RepoPage,
+}
+
 /// The full-screen-ish (90%) diff modal state: a file-list panel over the selected file's diff.
 #[derive(Debug, Clone)]
 pub struct DiffModal {
@@ -1054,7 +1065,7 @@ pub const SETTINGS_LABELS: [&str; 22] = [
     "Borders",             // 17
     "Splitter",            // 18
     "Repo page tabs",      // 19
-    "Dock repo page",      // 20
+    "Repo page",           // 20
     "Auto branch-check",   // 21
 ];
 
@@ -1121,6 +1132,9 @@ pub struct IconSet {
     /// Favorited / not-favorited star (favorites column).
     pub fav_on: &'static str,
     pub fav_off: &'static str,
+    /// Window controls on the repo-page title bar: maximize (when restored) / restore (when maximized).
+    pub win_maximize: &'static str,
+    pub win_restore: &'static str,
 }
 
 // Status glyphs are drawn from Geometric Shapes (U+25xx), which terminal fonts like Cascadia Code
@@ -1150,6 +1164,10 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     retry_log: "↻",
     fav_on: "★",
     fav_off: "☆",
+    // Geometric Shapes (U+25xx), single-cell like the status glyphs above: hollow square = maximize,
+    // square-in-square = restore. Distinct shapes, reliable width across terminal fonts.
+    win_maximize: "▢",
+    win_restore: "▣",
 };
 
 pub static EMOJI_ICONS: IconSet = IconSet {
@@ -1185,6 +1203,9 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     // favorites column keeps a fixed width regardless of icon style.
     fav_on: "★",
     fav_off: "☆",
+    // Window controls stay Unicode in both sets (like the arrows/stars) for a fixed single-cell width.
+    win_maximize: "▢",
+    win_restore: "▣",
 };
 
 /// A mouse-clickable command region in the status bar (rebuilt each render).
@@ -1289,9 +1310,7 @@ pub enum Command {
     ClearNameFilter,
     /// Toggle the Result overlay (same as Space).
     ResultOverlay,
-    /// Toggle the repo page between full-screen and a docked bottom panel (same as `b`).
-    ToggleDock,
-    /// Toggle list ⇄ preview focus (same as Tab).
+    /// Cycle focus across the visible panels (same as Tab).
     FocusToggle,
     /// Narrow / widen the left pane (the clickable `[` / `]` hints).
     SplitNarrow,
@@ -1363,8 +1382,7 @@ impl Command {
             Command::NameFilter => "Filter repos by name (type to match)",
             Command::ClearNameFilter => "Clear the name filter",
             Command::ResultOverlay => "Show the Result / Errors summary",
-            Command::ToggleDock => "Toggle the repo page between full-screen and a docked bottom panel",
-            Command::FocusToggle => "Switch focus between the list and the preview",
+            Command::FocusToggle => "Cycle focus across the visible panels",
             Command::SplitNarrow => "Narrow the left pane",
             Command::SplitWiden => "Widen the left pane",
             Command::GroupingToggle => "Toggle the grouped list view",
@@ -1998,8 +2016,8 @@ pub struct AppState {
     pub selected: usize,
     /// Whether the user has manually moved the selection (disables auto-select).
     pub user_navigated: bool,
-    /// Whether focus is on the preview pane (for preview scroll keys).
-    pub preview_focused: bool,
+    /// Which main panel has keyboard focus (drives scroll keys + the bright pane border).
+    pub focus: Pane,
     /// Filter string (from `/` mode).
     pub filter: Option<String>,
     /// Status filter picked via the `f` leader (default: show all).
@@ -2042,6 +2060,9 @@ pub struct AppState {
     pub dock_divider_row: Option<u16>,
     /// The full main area (panes + dock) the `dock_ratio` is measured against, captured each render.
     pub dock_full_area: Rect,
+    /// The restored repo-page panel's outer rect, captured each render (empty when not restored).
+    /// Mouse events outside it fall through to the list/preview so the restored panel is master-detail.
+    pub dock_rect: Rect,
     /// When true, the preview shows the Result summary regardless of selection.
     pub result_overlay: bool,
     /// Main content area (above the status bar) — captured each render for hit-testing.
@@ -2149,8 +2170,10 @@ pub struct AppState {
     pub repo_page_selected: usize,
     /// Whether the repo page uses tabs for branches/worktrees/stashes (persisted).
     pub repo_page_tabs: RepoTabsMode,
-    /// Show the repo page as a docked bottom panel instead of full-screen (persisted).
-    pub dock_repo_panel: bool,
+    /// Repo-page window state: maximized (full-screen) vs restored (docked bottom panel). Default
+    /// restored. This is the single source of truth for both the current state and the state a page
+    /// opens in next time (sticky, Windows-like). Persisted.
+    pub repo_page_maximized: bool,
     /// Periodic local branch/status refresh mode (persisted).
     pub branch_check: BranchCheck,
     /// The active repo-page tab (when tabbed). Session-only.
@@ -2269,6 +2292,8 @@ pub struct AppState {
     pub help_area: Rect,
     /// The repo page's clickable `[esc back]` button on the top border.
     pub repo_page_back_click: Option<(u16, u16, u16)>,
+    /// The repo page's clickable maximize/restore button on the top border (left of `[esc back]`).
+    pub repo_page_window_click: Option<(u16, u16, u16)>,
     /// Which repo-page branch columns are shown (persisted).
     pub repo_page_columns: RepoPageColumns,
     /// The page-local `t` column-toggle menu is open.
@@ -2420,7 +2445,7 @@ impl AppState {
             discovery_done: false,
             selected: 0,
             user_navigated: false,
-            preview_focused: false,
+            focus: Pane::default(),
             filter: None,
             status_filter: StatusFilter::default(),
             sort_column: persisted.sort_column,
@@ -2439,6 +2464,7 @@ impl AppState {
             dock_ratio,
             dock_divider_row: None,
             dock_full_area: Rect::default(),
+            dock_rect: Rect::default(),
             result_overlay: false,
             main_area: Rect::default(),
             list_area: Rect::default(),
@@ -2492,7 +2518,7 @@ impl AppState {
             repo_page_inner: Rect::default(),
             repo_page_selected: 0,
             repo_page_tabs: persisted.repo_page_tabs,
-            dock_repo_panel: persisted.dock_repo_panel,
+            repo_page_maximized: persisted.repo_page_maximized,
             branch_check: persisted.branch_check,
             repo_page_tab: RepoTab::Branches,
             repo_page_tab_click: Vec::new(),
@@ -2554,6 +2580,7 @@ impl AppState {
             diff_chips_click: Vec::new(),
             help_area: Rect::default(),
             repo_page_back_click: None,
+            repo_page_window_click: None,
             repo_page_columns: persisted.repo_page_columns,
             repo_page_toggle: false,
             repo_page_toggle_click: Vec::new(),
@@ -2937,7 +2964,7 @@ impl AppState {
             tree_enabled: self.tree_enabled,
             collapsed_folders,
             repo_page_tabs: self.repo_page_tabs,
-            dock_repo_panel: self.dock_repo_panel,
+            repo_page_maximized: self.repo_page_maximized,
             branch_check: self.branch_check,
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
@@ -3277,8 +3304,8 @@ impl AppState {
             (18, 1) => self.show_splitter = false,
             (19, 0) => self.repo_page_tabs = RepoTabsMode::Off,
             (19, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
-            (20, 0) => self.dock_repo_panel = true,
-            (20, 1) => self.dock_repo_panel = false,
+            (20, 0) => self.repo_page_maximized = false,
+            (20, 1) => self.repo_page_maximized = true,
             (21, 0) => self.branch_check = BranchCheck::Off,
             (21, 1) => self.branch_check = BranchCheck::Auto,
             _ => return,
@@ -3340,7 +3367,7 @@ impl AppState {
                 RepoTabsMode::Off => 0,
                 RepoTabsMode::Auto => 1,
             },
-            20 => usize::from(!self.dock_repo_panel),
+            20 => usize::from(self.repo_page_maximized),
             21 => match self.branch_check {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
@@ -4552,8 +4579,8 @@ impl AppState {
     /// Row order (matches `render_settings` sections): 0 grouping · 1 tree · 2 hide-folder-lines
     /// (Lists), 3 icons · 4 hide-zeros · 5 theme · 6 background · 7 contrast · 8 selection ·
     /// 9 button-hover (Theming), 10 auto-pull · 11 limit · 12 in-tree (Sync), 13 hover · 14 flash ·
-    /// 15 highlight (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-tabs · 20 dock ·
-    /// 21 branch-check (Layout).
+    /// 15 highlight (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-tabs ·
+    /// 20 repo-page (restored/maximized) · 21 branch-check (Layout).
     pub fn toggle_selected_setting(&mut self) {
         match self.settings_selected {
             0 => {
@@ -4592,7 +4619,7 @@ impl AppState {
             17 => self.show_borders = !self.show_borders,
             18 => self.show_splitter = !self.show_splitter,
             19 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
-            20 => self.dock_repo_panel = !self.dock_repo_panel,
+            20 => self.repo_page_maximized = !self.repo_page_maximized,
             21 => self.branch_check = self.branch_check.cycle(),
             _ => {}
         }
@@ -4799,7 +4826,7 @@ impl AppState {
 
     /// Close every overlay modal so a freshly-opened one is the only one on screen (single-modal
     /// invariant — opening Settings while Help is up closes Help instead of stacking). The
-    /// full-screen repo page is a view, not a modal, so it's left untouched; the keyboard helper is
+    /// repo page is a view, not a modal, so it's left untouched; the keyboard helper is
     /// a child of Help and opens via its own path, which doesn't call this.
     pub fn close_all_modals(&mut self) {
         self.show_help = false;
@@ -5053,8 +5080,85 @@ impl AppState {
             self.repo_page_message = None;
             self.repo_page_focus_head = true;
             self.repo_page_tab = RepoTab::Branches;
+            self.focus = Pane::RepoPage;
             self.repos[idx].lock().unwrap().page = None;
         }
+    }
+
+    /// Point the already-open restored panel at a different repo as the list selection moves
+    /// (master-detail). Unlike `open_repo_page` it reuses the cached page (no fresh fetch) and
+    /// doesn't move focus off the list.
+    pub fn retarget_repo_page(&mut self, idx: usize) {
+        if self.repo_page == Some(idx) {
+            return;
+        }
+        self.repo_page = Some(idx);
+        self.repo_page_selected = 0;
+        self.repo_page_scroll = 0;
+        self.repo_page_message = None;
+        self.repo_page_focus_head = true;
+        self.repo_page_tab = RepoTab::Branches;
+    }
+
+    /// Maximize ⇄ restore the repo page. The state is sticky (persisted) and the page stays focused.
+    pub fn toggle_repo_page_maximized(&mut self) {
+        self.repo_page_maximized = !self.repo_page_maximized;
+        self.focus = Pane::RepoPage;
+        self.save_state();
+    }
+
+    /// The focusable panels in cycle order, only the currently-visible ones. A maximized repo page
+    /// is full-screen, so it's the sole entry; otherwise List is always present and Info / Result /
+    /// RepoPage appear when shown. The number labels stay stable regardless (see `Pane::number`).
+    pub fn visible_panes(&self) -> Vec<Pane> {
+        if self.repo_page.is_some() && self.repo_page_maximized {
+            return vec![Pane::RepoPage];
+        }
+        let mut panes = vec![Pane::List];
+        if self.info_pinned && !self.result_overlay && self.selected_repo_index().is_some() {
+            panes.push(Pane::Info);
+        }
+        if self.show_result_panel {
+            panes.push(Pane::Result);
+        }
+        if self.repo_page.is_some() {
+            panes.push(Pane::RepoPage);
+        }
+        panes
+    }
+
+    /// Move focus to the next / previous visible panel, wrapping. A focus that isn't currently
+    /// visible snaps to the first panel.
+    pub fn cycle_focus(&mut self, forward: bool) {
+        let panes = self.visible_panes();
+        if panes.is_empty() {
+            return;
+        }
+        let next = match panes.iter().position(|&pane| pane == self.focus) {
+            Some(idx) => {
+                let len = panes.len();
+                if forward { (idx + 1) % len } else { (idx + len - 1) % len }
+            }
+            None => 0,
+        };
+        self.focus = panes[next];
+    }
+
+    /// Focus a specific panel by identity, ignored if that panel isn't currently visible.
+    pub fn focus_pane(&mut self, pane: Pane) {
+        if self.visible_panes().contains(&pane) {
+            self.focus = pane;
+        }
+    }
+
+    /// Whether a point lands on the repo-page title-bar buttons (maximize/restore or `[esc back]`).
+    /// The restored panel's top border doubles as the resize handle, so these columns must be
+    /// excluded from the splitter grab or the buttons could never be clicked.
+    pub fn title_button_hit(&self, col: u16, row: u16) -> bool {
+        let hit = |region: Option<(u16, u16, u16)>| {
+            region.is_some_and(|(button_row, start, end)| row == button_row && col >= start && col < end)
+        };
+        hit(self.repo_page_back_click) || hit(self.repo_page_window_click)
     }
 
     /// Once the repo page's rows exist, move the selection to the current (HEAD) branch — done
@@ -5073,6 +5177,9 @@ impl AppState {
     pub fn close_repo_page(&mut self) {
         self.repo_page = None;
         self.repo_page_message = None;
+        if self.focus == Pane::RepoPage {
+            self.focus = Pane::List;
+        }
     }
 
     /// The repo page's selectable rows (branches then worktrees), in display order.
@@ -5821,6 +5928,14 @@ mod tests {
         state.collapsed_folders.clear();
         state.favorites.clear();
         state.favorites_first = false;
+        // Window/focus state also comes from the real state.json — pin it so focus/pane tests are
+        // hermetic.
+        state.focus = Pane::List;
+        state.repo_page_maximized = false;
+        state.repo_page = None;
+        state.info_pinned = false;
+        state.show_result_panel = true;
+        state.dock_ratio = AppState::DOCK_DEFAULT;
         // Auto-pull policy comes from the user's real state.json — pin it to the defaults so the
         // gate/settle tests are hermetic.
         state.auto_pull_on_launch = true;
@@ -5869,6 +5984,91 @@ mod tests {
         assert!((state.preview_split_ratio - AppState::PREVIEW_SPLIT_MIN).abs() < 1e-9);
         state.set_preview_split_from_row(40); // past the bottom → clamps to MAX
         assert!((state.preview_split_ratio - AppState::PREVIEW_SPLIT_MAX).abs() < 1e-9);
+    }
+
+    #[test]
+    fn visible_panes_reflect_visibility_and_cycle_skips_hidden() {
+        let mut state = state_named(&["a", "b"]);
+        state.selected = 0;
+        // Default: list + result (info off, no repo page).
+        state.info_pinned = false;
+        state.show_result_panel = true;
+        assert_eq!(state.visible_panes(), vec![Pane::List, Pane::Result]);
+        // Info appears when pinned over a selected repo; hiding result drops it.
+        state.info_pinned = true;
+        state.show_result_panel = false;
+        assert_eq!(state.visible_panes(), vec![Pane::List, Pane::Info]);
+        // Cycling wraps across only the visible panels (Result is skipped).
+        state.focus = Pane::List;
+        state.cycle_focus(true);
+        assert_eq!(state.focus, Pane::Info);
+        state.cycle_focus(true);
+        assert_eq!(state.focus, Pane::List);
+        state.cycle_focus(false);
+        assert_eq!(state.focus, Pane::Info);
+        // focus_pane ignores a hidden panel.
+        state.focus = Pane::List;
+        state.focus_pane(Pane::Result);
+        assert_eq!(state.focus, Pane::List);
+    }
+
+    #[test]
+    fn repo_page_window_state_and_focus() {
+        let mut state = state_named(&["a", "b"]);
+        state.selected = 0;
+        state.open_repo_page();
+        assert_eq!(state.repo_page, Some(0));
+        assert_eq!(state.focus, Pane::RepoPage);
+        // Default restored → the page is one of several panels.
+        assert!(!state.repo_page_maximized);
+        assert!(state.visible_panes().contains(&Pane::RepoPage));
+        assert!(state.visible_panes().contains(&Pane::List));
+        // Maximized → the page is the sole focusable panel (full-screen).
+        state.toggle_repo_page_maximized();
+        assert!(state.repo_page_maximized);
+        assert_eq!(state.visible_panes(), vec![Pane::RepoPage]);
+        // Closing returns focus to the list.
+        state.close_repo_page();
+        assert_eq!(state.repo_page, None);
+        assert_eq!(state.focus, Pane::List);
+    }
+
+    #[test]
+    fn retarget_repo_page_reuses_the_cached_page() {
+        let mut state = state_named(&["a", "b"]);
+        state.selected = 0;
+        state.open_repo_page(); // clears repo 0's page to force a fresh fetch
+        // Repo 1 has a cached page; retargeting must not nuke it (unlike open_repo_page).
+        state.repos[1].lock().unwrap().page = Some(RepoPageData::default());
+        state.repo_page_selected = 5;
+        state.retarget_repo_page(1);
+        assert_eq!(state.repo_page, Some(1));
+        assert_eq!(state.repo_page_selected, 0, "selection resets to the top");
+        assert!(state.repos[1].lock().unwrap().page.is_some(), "cache preserved");
+    }
+
+    #[test]
+    fn title_button_hit_only_on_the_buttons() {
+        let mut state = state_named(&["a"]);
+        state.repo_page_back_click = Some((4, 30, 40));
+        state.repo_page_window_click = Some((4, 28, 29));
+        assert!(state.title_button_hit(35, 4)); // inside [esc back]
+        assert!(state.title_button_hit(28, 4)); // the window icon cell
+        assert!(!state.title_button_hit(28, 5)); // wrong row
+        assert!(!state.title_button_hit(10, 4)); // left of both buttons (the drag handle)
+        assert!(!state.title_button_hit(40, 4)); // half-open: end is exclusive
+    }
+
+    #[test]
+    fn settings_repo_page_row_maps_restored_and_maximized() {
+        let mut state = state_named(&["a"]);
+        state.repo_page_maximized = false;
+        assert_eq!(state.settings_active_option(20), 0, "restored is option 0");
+        state.set_setting_option(20, 1);
+        assert!(state.repo_page_maximized);
+        assert_eq!(state.settings_active_option(20), 1, "maximized is option 1");
+        state.set_setting_option(20, 0);
+        assert!(!state.repo_page_maximized);
     }
 
     #[test]

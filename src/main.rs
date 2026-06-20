@@ -36,8 +36,8 @@ use ratatui::Terminal;
 
 use app::{
     point_in, region_hit, AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog,
-    DiffFocus, DiffSource, InfoAction, Leader, PageRow, PageRowKind, RepoPageColumn, RepoStatus,
-    RightView, SharedRepoState, SortColumn, StatusFilter,
+    DiffFocus, DiffSource, InfoAction, Leader, PageRow, PageRowKind, Pane, RepoPageColumn,
+    RepoStatus, RightView, SharedRepoState, SortColumn, StatusFilter,
 };
 use worker::{
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
@@ -324,6 +324,17 @@ fn hint_key_event(hint: app::HintKey) -> KeyEvent {
     }
 }
 
+/// Master-detail: while the restored repo page (panel [4]) is open and the list ([1]) holds focus,
+/// keep the panel pointed at the selected repo. A no-op when the page is maximized, the panel is
+/// focused (so its own keys drive it), or the selection isn't a repo.
+fn maybe_follow_repo_page(app: &mut AppState) {
+    if app.repo_page.is_some() && !app.repo_page_maximized && app.focus == Pane::List {
+        if let Some(idx) = app.selected_repo_index() {
+            app.retarget_repo_page(idx);
+        }
+    }
+}
+
 /// Rows the plain mouse wheel scrolls the repo list per notch (Alt+wheel moves the selection
 /// instead, one step per notch).
 const WHEEL_LIST_STEP: isize = 3;
@@ -466,15 +477,7 @@ fn dispatch_command(
         Cmd::ResultOverlay => {
             app.result_overlay = !app.result_overlay;
         }
-        Cmd::ToggleDock => {
-            app.dock_repo_panel = !app.dock_repo_panel;
-            let docked = app.dock_repo_panel;
-            app.show_toast(if docked { "repo page: docked" } else { "repo page: full-screen" });
-            app.save_state();
-        }
-        Cmd::FocusToggle => {
-            app.preview_focused = !app.preview_focused;
-        }
+        Cmd::FocusToggle => app.cycle_focus(true),
         Cmd::SplitNarrow => app.adjust_split(-0.03),
         Cmd::SplitWiden => app.adjust_split(0.03),
         Cmd::GroupingToggle => app.toggle_grouping_view(),
@@ -1082,6 +1085,9 @@ async fn run_event_loop(
             }
             app.divider_dragging = dragging_divider;
             app.scrollbar_dragging = scroll_drag;
+            // Master-detail: while the restored panel [4] is open and the list ([1]) has focus, keep
+            // the panel pointed at the selected repo (cheap no-op when it's already on that repo).
+            maybe_follow_repo_page(&mut app);
             terminal.draw(|frame| render::render(frame, &mut app, tick))?;
         }
 
@@ -1110,11 +1116,14 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Dragging the docked-panel's top boundary resizes it (a horizontal splitter).
-                // Handled before the repo-page/modal dispatch so a grab on the boundary wins.
+                // Dragging the restored panel's top boundary resizes it (a horizontal splitter).
+                // Handled before the repo-page/modal dispatch so a grab on the boundary wins — but
+                // the title-bar buttons live on that same border row, so exclude their columns or
+                // the maximize/restore and `[esc back]` buttons could never be clicked.
                 let on_dock_boundary = app
                     .dock_divider_row
-                    .is_some_and(|row| mouse.row == row || mouse.row + 1 == row);
+                    .is_some_and(|row| mouse.row == row || mouse.row + 1 == row)
+                    && !app.title_button_hit(mouse.column, mouse.row);
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) if on_dock_boundary => {
                         dragging_dock = true;
@@ -1292,6 +1301,14 @@ async fn run_event_loop(
                 // footer, since only the visible footer's regions are registered this frame.
                 if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
                     if let Some(hint) = app.hint_at(mouse.column, mouse.row) {
+                        // A click on the restored panel's footer acts on panel [4]: focus it first so
+                        // the injected key reaches the repo-page handler (not the list).
+                        if app.repo_page.is_some()
+                            && !app.repo_page_maximized
+                            && point_in(app.dock_rect, mouse.column, mouse.row)
+                        {
+                            app.focus = Pane::RepoPage;
+                        }
                         synthetic_keys.push_back(hint_key_event(hint));
                         continue;
                     }
@@ -1534,8 +1551,14 @@ async fn run_event_loop(
                 }
 
                 // Repo page: the wheel scrolls; a click selects a row, a double-click opens a
-                // diff modal on a stash or a dirty branch/worktree.
-                if app.repo_page.is_some() && !app.show_help {
+                // diff modal on a stash or a dirty branch/worktree. When restored, only events
+                // inside the dock panel are handled here — events above it fall through to the
+                // list/preview so the restored panel is master-detail (panel [4]).
+                let in_repo_page = app.repo_page.is_some()
+                    && !app.show_help
+                    && (app.repo_page_maximized
+                        || point_in(app.dock_rect, mouse.column, mouse.row));
+                if in_repo_page {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
                             let step = wheel_step(
@@ -1554,6 +1577,8 @@ async fn run_event_loop(
                             app.repo_page_scroll = app.repo_page_scroll.saturating_sub(step);
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
+                            // A click anywhere in the panel focuses it (panel [4]).
+                            app.focus = Pane::RepoPage;
                             let tab_click = app
                                 .repo_page_tab_click
                                 .iter()
@@ -1561,7 +1586,9 @@ async fn run_event_loop(
                                     mouse.row == row && mouse.column >= start && mouse.column < end
                                 })
                                 .map(|&(.., kind)| kind);
-                            if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
+                            if region_hit(app.repo_page_window_click, mouse.column, mouse.row) {
+                                app.toggle_repo_page_maximized();
+                            } else if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
                                 app.close_repo_page();
                             } else if let Some(kind) = tab_click {
                                 app.repo_page_select_tab(kind);
@@ -1724,9 +1751,16 @@ async fn run_event_loop(
 
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        // Click-to-focus: a click inside the panes focuses whichever side it hit.
-                        if point_in(app.main_area, mouse.column, mouse.row) {
-                            app.preview_focused = mouse.column >= app.divider_col;
+                        // Click-to-focus: a click inside the panes focuses whichever panel it hit.
+                        if point_in(app.list_area, mouse.column, mouse.row) {
+                            app.focus_pane(Pane::List);
+                        } else if point_in(app.preview_area, mouse.column, mouse.row) {
+                            // The right pane stacks info (top) over result (bottom); the divider row
+                            // splits them when both show, otherwise the visible one wins.
+                            let above_divider = app
+                                .preview_divider_row
+                                .is_none_or(|divider| mouse.row < divider);
+                            app.focus_pane(if above_divider { Pane::Info } else { Pane::Result });
                         }
                         // Footer status-bar commands are handled globally above (before the modal
                         // branches), so here we only handle the panes' own hits.
@@ -2308,7 +2342,12 @@ async fn run_event_loop(
                 }
 
                 // Dedicated repo page: navigate branches/worktrees and act on the selected row.
-                if app.repo_page.is_some() && !app.show_help {
+                // Restored, this only takes keys when panel [4] holds focus — otherwise keys drive
+                // the list/preview (master-detail). Maximized, it's the only panel, so it always wins.
+                if app.repo_page.is_some()
+                    && !app.show_help
+                    && (app.repo_page_maximized || app.focus == Pane::RepoPage)
+                {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
@@ -2349,6 +2388,8 @@ async fn run_event_loop(
                     let len = app.repo_page_selectable_len();
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
+                        // `m` maximizes / restores the page (Windows-style window control).
+                        KeyCode::Char('m') => app.toggle_repo_page_maximized(),
                         // `?` opens help (the overlay shows the repo-page hotkeys).
                         KeyCode::Char('?') => app.open_help(),
                         // `,` opens settings (handled by the early gate next iteration).
@@ -2759,14 +2800,19 @@ async fn run_event_loop(
 
                 // Normal key handling
                 match (key.code, key.modifiers) {
-                    // Quit
+                    // Quit — but if a restored panel [4] is open while another pane holds focus,
+                    // Esc/q backs out of the panel first (rather than surprising the user with a quit).
                     (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => {
-                        let all_done = app.all_done;
-                        drop(app);
-                        if all_done {
-                            return Ok(compute_exit_code(&app_state));
+                        if app.repo_page.is_some() {
+                            app.close_repo_page();
                         } else {
-                            return Ok(2); // user quit mid-run
+                            let all_done = app.all_done;
+                            drop(app);
+                            if all_done {
+                                return Ok(compute_exit_code(&app_state));
+                            } else {
+                                return Ok(2); // user quit mid-run
+                            }
                         }
                     }
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
@@ -2796,17 +2842,14 @@ async fn run_event_loop(
                         app.nav_bottom();
                     }
 
-                    // Tab: toggle focus between list and preview
-                    (KeyCode::Tab, _) => {
-                        app.preview_focused = !app.preview_focused;
-                    }
-                    // `1`/`2`: focus the list / preview pane directly (lazygit-style).
-                    (KeyCode::Char('1'), _) => {
-                        app.preview_focused = false;
-                    }
-                    (KeyCode::Char('2'), _) => {
-                        app.preview_focused = true;
-                    }
+                    // Tab / Shift+Tab: cycle focus across the visible panels.
+                    (KeyCode::Tab, _) => app.cycle_focus(true),
+                    (KeyCode::BackTab, _) => app.cycle_focus(false),
+                    // `1`-`4`: focus the list / info / result / repo-page panel directly (lazygit-style).
+                    (KeyCode::Char('1'), _) => app.focus_pane(Pane::List),
+                    (KeyCode::Char('2'), _) => app.focus_pane(Pane::Info),
+                    (KeyCode::Char('3'), _) => app.focus_pane(Pane::Result),
+                    (KeyCode::Char('4'), _) => app.focus_pane(Pane::RepoPage),
 
                     // Space: collapse/expand a selected group header, else toggle the Result
                     // preview overlay (temporary switch).
@@ -2819,13 +2862,6 @@ async fn run_event_loop(
                     // `v` leader: arm the view-mode chord (`g` grouped · `t` tree).
                     (KeyCode::Char('v'), _) => {
                         app.pending_leader = Some(Leader::View);
-                    }
-                    // `b`: toggle the repo page between full-screen and a docked bottom panel.
-                    (KeyCode::Char('b'), _) => {
-                        app.dock_repo_panel = !app.dock_repo_panel;
-                        let docked = app.dock_repo_panel;
-                        app.show_toast(if docked { "repo page: docked" } else { "repo page: full-screen" });
-                        app.save_state();
                     }
                     // `z` leader: arm the fold chord (za/zo/zc/zO/zM/zR).
                     (KeyCode::Char('z'), _) => {
@@ -2900,7 +2936,7 @@ async fn run_event_loop(
                     (KeyCode::Delete, _) | (KeyCode::Char('X'), _) => app.remove_selected_root(),
 
                     // Preview scroll (when preview focused)
-                    (KeyCode::PageUp, _) if app.preview_focused => {
+                    (KeyCode::PageUp, _) if app.focus == Pane::Result => {
                         if let Some(repo_idx) = app.selected_repo_index() {
                             let mut state = app.repos[repo_idx].lock().unwrap();
                             state.auto_scroll = false;
@@ -2908,7 +2944,7 @@ async fn run_event_loop(
                                 state.preview_scroll.saturating_sub(20);
                         }
                     }
-                    (KeyCode::PageDown, _) if app.preview_focused => {
+                    (KeyCode::PageDown, _) if app.focus == Pane::Result => {
                         if let Some(repo_idx) = app.selected_repo_index() {
                             let total = {
                                 let state = app.repos[repo_idx].lock().unwrap();
@@ -2919,7 +2955,7 @@ async fn run_event_loop(
                                 (state.preview_scroll + 20).min(total.saturating_sub(1));
                         }
                     }
-                    (KeyCode::End, _) if app.preview_focused => {
+                    (KeyCode::End, _) if app.focus == Pane::Result => {
                         if let Some(repo_idx) = app.selected_repo_index() {
                             let mut state = app.repos[repo_idx].lock().unwrap();
                             state.auto_scroll = true;

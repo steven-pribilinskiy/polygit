@@ -118,10 +118,11 @@ pub struct PersistedState {
     /// Split the repo page into branches/worktrees/stashes tabs (off / auto). Default off.
     #[serde(default)]
     pub repo_page_tabs: RepoTabsMode,
-    /// Show the repo page as a docked bottom panel instead of full-screen (default off).
+    /// Repo-page window state: maximized (full-screen) when true, restored (docked panel) when false.
+    /// Default restored.
     #[serde(default)]
-    pub dock_repo_panel: bool,
-    /// Docked repo-panel height as a fraction of the main area (0 = use the default).
+    pub repo_page_maximized: bool,
+    /// Restored repo-panel height as a fraction of the main area (0 = use the default).
     #[serde(default)]
     pub dock_ratio: f64,
     /// Periodic local branch/status refresh (off / auto). Default off.
