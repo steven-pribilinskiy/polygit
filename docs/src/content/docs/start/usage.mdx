@@ -11,7 +11,7 @@ import { Aside } from '@astrojs/starlight/components';
 # TUI mode (auto-detected when stderr is a TTY)
 polygit [DIR...]
 
-# Default: the persisted workspace, or the current directory when nothing is saved
+# No args → scans the current directory
 polygit
 ```
 
@@ -27,13 +27,23 @@ polygit ~ --depth 4                # crawl home, capped 4 levels deep
 polygit --no-recursive             # legacy single-level scan (immediate children only)
 ```
 
-### Persistent workspace
+### Named workspaces
 
-The set of folders is **remembered** (in `~/.config/polygit/state.json`). Launching with no
-args restores the saved folders; any `DIR` args are **merged into** that set and persisted, so
-they're there next time. With multiple folders, the [tree view](../../guides/tree-view/) shows
-each as its own top-level node (a forest). (Adding/removing folders from inside the app comes with
-the folder picker.)
+A launch is **ad-hoc by default** — `polygit` (or `polygit DIR...`) scans the cwd / the given
+folders and saves nothing. To keep a curated multi-folder set, use a **named workspace**:
+
+```bash
+polygit -w work ~/projects/a ~/projects/b   # define (or redefine) workspace "work" and open it
+polygit -w work                             # reopen workspace "work"
+polygit ws                                  # interactive picker of saved workspaces
+polygit ws ls                               # (alias: polygit workspaces list) print them
+```
+
+Workspaces are stored in `~/.config/polygit/state.json` under arbitrary names, and the folder
+picker (`A`) / remove-root (`X`) edit the **active** workspace (the one you opened with `-w` or
+the picker) — ad-hoc sessions don't persist folder changes. A new name with no folders starts
+from the cwd, ready for the picker. With multiple folders, the [tree view](../../guides/tree-view/)
+shows each as its own top-level node (a forest).
 
 Render the result as a collapsible [directory tree](../../guides/tree-view/) with `v t`, or as
 named [groups](../../guides/groups/) with `v g`. The list title shows live concurrency

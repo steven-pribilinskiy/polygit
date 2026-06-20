@@ -57,10 +57,15 @@ pub struct PersistedState {
     /// Hide the dash-fill leader lines in group / folder headers (default off).
     #[serde(default)]
     pub hide_folder_lines: bool,
-    /// Folders/roots polygit manages (absolute paths). The launch set is the union of these and any
-    /// CLI dirs; the picker adds/removes them live. Empty + no CLI args → fall back to cwd.
+    /// Legacy single workspace (absolute paths). Kept for migration only — on load it folds into
+    /// `workspaces["default"]` when `workspaces` is empty. No longer written.
     #[serde(default)]
     pub roots: Vec<String>,
+    /// Named workspaces: name → folders/roots (absolute paths). Opened with `-w <name>` or the
+    /// `ws` picker; the folder picker (`A`) adds/removes roots in the active one. Default launch
+    /// (no `-w`) uses the CLI dirs or the cwd, never a workspace.
+    #[serde(default)]
+    pub workspaces: HashMap<String, Vec<String>>,
     /// Background tone (normal / soft) — surface only. `None` in pre-split state files;
     /// `resolve_background` derives it from `contrast` for backward compatibility.
     pub background: Option<Background>,
@@ -128,6 +133,18 @@ pub struct PersistedState {
     /// Periodic local branch/status refresh (off / auto). Default off.
     #[serde(default)]
     pub branch_check: BranchCheck,
+}
+
+impl PersistedState {
+    /// The named workspaces, folding a legacy single `roots` list into `workspaces["default"]`
+    /// when no named workspaces exist yet (so old state files keep their saved folder set).
+    pub fn workspaces_migrated(&self) -> HashMap<String, Vec<String>> {
+        if self.workspaces.is_empty() && !self.roots.is_empty() {
+            HashMap::from([("default".to_string(), self.roots.clone())])
+        } else {
+            self.workspaces.clone()
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -229,6 +246,23 @@ mod tests {
     fn explicit_background_wins_over_contrast() {
         assert_eq!(resolve_background(Some(Background::Normal), Contrast::Soft), Background::Normal);
         assert_eq!(resolve_background(Some(Background::Soft), Contrast::Normal), Background::Soft);
+    }
+
+    #[test]
+    fn legacy_roots_migrate_into_default_workspace() {
+        // An old file with a single `roots` list and no `workspaces` → workspaces["default"].
+        let json = r#"{"roots":["/a","/b"]}"#;
+        let state: PersistedState = serde_json::from_str(json).unwrap();
+        let workspaces = state.workspaces_migrated();
+        assert_eq!(workspaces.get("default"), Some(&vec!["/a".to_string(), "/b".to_string()]));
+        // Named workspaces present → legacy roots are ignored (no migration).
+        let json = r#"{"roots":["/legacy"],"workspaces":{"work":["/x"]}}"#;
+        let state: PersistedState = serde_json::from_str(json).unwrap();
+        let workspaces = state.workspaces_migrated();
+        assert_eq!(workspaces.get("work"), Some(&vec!["/x".to_string()]));
+        assert!(!workspaces.contains_key("default"));
+        // Neither present → empty.
+        assert!(PersistedState::default().workspaces_migrated().is_empty());
     }
 
     #[test]

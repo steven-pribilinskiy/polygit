@@ -2220,8 +2220,15 @@ pub struct AppState {
     /// Inner rect of the diff modal's diff panel (wheel routing).
     pub diff_body_area: Rect,
     /// The directories/roots being scanned (each may itself be a single repo). Drives the per-root
-    /// tree forest and the persisted workspace; worktree re-discovery derives parents from the repos.
+    /// tree forest; worktree re-discovery derives parents from the repos.
     pub root_dirs: Vec<PathBuf>,
+    /// All saved named workspaces (name → roots), loaded at startup. Persisted as-is; when a
+    /// workspace is active its entry is refreshed from `root_dirs` on save.
+    pub workspaces: HashMap<String, Vec<String>>,
+    /// The active named workspace, if launched with `-w <name>` or via the `ws` picker. `None` for
+    /// an ad-hoc cwd/CLI-dirs session — those never write a workspace, so the picker (`A`) is
+    /// session-only until you launch under a name.
+    pub active_workspace: Option<String>,
     // Settings (persisted):
     /// Draw 1-cell inner padding inside every bordered panel/modal.
     pub panel_padding: bool,
@@ -2438,6 +2445,8 @@ impl AppState {
         } else {
             Self::PREVIEW_SPLIT_DEFAULT
         };
+        // Compute before the struct literal moves other `persisted` fields out.
+        let workspaces = persisted.workspaces_migrated();
         AppState {
             repos,
             worktrees: Vec::new(),
@@ -2542,6 +2551,8 @@ impl AppState {
             diff_files_area: Rect::default(),
             diff_body_area: Rect::default(),
             root_dirs: Vec::new(),
+            workspaces,
+            active_workspace: None,
             panel_padding: persisted.panel_padding,
             icon_style: persisted.icon_style,
             hide_zero_counts: persisted.hide_zero_counts,
@@ -2944,7 +2955,19 @@ impl AppState {
             icon_style: self.icon_style,
             hide_zero_counts: self.hide_zero_counts,
             hide_folder_lines: self.hide_folder_lines,
-            roots: self.root_dirs.iter().map(|root| root.display().to_string()).collect(),
+            roots: Vec::new(), // legacy field — workspaces own the folder sets now
+            workspaces: {
+                // Persist every saved workspace; refresh the active one from the live root set so
+                // picker add/remove sticks. Ad-hoc (no active workspace) sessions touch nothing.
+                let mut workspaces = self.workspaces.clone();
+                if let Some(name) = &self.active_workspace {
+                    workspaces.insert(
+                        name.clone(),
+                        self.root_dirs.iter().map(|root| root.display().to_string()).collect(),
+                    );
+                }
+                workspaces
+            },
             theme: self.theme,
             contrast: self.contrast,
             selection_style: self.selection_style,
@@ -5933,6 +5956,9 @@ mod tests {
         state.focus = Pane::List;
         state.repo_page_maximized = false;
         state.repo_page = None;
+        // Workspace state comes from the real state.json too — pin it for hermetic tests.
+        state.workspaces.clear();
+        state.active_workspace = None;
         state.info_pinned = false;
         state.show_result_panel = true;
         state.dock_ratio = AppState::DOCK_DEFAULT;
@@ -6057,6 +6083,18 @@ mod tests {
         assert!(!state.title_button_hit(28, 5)); // wrong row
         assert!(!state.title_button_hit(10, 4)); // left of both buttons (the drag handle)
         assert!(!state.title_button_hit(40, 4)); // half-open: end is exclusive
+    }
+
+    #[test]
+    fn workspace_state_defaults_and_is_addressable() {
+        let mut state = state_named(&["a"]);
+        // Ad-hoc session by default — no active workspace.
+        assert_eq!(state.active_workspace, None);
+        assert!(state.workspaces.is_empty());
+        // The save path keys off active_workspace; simulate a named session.
+        state.active_workspace = Some("work".to_string());
+        state.workspaces.insert("work".to_string(), vec!["/x".to_string()]);
+        assert_eq!(state.workspaces.get("work"), Some(&vec!["/x".to_string()]));
     }
 
     #[test]
