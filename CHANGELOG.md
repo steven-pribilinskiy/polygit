@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.63.1 — 2026-06-20
+dim the j/k scroll hint when nothing overflows
+- the build-info and changelog modals' scroll hint now renders disabled (dim +
+  inert) when the content fits the viewport (no scrollbar), via a new
+  `footer_chip_state` helper.
+
 ## v2.63.0 — 2026-06-20
 build-info settings preview is now a collapsible structural-data tree
 - the state.json preview became a format-agnostic tree viewer (new src/treeview.rs
