@@ -540,6 +540,7 @@ impl AppState {
                 on: vec![false; CLI_FLAGS.len()],
                 values: vec![String::new(); CLI_FLAGS.len()],
                 editing: None,
+                show_help: true,
             },
             cli_flag_click: Vec::new(),
             cli_copy_click: None,

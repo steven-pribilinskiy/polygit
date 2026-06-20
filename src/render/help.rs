@@ -292,26 +292,28 @@ pub(crate) fn help_items_cli(builder: &crate::app::CliBuilder) -> Vec<(Line<'sta
     items.push(header("BUILD A COMMAND"));
     items.push((
         Line::from(Span::styled(
-            "  ↑↓ move · space/enter toggle or edit · type a value, enter to set".to_string(),
+            "  ↑↓ move · space/enter toggle · type a value (auto-applies) · h help".to_string(),
             meta_style,
         )),
         None,
     ));
+    // Every flag is a checkbox row; value flags check on once a value is set. Children
+    // (e.g. --no-recursive, --profile-out) indent under their parent. The flag+value body is
+    // padded to a fixed width so the help comments line up; `h` hides the help column.
+    let body_w = 28usize;
     for (idx, flag) in CLI_FLAGS.iter().enumerate() {
         let selected = idx == builder.selected;
         let cursor = if selected { "> " } else { "  " };
         let on = builder.on.get(idx).copied().unwrap_or(false);
         let value = builder.values.get(idx).cloned().unwrap_or_default();
         let editing = selected && builder.editing.is_some();
-        let mut spans = vec![Span::styled(cursor.to_string(), key_style)];
-        match flag.kind {
-            CliFlagKind::Toggle => {
-                spans.push(Span::styled(
-                    format!("{} ", if on { "[x]" } else { "[ ]" }),
-                    if on { on_style } else { meta_style },
-                ));
-                spans.push(Span::styled(format!("{:<22}", flag.flag), key_style));
-            }
+        let active = match flag.kind {
+            CliFlagKind::Toggle => on,
+            _ => editing || !value.is_empty(),
+        };
+        let indent = if flag.parent.is_some() { "  " } else { "" };
+        let body = match flag.kind {
+            CliFlagKind::Toggle => format!("{indent}{}", flag.flag),
             CliFlagKind::Value(placeholder) | CliFlagKind::Positional(placeholder) => {
                 let shown = if editing {
                     format!("{}\u{2588}", builder.editing.clone().unwrap_or_default())
@@ -321,32 +323,38 @@ pub(crate) fn help_items_cli(builder: &crate::app::CliBuilder) -> Vec<(Line<'sta
                     value.clone()
                 };
                 let label = match flag.kind {
-                    CliFlagKind::Positional(_) => "[DIR]".to_string(),
-                    _ => flag.flag.to_string(),
+                    CliFlagKind::Positional(_) => "[DIR]",
+                    _ => flag.flag,
                 };
-                spans.push(Span::raw("    "));
-                spans.push(Span::styled(format!("{label} "), key_style));
-                let value_style = if editing || !value.is_empty() {
-                    on_style
-                } else {
-                    meta_style
-                };
-                spans.push(Span::styled(format!("{:<18}", format!("= {shown}")), value_style));
+                format!("{indent}{label} = {shown}")
             }
+        };
+        let mut spans = vec![
+            Span::styled(cursor.to_string(), key_style),
+            Span::styled(
+                format!("{} ", if active { "[x]" } else { "[ ]" }),
+                if active { on_style } else { meta_style },
+            ),
+            Span::styled(
+                format!("{body:<body_w$}"),
+                if active { on_style } else { key_style },
+            ),
+        ];
+        if builder.show_help {
+            spans.push(Span::styled(format!(" {}", flag.help), meta_style));
         }
-        spans.push(Span::styled(flag.help.to_string(), meta_style));
         items.push((Line::from(spans), Some(format!("{CLI_FLAG_PREFIX}{idx}"))));
     }
     items.push(plain(""));
 
-    // The constructed command + a copy button.
+    // The constructed command (clickable → copies) + an explicit copy button.
     items.push(header("COMMAND"));
     items.push((
         Line::from(Span::styled(
             format!("  {}", builder.command()),
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         )),
-        None,
+        Some(CLI_COPY.to_string()),
     ));
     items.push((
         Line::from(Span::styled(

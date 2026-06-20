@@ -2837,14 +2837,10 @@ async fn run_event_loop(
                     // while a search is active (then typing edits the query, handled above).
                     if app.help_tab == app::HelpTab::CliFlags && app.help_filter.is_none() {
                         if app.cli_builder.editing.is_some() {
+                            let idx = app.cli_builder.selected;
                             match key.code {
-                                KeyCode::Esc => app.cli_builder.editing = None,
-                                KeyCode::Enter => {
-                                    let idx = app.cli_builder.selected;
-                                    if let Some(buffer) = app.cli_builder.editing.take() {
-                                        app.cli_builder.values[idx] = buffer.trim().to_string();
-                                    }
-                                }
+                                // Esc / Enter just leave edit mode — the value is already applied.
+                                KeyCode::Esc | KeyCode::Enter => app.cli_builder.editing = None,
                                 KeyCode::Backspace => {
                                     if let Some(buffer) = app.cli_builder.editing.as_mut() {
                                         buffer.pop();
@@ -2856,6 +2852,10 @@ async fn run_event_loop(
                                     }
                                 }
                                 _ => {}
+                            }
+                            // Auto-apply: the command updates live as you type.
+                            if let Some(buffer) = app.cli_builder.editing.clone() {
+                                app.cli_builder.values[idx] = buffer.trim().to_string();
                             }
                             continue;
                         }
@@ -2888,6 +2888,10 @@ async fn run_event_loop(
                                 app.show_toast("command copied");
                                 drop(app);
                                 copy_to_clipboard(&command);
+                                continue;
+                            }
+                            KeyCode::Char('h') => {
+                                app.cli_builder.show_help = !app.cli_builder.show_help;
                                 continue;
                             }
                             _ => {}
