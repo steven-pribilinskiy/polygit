@@ -3,6 +3,17 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.63.0 — 2026-06-20
+build-info settings preview is now a collapsible structural-data tree
+- the state.json preview became a format-agnostic tree viewer (new src/treeview.rs
+  DataNode model; JSON is the first adapter, YAML/TOML/etc. only need their own).
+- objects and arrays collapse by default, each showing its child count in a faint
+  `{N}` / `[N]`; scalars are typed-colored.
+- keyboard + mouse driven: j/k move, ←/→ collapse/expand, space/enter fold the
+  selected node, -/+ fold/unfold all, g/G jump; clicking a node folds it, plus
+  `[- fold all]` / `[+ unfold all]` buttons on the card header.
+- falls back to the raw highlighted lines when the file isn't valid JSON.
+
 ## v2.62.0 — 2026-06-20
 reset-plan colored/aligned diff; design-system confirm preview copy
 - the reset confirmation now renders each `Label: current → default` as an aligned

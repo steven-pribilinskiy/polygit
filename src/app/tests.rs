@@ -1588,6 +1588,33 @@
     }
 
     #[test]
+    fn build_info_tree_fold_toggle_and_nav() {
+        let mut state = state_named(&["a"]);
+        state.build_info_tree =
+            crate::treeview::DataNode::parse_json(r#"{"a":1,"obj":{"x":1,"y":2},"arr":[1,2]}"#);
+        state.build_info_tree_expanded.clear();
+        // Collapsed by default → 3 visible rows (a, obj, arr).
+        assert_eq!(state.build_info_tree_rows().len(), 3);
+        // Unfold all → obj + arr children appear (3 + 2 + 2 = 7).
+        state.build_info_fold_all(true);
+        assert_eq!(state.build_info_tree_rows().len(), 7);
+        // Fold all → back to 3.
+        state.build_info_fold_all(false);
+        assert_eq!(state.build_info_tree_rows().len(), 3);
+        // Toggle the selected container (row 1 = "obj") expands just it (3 + 2 = 5).
+        state.build_info_tree_selected = 1;
+        state.build_info_toggle_selected();
+        assert_eq!(state.build_info_tree_rows().len(), 5);
+        // Selecting a child then ← jumps to its parent ("obj" at row 1).
+        state.build_info_tree_selected = 2;
+        state.build_info_tree_collapse_or_parent();
+        assert_eq!(state.build_info_tree_selected, 1);
+        // ← again collapses the parent.
+        state.build_info_tree_collapse_or_parent();
+        assert_eq!(state.build_info_tree_rows().len(), 3);
+    }
+
+    #[test]
     fn button_hover_style_cycles() {
         assert_eq!(ButtonHoverStyle::Subtle.cycle(), ButtonHoverStyle::Inverted);
         assert_eq!(ButtonHoverStyle::Inverted.cycle(), ButtonHoverStyle::Subtle);

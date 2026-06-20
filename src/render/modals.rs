@@ -178,6 +178,17 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
         .build_duration
         .map(|secs| format!("{built}  (took {})", crate::app::format_duration(secs)))
         .unwrap_or(built);
+    let has_tree = app.build_info_tree.is_some();
+    // The settings-preview card header carries fold-all / unfold-all buttons when it's a tree.
+    let fold_all = "[- fold all]";
+    let unfold_all = "[+ unfold all]";
+    let mut preview_header = vec![Span::styled("Settings preview (state.json)", label)];
+    if has_tree {
+        preview_header.push(Span::raw("   "));
+        preview_header.push(Span::styled(fold_all, Style::default().fg(Color::DarkGray)));
+        preview_header.push(Span::raw(" "));
+        preview_header.push(Span::styled(unfold_all, Style::default().fg(Color::DarkGray)));
+    }
     let header: Vec<Line> = vec![
         field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string()),
         field("Built", built_in),
@@ -188,17 +199,26 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
         ),
         Line::from(status),
         Line::from(String::new()),
-        Line::from(Span::styled("Settings preview (state.json)", label)),
+        Line::from(preview_header),
     ];
 
-    // A roomy modal: header + a scrollable JSON preview filling the rest.
+    // A roomy modal: header + a scrollable, collapsible settings tree filling the rest.
     let pad = if app.panel_padding { 2 } else { 0 };
     let width = area.width.saturating_sub(8).clamp(40, 100);
     let height = area.height.saturating_sub(4).clamp(12, 36);
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
-    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    if has_tree {
+        footer.extend(footer_chip("j/k", " move", HintKey::Char('j')));
+        footer.push(footer_sep());
+        footer.push(("space".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Char(' '))));
+        footer.push(("/".to_string(), Style::default().fg(Color::DarkGray), None));
+        footer.push(("enter".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Enter)));
+        footer.push((" fold".to_string(), Style::default().fg(Color::DarkGray), Some(HintKey::Enter)));
+    } else {
+        footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    }
     footer.push(footer_sep());
     footer.extend(footer_chip("r", " restart", HintKey::Char('r')));
     footer.push(footer_sep());
@@ -222,6 +242,18 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let header_h = header.len() as u16;
     let header_area = Rect { height: header_h.min(inner.height), ..inner };
     frame.render_widget(Paragraph::new(header).wrap(Wrap { trim: false }), header_area);
+    // Capture the fold-all / unfold-all button regions on the card-header row (last header line).
+    app.build_info_fold_all_click = None;
+    app.build_info_unfold_all_click = None;
+    if has_tree {
+        let header_row = inner.y + header_h - 1;
+        let fold_x = inner.x + UnicodeWidthStr::width("Settings preview (state.json)") as u16 + 3;
+        let fold_w = UnicodeWidthStr::width(fold_all) as u16;
+        app.build_info_fold_all_click = Some((header_row, fold_x, fold_x + fold_w));
+        let unfold_x = fold_x + fold_w + 1;
+        app.build_info_unfold_all_click =
+            Some((header_row, unfold_x, unfold_x + UnicodeWidthStr::width(unfold_all) as u16));
+    }
     if inner.height <= header_h + 1 {
         return;
     }
@@ -232,20 +264,100 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
         width: inner.width.saturating_sub(1),
         ..inner
     };
-    let total = app.build_info_settings_preview.len();
     let viewport = preview.height as usize;
-    let max_scroll = total.saturating_sub(viewport);
-    if app.build_info_scroll > max_scroll {
-        app.build_info_scroll = max_scroll;
+
+    if let Some(tree) = &app.build_info_tree {
+        let rows = crate::treeview::flatten(tree, &app.build_info_tree_expanded);
+        let total = rows.len();
+        if app.build_info_tree_selected >= total {
+            app.build_info_tree_selected = total.saturating_sub(1);
+        }
+        let selected = app.build_info_tree_selected;
+        // Keep the selected row in view.
+        let max_scroll = total.saturating_sub(viewport);
+        let mut scroll = app.build_info_scroll.min(max_scroll);
+        if selected < scroll {
+            scroll = selected;
+        } else if viewport > 0 && selected >= scroll + viewport {
+            scroll = selected + 1 - viewport;
+        }
+        app.build_info_scroll = scroll;
+        app.build_info_tree_click.clear();
+        let key_style = Style::default().fg(Color::Cyan);
+        let faint = Style::default().fg(Color::DarkGray);
+        let lines: Vec<Line> = rows
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(viewport)
+            .map(|(index, row)| {
+                let indent = "  ".repeat(row.depth);
+                let mut spans = vec![Span::raw(indent)];
+                match &row.kind {
+                    crate::treeview::RowKind::Container { is_object, count, collapsed } => {
+                        let screen_y = preview.y + (index - scroll) as u16;
+                        app.build_info_tree_click.push((screen_y, preview.x, preview.x + preview.width, index));
+                        spans.push(Span::styled(
+                            if *collapsed { "\u{25b8} " } else { "\u{25be} " },
+                            Style::default().fg(Color::Cyan),
+                        ));
+                        let label_style = if row.label_is_index { faint } else { key_style };
+                        spans.push(Span::styled(row.label.clone(), label_style));
+                        let summary =
+                            if *is_object { format!("  {{{count}}}") } else { format!("  [{count}]") };
+                        spans.push(Span::styled(summary, faint));
+                    }
+                    crate::treeview::RowKind::Scalar { text, kind } => {
+                        spans.push(Span::raw("  "));
+                        if !row.label.is_empty() {
+                            let label_style = if row.label_is_index { faint } else { key_style };
+                            spans.push(Span::styled(row.label.clone(), label_style));
+                            spans.push(Span::styled(": ", faint));
+                        }
+                        let (value, style) = match kind {
+                            crate::treeview::ScalarKind::String => {
+                                (format!("\"{text}\""), Style::default().fg(Color::Green))
+                            }
+                            crate::treeview::ScalarKind::Number => {
+                                (text.clone(), Style::default().fg(Color::Yellow))
+                            }
+                            crate::treeview::ScalarKind::Bool => {
+                                (text.clone(), Style::default().fg(Color::Magenta))
+                            }
+                            crate::treeview::ScalarKind::Null => (text.clone(), faint),
+                        };
+                        spans.push(Span::styled(value, style));
+                    }
+                }
+                Line::from(spans)
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), preview);
+        // Selection highlight: a subtle background bar (drawn after, so it sits behind the text).
+        if selected >= scroll && selected < scroll + viewport {
+            let row_y = preview.y + (selected - scroll) as u16;
+            let rect = Rect { x: preview.x, y: row_y, width: preview.width, height: 1 };
+            let bg = app.palette().subtle_selection_bg();
+            frame.buffer_mut().set_style(rect, Style::default().bg(bg));
+        }
+        let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
+        render_scrollbar(frame, track, scroll, total, viewport, false);
+    } else {
+        // Fallback: the raw lines (not valid JSON), syntax-highlighted, scrolled.
+        let total = app.build_info_settings_preview.len();
+        let max_scroll = total.saturating_sub(viewport);
+        if app.build_info_scroll > max_scroll {
+            app.build_info_scroll = max_scroll;
+        }
+        let start = app.build_info_scroll;
+        let visible: Vec<Line> = app.build_info_settings_preview[start..(start + viewport).min(total)]
+            .iter()
+            .map(|line| highlight_json_line(line))
+            .collect();
+        frame.render_widget(Paragraph::new(visible), preview);
+        let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
+        render_scrollbar(frame, track, app.build_info_scroll, total, viewport, false);
     }
-    let start = app.build_info_scroll;
-    let visible: Vec<Line> = app.build_info_settings_preview[start..(start + viewport).min(total)]
-        .iter()
-        .map(|line| highlight_json_line(line))
-        .collect();
-    frame.render_widget(Paragraph::new(visible), preview);
-    let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
-    render_scrollbar(frame, track, app.build_info_scroll, total, viewport, false);
     let _ = pad;
 }
 

@@ -327,6 +327,17 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.build_info_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.build_info_fold_all_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.build_info_unfold_all_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if app.build_info_tree_click.iter().any(|&(r, s, e, _)| contains(r, s, e)) {
+            // A container row — tint the whole row width (it toggles on click).
+            hits.push(inner_row(app.build_info_area));
         } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));

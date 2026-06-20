@@ -220,10 +220,12 @@ and both keys work from anywhere, including inside a modal.
 Clicking the `built … ago` tag in the status bar opens a **Build info** modal showing the
 running version, when it was built **and how long the build took**, the **binary size** + watched
 path, the **settings file location** + config-dir file count, whether a newer build is waiting,
-and a **scrollable, syntax-highlighted preview of `state.json`** (`j`/`k`/`PgUp`/`PgDn`/wheel
-scroll). `r` (a clickable hint in the bottom border, next to `esc close`) exec-restarts into the
-latest build; `esc`, the `[x]`, or a click **outside** closes it (clicking inside is inert, so you
-can scroll the preview without it vanishing).
+and a **collapsible tree view of `state.json`** — a format-agnostic structural-data viewer (not
+JSON-specific). Objects/arrays start collapsed, each showing its child count in a faint `{N}` /
+`[N]`; `j`/`k` move, `←`/`→` collapse/expand, `space`/`enter` fold the selected node, `-`/`+`
+fold/unfold all (or the `[- fold all]` / `[+ unfold all]` buttons on the card header), and clicking
+a node folds it. `r` (a clickable hint in the bottom border, next to `esc close`) exec-restarts into
+the latest build; `esc`, the `[x]`, or a click **outside** closes it (clicking inside is inert).
 
 Clicking the `vX.Y.Z` tag opens the **Changelog**: every release as a collapsible accordion whose
 header is the version + a time-ago (`▸ v2.60.0 · 2d ago`), with the latest two expanded. `j`/`k`

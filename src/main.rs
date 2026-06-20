@@ -10,6 +10,7 @@ mod pr_cache;
 mod profile;
 mod render;
 mod theme;
+mod treeview;
 mod worker;
 
 use std::io::{self, IsTerminal, Write};
@@ -1634,7 +1635,22 @@ async fn run_event_loop(
                             app.build_info_scroll = app.build_info_scroll.saturating_sub(3);
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if region_hit(app.build_info_close_click, mouse.column, mouse.row)
+                            if region_hit(app.build_info_fold_all_click, mouse.column, mouse.row) {
+                                app.build_info_fold_all(false);
+                            } else if region_hit(app.build_info_unfold_all_click, mouse.column, mouse.row) {
+                                app.build_info_fold_all(true);
+                            } else if let Some(index) = app
+                                .build_info_tree_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., index)| index)
+                            {
+                                // Click a container row to select + fold it.
+                                app.build_info_tree_selected = index;
+                                app.build_info_toggle_selected();
+                            } else if region_hit(app.build_info_close_click, mouse.column, mouse.row)
                                 || !point_in(app.build_info_area, mouse.column, mouse.row)
                             {
                                 app.show_build_info = false;
@@ -2376,8 +2392,9 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Build-info modal: Ctrl-C quits, `r` exec-restarts, j/k/PgUp/PgDn scroll the
-                // settings preview, any other key dismisses it.
+                // Build-info modal: Ctrl-C quits, `r` exec-restarts, esc/q close. The settings
+                // preview is a collapsible tree — j/k move, ←/→ collapse/expand, space/enter fold,
+                // -/+ fold/unfold all (falls back to plain scroll when the file isn't valid JSON).
                 if app.show_build_info {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2389,30 +2406,42 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(RELOAD_EXIT);
                     }
+                    let tree = app.build_info_tree.is_some();
                     match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.show_build_info = false,
+                        KeyCode::Char('j') | KeyCode::Down if tree => app.build_info_tree_move(1),
+                        KeyCode::Char('k') | KeyCode::Up if tree => app.build_info_tree_move(-1),
+                        KeyCode::PageDown if tree => app.build_info_tree_move(10),
+                        KeyCode::PageUp if tree => app.build_info_tree_move(-10),
+                        KeyCode::Char('g') | KeyCode::Home if tree => app.build_info_tree_selected = 0,
+                        KeyCode::Char('G') | KeyCode::End if tree => app.build_info_tree_move(isize::MAX),
+                        KeyCode::Right | KeyCode::Char('l') if tree => app.build_info_tree_expand(),
+                        KeyCode::Left | KeyCode::Char('h') if tree => {
+                            app.build_info_tree_collapse_or_parent()
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter if tree => {
+                            app.build_info_toggle_selected()
+                        }
+                        KeyCode::Char('-') if tree => app.build_info_fold_all(false),
+                        KeyCode::Char('+') | KeyCode::Char('=') if tree => {
+                            app.build_info_fold_all(true)
+                        }
+                        // Plain-scroll fallback (no tree).
                         KeyCode::Char('j') | KeyCode::Down => {
-                            app.build_info_scroll = app.build_info_scroll.saturating_add(1);
-                            continue;
+                            app.build_info_scroll = app.build_info_scroll.saturating_add(1)
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
-                            app.build_info_scroll = app.build_info_scroll.saturating_sub(1);
-                            continue;
+                            app.build_info_scroll = app.build_info_scroll.saturating_sub(1)
                         }
                         KeyCode::PageDown => {
-                            app.build_info_scroll = app.build_info_scroll.saturating_add(10);
-                            continue;
+                            app.build_info_scroll = app.build_info_scroll.saturating_add(10)
                         }
                         KeyCode::PageUp => {
-                            app.build_info_scroll = app.build_info_scroll.saturating_sub(10);
-                            continue;
+                            app.build_info_scroll = app.build_info_scroll.saturating_sub(10)
                         }
-                        KeyCode::Char('g') | KeyCode::Home => {
-                            app.build_info_scroll = 0;
-                            continue;
-                        }
+                        KeyCode::Char('g') | KeyCode::Home => app.build_info_scroll = 0,
                         _ => {}
                     }
-                    app.show_build_info = false;
                     continue;
                 }
 
