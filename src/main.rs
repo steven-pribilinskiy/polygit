@@ -1259,20 +1259,40 @@ async fn run_event_loop(
             let over_popup = app.hover_tooltip.is_some()
                 && cursor.is_some_and(|(col, row)| point_in(app.tooltip_rect, col, row));
             if !over_popup {
+                // Per-area tooltip gating: the master switch plus each area's own toggle (the
+                // Tooltips settings group). `cursor_tip` still requires `hover_effects` upstream.
+                let tips = app.tooltips;
                 let dwell: Option<app::HoverTip> = settings_tip
+                    .filter(|_| tips.enabled && tips.settings)
                     .and_then(|tip| cursor_tip(cursor, tip))
-                    .or_else(|| help_url.and_then(|url| cursor_tip(cursor, url)))
                     .or_else(|| {
-                        cursor.and_then(|(col, row)| app.tooltip_at(col, row)).map(
-                            |(text, anchor, placement, hide_column)| app::HoverTip {
-                                text,
-                                anchor,
-                                placement,
-                                hide_column,
+                        help_url
+                            .filter(|_| tips.enabled && tips.links)
+                            .and_then(|url| cursor_tip(cursor, url))
+                    })
+                    .or_else(|| {
+                        if !tips.enabled {
+                            return None;
+                        }
+                        cursor.and_then(|(col, row)| app.tooltip_at(col, row)).and_then(
+                            |(text, anchor, placement, hide_column, area)| {
+                                let allowed = match area {
+                                    app::TooltipArea::Header => tips.headers,
+                                    app::TooltipArea::Count => tips.counts,
+                                };
+                                allowed.then_some(app::HoverTip {
+                                    text,
+                                    anchor,
+                                    placement,
+                                    hide_column,
+                                })
                             },
                         )
                     })
                     .or_else(|| {
+                        if !(tips.enabled && tips.footer) {
+                            return None;
+                        }
                         cursor
                             .and_then(|(col, row)| app.command_at(col, row))
                             .and_then(|cmd| cursor_tip(cursor, cmd.tooltip().to_string()))
@@ -1681,15 +1701,12 @@ async fn run_event_loop(
                             app.settings_selected = row_idx;
                             app.settings_tab = AppState::settings_tab_of_row(row_idx);
                             match option {
-                                // Clicking a different value sets it directly.
-                                Some(option_idx)
-                                    if option_idx != app.settings_active_option(row_idx) =>
-                                {
-                                    app.set_setting_option(row_idx, option_idx);
-                                }
-                                // Clicking the already-active value, or the row label, cycles to
-                                // the next value (left→right, wrapping — e.g. 3-radio theme).
-                                _ => app.toggle_selected_setting(),
+                                // Clicking any radio chip just sets that value (clicking the
+                                // already-active chip is a no-op — it never cycles).
+                                Some(option_idx) => app.set_setting_option(row_idx, option_idx),
+                                // Clicking the row label cycles to the next value (left→right,
+                                // wrapping — e.g. the 3-radio theme).
+                                None => app.toggle_selected_setting(),
                             }
                         } else if !point_in(app.settings_area, mouse.column, mouse.row) {
                             app.show_settings = false;
@@ -2019,13 +2036,11 @@ async fn run_event_loop(
                                 })
                                 .map(|&(.., row_idx, option)| (row_idx, option))
                             {
-                                // Design System radios reuse the settings dispatch: a different
-                                // value sets it; the active value or the row label cycles.
+                                // Design System radios reuse the settings dispatch: a radio chip
+                                // just sets that value; only the row label cycles.
                                 match option {
-                                    Some(opt) if opt != app.settings_active_option(row_idx) => {
-                                        app.set_setting_option(row_idx, opt);
-                                    }
-                                    _ => {
+                                    Some(opt) => app.set_setting_option(row_idx, opt),
+                                    None => {
                                         app.settings_selected = row_idx;
                                         app.toggle_selected_setting();
                                     }

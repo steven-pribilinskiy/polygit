@@ -485,7 +485,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     // 6 background · 7 contrast · 8 selection · 9 button-hover (Theming), 10 auto-pull · 11 limit ·
     // 12 auto-pull-in-tree (Sync), 13 hover · 14 changed-row flash · 15 changed-row highlight
     // (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-page tabs ·
-    // 20 repo-page (restored/maximized) · 21 branch-check (Layout).
+    // 20 repo-page (restored/maximized) · 21 branch-check (Layout), 22 all-tooltips · 23 footer ·
+    // 24 headers · 25 counts · 26 settings · 27 links (Tooltips).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -607,6 +608,32 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                         ("auto", app.branch_check == crate::app::BranchCheck::Auto),
                     ],
                 ),
+            ],
+        ),
+        (
+            "Tooltips",
+            vec![
+                (
+                    "All tooltips",
+                    vec![("on", app.tooltips.enabled), ("off", !app.tooltips.enabled)],
+                ),
+                (
+                    "Footer commands",
+                    vec![("on", app.tooltips.footer), ("off", !app.tooltips.footer)],
+                ),
+                (
+                    "Column headers",
+                    vec![("on", app.tooltips.headers), ("off", !app.tooltips.headers)],
+                ),
+                (
+                    "Group counts",
+                    vec![("on", app.tooltips.counts), ("off", !app.tooltips.counts)],
+                ),
+                (
+                    "Settings rows",
+                    vec![("on", app.tooltips.settings), ("off", !app.tooltips.settings)],
+                ),
+                ("Help links", vec![("on", app.tooltips.links), ("off", !app.tooltips.links)]),
             ],
         ),
     ];

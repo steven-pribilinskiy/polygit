@@ -128,11 +128,13 @@ impl AppState {
         &self,
         col: u16,
         row: u16,
-    ) -> Option<(String, Rect, tui_pick::Placement, Option<Column>)> {
+    ) -> Option<(String, Rect, tui_pick::Placement, Option<Column>, TooltipArea)> {
         self.hover_tooltips
             .iter()
             .find(|region| region.row == row && col >= region.col_start && col < region.col_end)
-            .map(|region| (region.text.clone(), region.anchor, region.placement, region.hide_column))
+            .map(|region| {
+                (region.text.clone(), region.anchor, region.placement, region.hide_column, region.area)
+            })
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {

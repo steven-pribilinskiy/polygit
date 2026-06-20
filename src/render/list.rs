@@ -441,6 +441,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                 placement: tui_pick::Placement::bottom_start(),
                 // Optional columns can be hidden straight from the tooltip's `[x]`.
                 hide_column: sort_column_hideable(sort),
+                area: crate::app::TooltipArea::Header,
             });
         }
     }
@@ -548,6 +549,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                     anchor: Rect { x: start, y: screen_row, width: end.saturating_sub(start), height: 1 },
                     placement: tui_pick::Placement::bottom_start(),
                     hide_column: None,
+                    area: crate::app::TooltipArea::Count,
                 });
             }
         }

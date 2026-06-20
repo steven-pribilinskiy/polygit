@@ -115,8 +115,8 @@ Press `/` on **any tab** to search it (type to filter, `Esc` clears): the **Hotk
 lazygit-style against the key column AND the description (prepend `@` to match keys only), the other
 tabs filter their content lines. The About tab groups its clickable links (polygit, lazygit, and a collapsible Notes group)
 and shows titles only — hover a link to preview its URL in the bottom-left corner. The **Design
-System** tab carries the Theme/Background/Contrast/Selection radios (click to set, click the active
-value to cycle) above a live swatch showcase of the palette's semantic colors, then a **component
+System** tab carries the Theme/Background/Contrast/Selection radios (click a chip to set that value,
+click the row label to cycle) above a live swatch showcase of the palette's semantic colors, then a **component
 showcase** — the reusable `tui-pick` button, list-row, and radio primitives drawn in every
 interaction state (normal · hover · selected · active · focused · disabled) under both hover and
 selection effects, with your current choice marked, so it doubles as a live preview of those settings.
@@ -127,8 +127,10 @@ selection effects, with your current choice marked, so it doubles as a live prev
 `,` opens a small settings modal (persisted in `~/.config/polygit/state.json`), organized into
 a **Lists** section (grouping, tree view, hide folder-header lines), a **Theming** section (icons,
 theme, background, contrast, selection), a **Sync** section (auto-pull policy — see below), an
-**Interaction** section (hover effects), and a **Layout** section (panel padding, borders, splitter,
-repo-page tabs, repo page restored/maximized, branch-check). By default it uses a **tabbed** layout (sections as
+**Interaction** section (hover effects), a **Layout** section (panel padding, borders, splitter,
+repo-page tabs, repo page restored/maximized, branch-check), and a **Tooltips** section (a master
+"All tooltips" toggle plus per-area switches — footer commands, column headers, group counts,
+settings rows, help links; tooltips also require Hover effects on). By default it uses a **tabbed** layout (sections as
 vertical tabs — `←`/`→` or `Tab` switch, `↑`/`↓` move within a tab); press `v` to cycle the layout
 **tabbed → accordion → flat**. A **search box** sits at the top of the modal: press `/` to focus
 it and type to filter the rows across every tab into a flat list with the matched characters
@@ -178,10 +180,10 @@ The **flat** layout stacks every section expanded. Press **`R`** (or the footer 
 - **Auto-pull in tree view** — `on` / `off` (default off). The directory-tree view suppresses
   the launch auto-pull unless you turn this on.
 
-The modal is fully mouse-driven too: click a radio chip to set that value; click the
-already-active chip (or the row label) to cycle to the next value (3-radio settings like Theme
-cycle left→right and wrap); and close with the `[x]` button or a click anywhere outside. The same
-applies to every modal (help, confirm, copy menu, diff).
+The modal is fully mouse-driven too: click a radio chip to set **that** value (clicking the
+already-active chip does nothing — it never cycles); click the row label to cycle to the next value
+(3-radio settings like Theme cycle left→right and wrap); and close with the `[x]` button or a click
+anywhere outside. The same applies to every modal (help, confirm, copy menu, diff).
 
 ## Auto-pull on launch & the status cache
 
