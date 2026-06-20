@@ -6152,13 +6152,16 @@ fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {
     };
     // Cap how many files we enumerate so a huge dirty tree can't overflow the screen.
     let max_per_list = 10usize;
-    let has_files = !confirm.restore_files.is_empty() || !confirm.delete_files.is_empty();
+    let has_files = !confirm.restore_files.is_empty()
+        || !confirm.delete_files.is_empty()
+        || !confirm.detail_lines.is_empty();
 
-    // Widen to fit the longest file line (with its two-space indent) when listing files.
+    // Widen to fit the longest file / detail line (with its two-space indent).
     let file_width = confirm
         .restore_files
         .iter()
         .chain(confirm.delete_files.iter())
+        .chain(confirm.detail_lines.iter())
         .map(|file| file.chars().count() + 4)
         .max()
         .unwrap_or(0) as u16;
@@ -6192,6 +6195,27 @@ fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {
     };
     push_file_section(&confirm.restore_files, "Restore", Color::Yellow);
     push_file_section(&confirm.delete_files, "Delete", Color::Red);
+    // Generic detail lines (e.g. the settings a reset will change), under an optional header.
+    if !confirm.detail_lines.is_empty() {
+        if let Some(title) = &confirm.detail_title {
+            detail_lines.push(Line::from(Span::styled(
+                format!("  {title}"),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+        }
+        for line in confirm.detail_lines.iter().take(max_per_list) {
+            detail_lines.push(Line::from(Span::styled(
+                format!("    {line}"),
+                Style::default().fg(Color::Gray),
+            )));
+        }
+        if confirm.detail_lines.len() > max_per_list {
+            detail_lines.push(Line::from(Span::styled(
+                format!("    … and {} more", confirm.detail_lines.len() - max_per_list),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
 
     // Base height: borders + blank + message (+ blank + danger warning) + blank + prompt. Add
     // the file body plus a separating blank line when there are files to list.
@@ -6568,6 +6592,8 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     footer.push(footer_sep());
     footer.extend(footer_chip("v", app.settings_layout.next_label(), HintKey::Char('v')));
     footer.push(footer_sep());
+    footer.extend(footer_chip("R", " reset", HintKey::Char('R')));
+    footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let block = Block::default()
         .borders(Borders::ALL)
@@ -6731,6 +6757,10 @@ fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
         let selected_section = AppState::settings_tab_of_row(app.settings_selected);
         let mut row_idx = 0usize;
         for (tab_idx, (name, count)) in SETTINGS_TABS.iter().enumerate() {
+            // A blank line between sections so the collapsible headers don't run together.
+            if tab_idx > 0 {
+                lines.push(Line::from(String::new()));
+            }
             let collapsed = section_collapsed[tab_idx];
             let chevron = if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
             // The section owning the selection gets a cursor + brighter style so a selection hidden
