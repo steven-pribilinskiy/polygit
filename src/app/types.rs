@@ -607,6 +607,28 @@ impl BasePicker {
     }
 }
 
+/// Which menu a `[… ▾]` header dropdown drives. A mouse-friendly companion to the `t`/`s`/`f`
+/// leader chords (which still work). Columns dropdowns multi-toggle (stay open); sort/filter
+/// dropdowns pick one (close on select).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropdownKind {
+    ListColumns,
+    ListSort,
+    PageColumns,
+    PageSort,
+}
+
+/// An open header dropdown overlay: anchored under the `[… ▾]` chip that opened it.
+#[derive(Debug, Clone, Copy)]
+pub struct Dropdown {
+    pub kind: DropdownKind,
+    /// Screen column / row of the chip that opened it (the overlay floats just below).
+    pub anchor_col: u16,
+    pub anchor_row: u16,
+    /// Highlighted item.
+    pub selected: usize,
+}
+
 /// A pending two-key chord: `t` then a column key toggles that column; `f` then a status key
 /// picks a status filter; `s` then a column key picks the sort order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -3,6 +3,71 @@ use super::*;
 /// Render the yes/no confirmation dialog (keyboard-driven: y / n / Esc).
 /// Render the build-info modal (opened by clicking the "built … ago" status tag): the running
 /// version, the watched executable path, when it was built, and how new-build watching works.
+/// Render an open header dropdown (`[cols ▾]` / `[sort ▾]`): a small floating list anchored under
+/// the chip, with checkboxes (columns) or radios (sort). Captures item + close click regions.
+pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let Some(dropdown) = app.dropdown else {
+        return;
+    };
+    let items = app.dropdown_items();
+    let is_sort = matches!(dropdown.kind, DropdownKind::ListSort | DropdownKind::PageSort);
+    let title = match dropdown.kind {
+        DropdownKind::ListColumns | DropdownKind::PageColumns => " columns ",
+        DropdownKind::ListSort | DropdownKind::PageSort => " sort ",
+    };
+    let inner_w = items.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(6) + 4;
+    let width = (inner_w as u16 + 2).clamp(14, area.width.saturating_sub(2).max(14));
+    let height = (items.len() as u16 + 2).min(area.height.saturating_sub(2).max(3));
+    // Below the chip, flipping above when there's no room.
+    let below = dropdown.anchor_row + 1;
+    let y = if below + height <= area.y + area.height {
+        below
+    } else {
+        dropdown.anchor_row.saturating_sub(height)
+    };
+    let x = dropdown.anchor_col.min((area.x + area.width).saturating_sub(width));
+    let modal = Rect { x, y, width, height };
+    let (close_line, close_click) = modal_close_button(modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(title)
+        .title_top(close_line);
+    let body = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.dropdown_area = modal;
+    app.dropdown_close_click = close_click;
+    app.dropdown_item_click.clear();
+    let mut lines: Vec<Line> = Vec::new();
+    for (index, (label, on)) in items.iter().enumerate() {
+        if index as u16 >= body.height {
+            break;
+        }
+        let marker = if is_sort {
+            if *on { "● " } else { "○ " }
+        } else if *on {
+            "[x] "
+        } else {
+            "[ ] "
+        };
+        let selected = index == dropdown.selected;
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else if *on {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let row = body.y + index as u16;
+        app.dropdown_item_click.push((row, body.x, body.x + body.width, index));
+        lines.push(Line::from(Span::styled(format!("{marker}{label}"), style)));
+    }
+    frame.render_widget(Paragraph::new(lines), body);
+}
+
 /// Human-readable byte size (e.g. `1.2 MB`).
 pub(crate) fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
