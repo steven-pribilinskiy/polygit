@@ -1618,7 +1618,8 @@ async fn run_event_loop(
                 }
 
                 // Build-info modal: footer hints (`r` restart / `esc` close) are handled by the
-                // hint-click injection above; any other click dismisses it.
+                // hint-click injection above; the `[x]` button or a click outside closes it (a click
+                // inside is inert, so you can select/scroll the JSON preview without it vanishing).
                 if app.show_build_info {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
@@ -1627,7 +1628,13 @@ async fn run_event_loop(
                         MouseEventKind::ScrollUp => {
                             app.build_info_scroll = app.build_info_scroll.saturating_sub(3);
                         }
-                        MouseEventKind::Down(MouseButton::Left) => app.show_build_info = false,
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if region_hit(app.build_info_close_click, mouse.column, mouse.row)
+                                || !point_in(app.build_info_area, mouse.column, mouse.row)
+                            {
+                                app.show_build_info = false;
+                            }
+                        }
                         _ => {}
                     }
                     continue;

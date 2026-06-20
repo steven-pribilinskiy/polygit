@@ -399,6 +399,11 @@ pub struct AppState {
     pub update_close_click: Option<(u16, u16, u16)>,
     /// When the running binary was built (its mtime at startup) — shown as "built … ago".
     pub binary_built: Option<std::time::SystemTime>,
+    /// How long the last build took, in seconds (from the `.polygit.build` sidecar `make` writes
+    /// beside the installed binary) — shown in the build-info modal. `None` if the sidecar is absent.
+    pub build_duration: Option<u64>,
+    /// The build-info modal's outer rect (for outside-click-to-close).
+    pub build_info_area: Rect,
     /// The watched executable path (resolved at startup) — shown in the build-info modal.
     pub exe_path: String,
     /// Whether the build-info modal (the clickable "built … ago" tag) is open.
@@ -705,6 +710,12 @@ impl AppState {
                 .ok()
                 .and_then(|exe| std::fs::metadata(exe).ok())
                 .and_then(|meta| meta.modified().ok()),
+            build_duration: std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join(".polygit.build")))
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|text| text.trim().parse::<u64>().ok()),
+            build_info_area: Rect::default(),
             exe_path: std::env::current_exe()
                 .map(|exe| exe.display().to_string())
                 .unwrap_or_else(|_| "polygit".to_string()),
