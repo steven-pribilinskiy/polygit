@@ -106,9 +106,11 @@ the restored repo page's top border to resize `[4]`.
 
 <Aside type="tip">
 Press `?` at any time for the in-app help modal — five tabs (**Hotkeys**, **CLI** — an
-interactive command builder where every flag is a checkbox (typed values auto-apply, related
-flags indent under their parent, `h` hides the help column, and the assembled command is
-clickable to copy), **Legend** with every glyph in both icon sets, **Design**, and **About**)
+interactive command builder, source-driven from the real clap flags: every flag (toggle or value)
+is a checkbox (`Space` toggles, `Enter` edits a value, typed values auto-apply, `f` swaps short ⇄
+long form, `h` cycles help-text display always/on-hover/never); child flags disable + dim when their
+parent is unchecked; the assembled command is an aligned multiline preview whose tokens are
+clickable to remove (and the whole thing clickable to copy)), **Legend** with every glyph, **Design**, and **About**)
 switched with `Tab`. Only one modal is open at a time: clicking `, settings` while help is up closes help
 and opens settings (no stacking), and the live footer commands hover-highlight from inside any modal.
 Press `/` on **any tab** to search it (type to filter, `Esc` clears): the **Hotkeys** tab matches

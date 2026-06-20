@@ -143,6 +143,9 @@ pub struct PersistedState {
     /// The app version last run — drives the "What's New" modal after an update. Empty on first run.
     #[serde(default)]
     pub last_seen_version: String,
+    /// CLI builder: when to show each flag's help text (always / on-hover / never). Default on-hover.
+    #[serde(default)]
+    pub cli_help_mode: crate::app::CliHelpMode,
 }
 
 impl PersistedState {

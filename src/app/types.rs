@@ -969,66 +969,173 @@ pub enum CliFlagKind {
 }
 
 pub struct CliFlag {
-    /// The flag as it appears on the command line (`--depth`, `--jobs`, or `` for the positional).
+    /// The long form (`--depth`, `--jobs`, …), or "" for the positional.
     pub flag: &'static str,
+    /// The short form (`-j`, `-w`), when the real clap arg has one — lets the builder offer it.
+    pub short: Option<&'static str>,
     pub kind: CliFlagKind,
     pub help: &'static str,
-    /// A related "parent" flag (index into `CLI_FLAGS`): this flag renders indented beneath it,
-    /// e.g. `--no-recursive` under `--depth`, `--profile-out` under `--profile`.
+    /// A related "parent" flag (index into `CLI_FLAGS`): this flag renders indented beneath it and
+    /// is disabled (and force-unchecked) while the parent is unchecked — e.g. `--no-recursive`
+    /// under `--depth`, `--profile-out` under `--profile`.
     pub parent: Option<usize>,
 }
 
-/// The CLI builder's flag catalog, in display order. Mirrors the real clap flags.
+/// The CLI builder's flag catalog, in display order. Source-driven — mirrors the real clap `Cli`
+/// args (`src/main.rs`): keep it in sync when adding/removing a flag.
 pub static CLI_FLAGS: &[CliFlag] = &[
-    CliFlag { flag: "", kind: CliFlagKind::Positional("DIR"), help: "directory to scan (default: cwd)", parent: None },
-    CliFlag { flag: "--depth", kind: CliFlagKind::Value("N"), help: "max scan depth (default: 16; 1 = flat)", parent: None },
-    CliFlag { flag: "--no-recursive", kind: CliFlagKind::Toggle, help: "single-level scan (same as --depth 1)", parent: Some(1) },
-    CliFlag { flag: "--jobs", kind: CliFlagKind::Value("N"), help: "concurrency (default: nproc)", parent: None },
-    CliFlag { flag: "--timeout", kind: CliFlagKind::Value("S"), help: "per-pull timeout seconds (default: 30)", parent: None },
-    CliFlag { flag: "--no-tui", kind: CliFlagKind::Toggle, help: "plain streaming output (no TUI)", parent: None },
-    CliFlag { flag: "--no-worktrees", kind: CliFlagKind::Toggle, help: "skip worktree discovery", parent: None },
-    CliFlag { flag: "--profile", kind: CliFlagKind::Toggle, help: "per-repo timing report (slowest first)", parent: None },
-    CliFlag { flag: "--profile-out", kind: CliFlagKind::Value("FILE"), help: "write the profile report to FILE", parent: Some(7) },
+    CliFlag { flag: "", short: None, kind: CliFlagKind::Positional("DIR"), help: "directory to scan (default: cwd)", parent: None },
+    CliFlag { flag: "--workspace", short: Some("-w"), kind: CliFlagKind::Value("NAME"), help: "open a saved workspace by name", parent: None },
+    CliFlag { flag: "--jobs", short: Some("-j"), kind: CliFlagKind::Value("N"), help: "concurrency (default: nproc)", parent: None },
+    CliFlag { flag: "--depth", short: None, kind: CliFlagKind::Value("N"), help: "max scan depth (default: 16; 1 = flat)", parent: None },
+    CliFlag { flag: "--no-recursive", short: None, kind: CliFlagKind::Toggle, help: "single-level scan (same as --depth 1)", parent: Some(3) },
+    CliFlag { flag: "--no-tui", short: None, kind: CliFlagKind::Toggle, help: "plain streaming output (no TUI)", parent: None },
+    CliFlag { flag: "--no-worktrees", short: None, kind: CliFlagKind::Toggle, help: "skip worktree discovery", parent: None },
+    CliFlag { flag: "--timeout", short: None, kind: CliFlagKind::Value("S"), help: "per-pull timeout seconds (default: 30)", parent: None },
+    CliFlag { flag: "--profile", short: None, kind: CliFlagKind::Toggle, help: "per-repo timing report (slowest first)", parent: None },
+    CliFlag { flag: "--profile-out", short: None, kind: CliFlagKind::Value("FILE"), help: "write the profile report to FILE", parent: Some(8) },
 ];
+
+/// When the CLI builder shows each flag's help text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CliHelpMode {
+    Always,
+    #[default]
+    OnHover,
+    Never,
+}
+
+impl CliHelpMode {
+    pub const ALL: [CliHelpMode; 3] = [CliHelpMode::Always, CliHelpMode::OnHover, CliHelpMode::Never];
+    pub fn label(self) -> &'static str {
+        match self {
+            CliHelpMode::Always => "always",
+            CliHelpMode::OnHover => "on hover",
+            CliHelpMode::Never => "never",
+        }
+    }
+    /// Cycle Always → OnHover → Never → Always (for the `h` key).
+    pub fn cycle(self) -> Self {
+        match self {
+            CliHelpMode::Always => CliHelpMode::OnHover,
+            CliHelpMode::OnHover => CliHelpMode::Never,
+            CliHelpMode::Never => CliHelpMode::Always,
+        }
+    }
+}
 
 /// Mutable state of the interactive CLI builder: which flags are selected/edited.
 #[derive(Default)]
 pub struct CliBuilder {
     /// Selected flag row (index into `CLI_FLAGS`).
     pub selected: usize,
-    /// Per-flag on state (toggles) — index-aligned with `CLI_FLAGS`.
+    /// Per-flag checkbox state — index-aligned with `CLI_FLAGS`. Every flag (toggle, value, and
+    /// positional) has one; a value flag is only emitted when checked.
     pub on: Vec<bool>,
     /// Per-flag value (value flags / positional) — index-aligned with `CLI_FLAGS`.
     pub values: Vec<String>,
+    /// Per-flag preference to render the short form (`-j`) instead of the long (`--jobs`). Only
+    /// meaningful where `CliFlag::short` is `Some`.
+    pub use_short: Vec<bool>,
     /// When editing a value flag, the in-progress input buffer (auto-applied to `values` live).
     pub editing: Option<String>,
-    /// Show the per-flag help text column (toggled with `h`). Default on.
-    pub show_help: bool,
+    /// When the per-flag help text is shown (always / on hover / never). Persisted.
+    pub help_mode: CliHelpMode,
 }
 
 impl CliBuilder {
-    /// Build the `polygit …` command string from the current selections.
-    pub fn command(&self) -> String {
-        let mut parts = vec!["polygit".to_string()];
+    fn flag_on(&self, idx: usize) -> bool {
+        self.on.get(idx).copied().unwrap_or(false)
+    }
+
+    /// Whether a flag is interactive: a parent-less flag always is; a child only while its parent
+    /// is checked (otherwise it renders disabled and dimmed, and is force-unchecked).
+    pub fn enabled(&self, idx: usize) -> bool {
+        match CLI_FLAGS.get(idx).and_then(|flag| flag.parent) {
+            Some(parent) => self.flag_on(parent),
+            None => true,
+        }
+    }
+
+    /// The flag form to render/emit: the short form when chosen and available, else the long form.
+    pub fn form(&self, idx: usize) -> &'static str {
+        let flag = &CLI_FLAGS[idx];
+        match flag.short {
+            Some(short) if self.use_short.get(idx).copied().unwrap_or(false) => short,
+            _ => flag.flag,
+        }
+    }
+
+    /// Set a flag's checkbox. Unchecking a parent cascades: every child is force-unchecked too
+    /// (and will render disabled). No-op on a disabled (parent-off) flag.
+    pub fn set_on(&mut self, idx: usize, value: bool) {
+        if value && !self.enabled(idx) {
+            return;
+        }
+        if let Some(slot) = self.on.get_mut(idx) {
+            *slot = value;
+        }
+        if !value {
+            let children: Vec<usize> = CLI_FLAGS
+                .iter()
+                .enumerate()
+                .filter(|(_, flag)| flag.parent == Some(idx))
+                .map(|(child, _)| child)
+                .collect();
+            for child in children {
+                self.set_on(child, false);
+            }
+        }
+    }
+
+    /// Toggle a flag's checkbox (with the same cascade as [`Self::set_on`]).
+    pub fn toggle(&mut self, idx: usize) {
+        self.set_on(idx, !self.flag_on(idx));
+    }
+
+    /// Toggle the short/long form preference for a flag (no-op if it has no short form).
+    pub fn toggle_short(&mut self, idx: usize) {
+        if CLI_FLAGS.get(idx).and_then(|flag| flag.short).is_some() {
+            if let Some(slot) = self.use_short.get_mut(idx) {
+                *slot = !*slot;
+            }
+        }
+    }
+
+    /// The emitted tokens after `polygit`, each tagged with its flag index (for the clickable,
+    /// hoverable multiline preview). A value flag with no value yet emits just its form.
+    pub fn command_tokens(&self) -> Vec<(usize, String)> {
+        let mut tokens = Vec::new();
         for (idx, flag) in CLI_FLAGS.iter().enumerate() {
+            if !self.flag_on(idx) || !self.enabled(idx) {
+                continue;
+            }
+            let value = self.values.get(idx).map(String::as_str).unwrap_or("");
             match flag.kind {
-                CliFlagKind::Toggle => {
-                    if self.on.get(idx).copied().unwrap_or(false) {
-                        parts.push(flag.flag.to_string());
-                    }
-                }
+                CliFlagKind::Toggle => tokens.push((idx, self.form(idx).to_string())),
                 CliFlagKind::Value(_) => {
-                    if let Some(value) = self.values.get(idx).filter(|value| !value.is_empty()) {
-                        parts.push(format!("{} {}", flag.flag, value));
-                    }
+                    let token = if value.is_empty() {
+                        self.form(idx).to_string()
+                    } else {
+                        format!("{} {value}", self.form(idx))
+                    };
+                    tokens.push((idx, token));
                 }
                 CliFlagKind::Positional(_) => {
-                    if let Some(value) = self.values.get(idx).filter(|value| !value.is_empty()) {
-                        parts.push(value.clone());
+                    if !value.is_empty() {
+                        tokens.push((idx, value.to_string()));
                     }
                 }
             }
         }
+        tokens
+    }
+
+    /// Build the `polygit …` command string from the current selections.
+    pub fn command(&self) -> String {
+        let mut parts = vec!["polygit".to_string()];
+        parts.extend(self.command_tokens().into_iter().map(|(_, token)| token));
         parts.join(" ")
     }
 }
