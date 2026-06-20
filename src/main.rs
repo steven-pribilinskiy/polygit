@@ -2102,20 +2102,25 @@ async fn run_event_loop(
                                 app.design_section = section;
                                 app.help_scroll = 0;
                             } else if region_hit(app.help_preview_click, mouse.column, mouse.row) {
-                                // Open the shared confirm dialog as a live preview (accepting is a
-                                // no-op — it just closes).
+                                // Open the shared confirm dialog as a live preview with its own
+                                // unique copy (accepting is a no-op — it just closes).
                                 app.confirm = Some(app::ConfirmDialog {
-                                    message: "Reset 8 settings to defaults?".to_string(),
+                                    message: "This is the polygit confirm dialog — one component, \
+                                              reused everywhere."
+                                        .to_string(),
                                     action: app::ConfirmAction::Preview,
                                     danger: false,
                                     restore_files: Vec::new(),
                                     delete_files: Vec::new(),
                                     detail_lines: vec![
-                                        "Grouping: on → off".to_string(),
-                                        "Background: terminal → normal".to_string(),
-                                        "Hover effects: on → off".to_string(),
+                                        "Every yes/no prompt routes through it:".to_string(),
+                                        "delete a branch · drop a stash · remove a worktree"
+                                            .to_string(),
+                                        "discard changes · reset settings".to_string(),
+                                        "Its yes/no are the shared footer-chip buttons —".to_string(),
+                                        "hover-highlighted, click or press y / n.".to_string(),
                                     ],
-                                    detail_title: Some("Will reset:".to_string()),
+                                    detail_title: Some("Design system preview".to_string()),
                                 });
                             } else if let Some(url) = app.help_link_at(mouse.row) {
                                 drop(app);

@@ -142,6 +142,8 @@
         // Design System tab layout persists too — pin it for hermetic help tests.
         state.design_layout = crate::app::DesignLayout::Flat;
         state.design_section = 0;
+        // The "What's New" modal can auto-open from the real state.json (version drift) — close it.
+        state.show_changelog = false;
         state
     }
 
@@ -1483,6 +1485,9 @@
     #[test]
     fn any_modal_open_reflects_modal_state() {
         let mut state = state_named(&["a"]);
+        // The "What's New" trigger may open the changelog from the real state.json — reset it so the
+        // assertion below starts from no-modals.
+        state.show_changelog = false;
         assert!(!state.any_modal_open());
         state.show_settings = true;
         assert!(state.any_modal_open());

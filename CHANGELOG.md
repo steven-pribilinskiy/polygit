@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.62.0 — 2026-06-20
+reset-plan colored/aligned diff; design-system confirm preview copy
+- the reset confirmation now renders each `Label: current → default` as an aligned
+  column with the new value highlighted green and the old one dimmed (the dialog
+  widens to fit, no clipping).
+- the design-system confirm preview gets its own unique copy describing the
+  shared dialog instead of mimicking the reset wording.
+
 ## v2.61.0 — 2026-06-20
 changelog + What's New modal; clickable version tag
 - the `vX.Y.Z` status-bar tag now opens a Changelog modal: every release as a

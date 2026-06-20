@@ -399,18 +399,58 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
         || !confirm.delete_files.is_empty()
         || !confirm.detail_lines.is_empty();
 
+    // Parse "Label: old → new" detail lines so the arrows align in a column and the before/after
+    // values can be colored (the current value dimmed, the new one green). Lines without that shape
+    // render plain. `Ok` = parsed (label, old, new); `Err` = the raw line.
+    let detail_parsed: Vec<Result<(String, String, String), String>> = confirm
+        .detail_lines
+        .iter()
+        .take(max_per_list)
+        .map(|line| {
+            line.split_once(" \u{2192} ")
+                .and_then(|(left, new)| {
+                    left.split_once(": ")
+                        .map(|(label, old)| (label.to_string(), old.to_string(), new.to_string()))
+                })
+                .ok_or_else(|| line.clone())
+        })
+        .collect();
+    let detail_label_w = detail_parsed
+        .iter()
+        .filter_map(|row| row.as_ref().ok())
+        .map(|(label, _, _)| UnicodeWidthStr::width(label.as_str()))
+        .max()
+        .unwrap_or(0);
+    let detail_width = detail_parsed
+        .iter()
+        .map(|row| match row {
+            Ok((_, old, new)) => {
+                detail_label_w
+                    + 2
+                    + UnicodeWidthStr::width(old.as_str())
+                    + 3
+                    + UnicodeWidthStr::width(new.as_str())
+            }
+            Err(line) => UnicodeWidthStr::width(line.as_str()),
+        })
+        .max()
+        .map(|width| width + 4)
+        .unwrap_or(0) as u16;
+
     // Widen to fit the longest file / detail line (with its two-space indent).
     let file_width = confirm
         .restore_files
         .iter()
         .chain(confirm.delete_files.iter())
-        .chain(confirm.detail_lines.iter())
         .map(|file| file.chars().count() + 4)
         .max()
-        .unwrap_or(0) as u16;
+        .unwrap_or(0)
+        .max(detail_width as usize) as u16;
     // Padding eats 2 rows/cols inside the border; grow the box so content still fits.
     let pad = if app.panel_padding { 2 } else { 0 };
-    let content_width = (confirm.message.chars().count() as u16 + 8).max(file_width) + pad;
+    // +2 covers the rounded border so the widest aligned detail row (e.g. a long "label  a → b")
+    // isn't clipped at the right edge.
+    let content_width = (confirm.message.chars().count() as u16 + 8).max(file_width) + pad + 2;
     let width = content_width.clamp(30, area.width.saturating_sub(4).max(30));
 
     // Build the file-detail body first so we can size the dialog to it.
@@ -446,11 +486,27 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             )));
         }
-        for line in confirm.detail_lines.iter().take(max_per_list) {
-            detail_lines.push(Line::from(Span::styled(
-                format!("    {line}"),
-                Style::default().fg(Color::Gray),
-            )));
+        for row in &detail_parsed {
+            match row {
+                Ok((label, old, new)) => detail_lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(
+                        format!("{label:<detail_label_w$}"),
+                        Style::default().fg(Color::Gray),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(old.clone(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(" \u{2192} ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        new.clone(),
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    ),
+                ])),
+                Err(line) => detail_lines.push(Line::from(Span::styled(
+                    format!("    {line}"),
+                    Style::default().fg(Color::Gray),
+                ))),
+            }
         }
         if confirm.detail_lines.len() > max_per_list {
             detail_lines.push(Line::from(Span::styled(
