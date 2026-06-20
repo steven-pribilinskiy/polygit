@@ -174,9 +174,13 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     } else {
         Span::styled("✓ Running the latest build on disk.", Style::default().fg(Color::Green))
     };
+    let built_in = app
+        .build_duration
+        .map(|secs| format!("{built}  (took {})", crate::app::format_duration(secs)))
+        .unwrap_or(built);
     let header: Vec<Line> = vec![
         field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string()),
-        field("Built", built),
+        field("Built", built_in),
         field("Binary", format!("{} ({})", human_size(app.build_info_binary_size), app.exe_path)),
         field(
             "Settings",
@@ -212,6 +216,7 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     app.build_info_close_click = close_click;
+    app.build_info_area = modal;
 
     // Header rows at the top, then the scrollable preview in whatever's left.
     let header_h = header.len() as u16;

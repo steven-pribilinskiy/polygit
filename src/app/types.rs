@@ -1908,6 +1908,17 @@ pub fn format_ago(secs: u64) -> String {
     }
 }
 
+/// A build/elapsed duration in seconds as "Ns" / "Nm Ms" / "Nm" (used by the build-info modal).
+pub fn format_duration(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs % 60 == 0 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
 /// Compact staleness age ("now"/"3m"/"5h"/"2d") for a status-cache entry stamped at `cached_at`
 /// (Unix seconds). Reads the wall clock — display-only, never used in pure logic.
 pub fn format_cache_age(cached_at: i64) -> String {
