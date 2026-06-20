@@ -16,6 +16,7 @@
             on: vec![false; CLI_FLAGS.len()],
             values: vec![String::new(); CLI_FLAGS.len()],
             editing: None,
+            show_help: true,
         };
         assert_eq!(builder.command(), "polygit");
         // index 0 = positional DIR, 1 = --depth, 5 = --no-tui (per CLI_FLAGS order).
@@ -23,6 +24,9 @@
         builder.values[1] = "3".to_string();
         builder.on[5] = true;
         assert_eq!(builder.command(), "polygit ~/projects --depth 3 --no-tui");
+        // --jobs (index 3) is the long form (was `-j`).
+        builder.values[3] = "8".to_string();
+        assert!(builder.command().contains("--jobs 8"));
     }
 
     #[test]

@@ -913,23 +913,26 @@ pub enum CliFlagKind {
 }
 
 pub struct CliFlag {
-    /// The flag as it appears on the command line (`--depth`, `-j`, or `` for the positional).
+    /// The flag as it appears on the command line (`--depth`, `--jobs`, or `` for the positional).
     pub flag: &'static str,
     pub kind: CliFlagKind,
     pub help: &'static str,
+    /// A related "parent" flag (index into `CLI_FLAGS`): this flag renders indented beneath it,
+    /// e.g. `--no-recursive` under `--depth`, `--profile-out` under `--profile`.
+    pub parent: Option<usize>,
 }
 
 /// The CLI builder's flag catalog, in display order. Mirrors the real clap flags.
 pub static CLI_FLAGS: &[CliFlag] = &[
-    CliFlag { flag: "", kind: CliFlagKind::Positional("DIR"), help: "directory to scan (default: cwd)" },
-    CliFlag { flag: "--depth", kind: CliFlagKind::Value("N"), help: "max scan depth (default: 16; 1 = flat)" },
-    CliFlag { flag: "--no-recursive", kind: CliFlagKind::Toggle, help: "single-level scan (same as --depth 1)" },
-    CliFlag { flag: "-j", kind: CliFlagKind::Value("N"), help: "concurrency (default: nproc)" },
-    CliFlag { flag: "--timeout", kind: CliFlagKind::Value("S"), help: "per-pull timeout seconds (default: 30)" },
-    CliFlag { flag: "--no-tui", kind: CliFlagKind::Toggle, help: "plain streaming output (no TUI)" },
-    CliFlag { flag: "--no-worktrees", kind: CliFlagKind::Toggle, help: "skip worktree discovery" },
-    CliFlag { flag: "--profile", kind: CliFlagKind::Toggle, help: "per-repo timing report (slowest first)" },
-    CliFlag { flag: "--profile-out", kind: CliFlagKind::Value("FILE"), help: "write the profile report to FILE" },
+    CliFlag { flag: "", kind: CliFlagKind::Positional("DIR"), help: "directory to scan (default: cwd)", parent: None },
+    CliFlag { flag: "--depth", kind: CliFlagKind::Value("N"), help: "max scan depth (default: 16; 1 = flat)", parent: None },
+    CliFlag { flag: "--no-recursive", kind: CliFlagKind::Toggle, help: "single-level scan (same as --depth 1)", parent: Some(1) },
+    CliFlag { flag: "--jobs", kind: CliFlagKind::Value("N"), help: "concurrency (default: nproc)", parent: None },
+    CliFlag { flag: "--timeout", kind: CliFlagKind::Value("S"), help: "per-pull timeout seconds (default: 30)", parent: None },
+    CliFlag { flag: "--no-tui", kind: CliFlagKind::Toggle, help: "plain streaming output (no TUI)", parent: None },
+    CliFlag { flag: "--no-worktrees", kind: CliFlagKind::Toggle, help: "skip worktree discovery", parent: None },
+    CliFlag { flag: "--profile", kind: CliFlagKind::Toggle, help: "per-repo timing report (slowest first)", parent: None },
+    CliFlag { flag: "--profile-out", kind: CliFlagKind::Value("FILE"), help: "write the profile report to FILE", parent: Some(7) },
 ];
 
 /// Mutable state of the interactive CLI builder: which flags are selected/edited.
@@ -941,8 +944,10 @@ pub struct CliBuilder {
     pub on: Vec<bool>,
     /// Per-flag value (value flags / positional) — index-aligned with `CLI_FLAGS`.
     pub values: Vec<String>,
-    /// When editing a value flag, the in-progress input buffer.
+    /// When editing a value flag, the in-progress input buffer (auto-applied to `values` live).
     pub editing: Option<String>,
+    /// Show the per-flag help text column (toggled with `h`). Default on.
+    pub show_help: bool,
 }
 
 impl CliBuilder {
