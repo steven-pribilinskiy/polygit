@@ -272,8 +272,11 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
 
     // Right-aligned fragments (justify-between): the list title already shows done/elapsed,
     // so the right side carries the version, the binary's build age, and the meta actions.
-    let right_version: Vec<(String, Style, Option<Command>)> =
-        vec![(concat!("v", env!("CARGO_PKG_VERSION")).to_string(), hint, None)];
+    let right_version: Vec<(String, Style, Option<Command>)> = vec![(
+        concat!("v", env!("CARGO_PKG_VERSION")).to_string(),
+        hint,
+        Some(Command::ShowChangelog),
+    )];
     let right_built: Vec<(String, Style, Option<Command>)> = app
         .binary_built
         .and_then(|built| built.elapsed().ok())

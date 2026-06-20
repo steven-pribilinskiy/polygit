@@ -436,6 +436,13 @@
       },
       {
         "keys": [
+          "click vX.Y.Z"
+        ],
+        "action": "Open the Changelog (every release as an accordion, latest two expanded; j/k select, space/enter fold). A What's New modal also pops automatically after reloading into a newer build.",
+        "note": "the clickable version tag in the status bar's bottom-right"
+      },
+      {
+        "keys": [
           "?"
         ],
         "action": "Open the help modal",

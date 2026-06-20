@@ -249,6 +249,146 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let _ = pad;
 }
 
+/// The changelog / What's New modal. `vX.Y.Z` (status bar) opens the full changelog — every release
+/// as a collapsible accordion (header `▸ vX.Y.Z · <ago>`), the latest two expanded. After an update
+/// it opens in What's New mode: only releases newer than the last-seen version, all expanded.
+pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    enum Item {
+        Header(usize),
+        Note(String),
+    }
+    let releases = crate::changelog::releases();
+    let whats_new = app.changelog_whats_new;
+    let visible: Vec<usize> = releases
+        .iter()
+        .enumerate()
+        .filter(|(_, release)| {
+            !whats_new
+                || crate::changelog::version_cmp(release.version, &app.whats_new_since)
+                    == std::cmp::Ordering::Greater
+        })
+        .map(|(idx, _)| idx)
+        .collect();
+
+    let mut items: Vec<Item> = Vec::new();
+    for &idx in &visible {
+        let release = &releases[idx];
+        let expanded = whats_new || !app.changelog_collapsed.contains(release.version);
+        items.push(Item::Header(idx));
+        if expanded {
+            for note in &release.notes {
+                items.push(Item::Note((*note).to_string()));
+            }
+            items.push(Item::Note(String::new()));
+        }
+    }
+
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = area.width.saturating_sub(8).clamp(40, 96);
+    let height = area.height.saturating_sub(4).clamp(10, 40);
+    let modal = centered_rect(width, height, area);
+    let (close_line, close_click) = modal_close_button(modal);
+    let title = if whats_new {
+        format!(" What's New in v{} ", env!("CARGO_PKG_VERSION"))
+    } else {
+        " Changelog ".to_string()
+    };
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    if !whats_new {
+        footer.push(footer_sep());
+        footer.push(("space".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Char(' '))));
+        footer.push(("/".to_string(), Style::default().fg(Color::DarkGray), None));
+        footer.push(("enter".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Enter)));
+        footer.push((" fold".to_string(), Style::default().fg(Color::DarkGray), Some(HintKey::Enter)));
+    }
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(title)
+        .title_top(close_line)
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.changelog_area = modal;
+    app.changelog_close_click = close_click;
+    app.changelog_header_click.clear();
+
+    let viewport = inner.height as usize;
+    let total = items.len();
+    let max_scroll = total.saturating_sub(viewport);
+    // Full changelog: keep the keyboard-selected release's header in view (what's-new is pure scroll).
+    let mut scroll = app.changelog_scroll.min(max_scroll);
+    if !whats_new {
+        if let Some(sel_line) = items
+            .iter()
+            .position(|item| matches!(item, Item::Header(idx) if *idx == app.changelog_selected))
+        {
+            if sel_line < scroll {
+                scroll = sel_line;
+            } else if viewport > 0 && sel_line >= scroll + viewport {
+                scroll = sel_line + 1 - viewport;
+            }
+        }
+    }
+    app.changelog_scroll = scroll;
+    let header_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let active_header = Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let note_style = Style::default().fg(Color::Gray);
+    let mut lines: Vec<Line> = Vec::new();
+    for (offset, item) in items.iter().skip(scroll).take(viewport).enumerate() {
+        let screen_y = inner.y + offset as u16;
+        match item {
+            Item::Header(idx) => {
+                let release = &releases[*idx];
+                let ago = crate::changelog::released_ago(release.date);
+                let label = if whats_new {
+                    format!(" v{} · {ago} ", release.version)
+                } else {
+                    let chevron =
+                        if app.changelog_collapsed.contains(release.version) { "\u{25b8}" } else { "\u{25be}" };
+                    format!(" {chevron} v{} · {ago} ", release.version)
+                };
+                let width = UnicodeWidthStr::width(label.as_str()) as u16;
+                let style = if !whats_new && *idx == app.changelog_selected {
+                    active_header
+                } else {
+                    header_style
+                };
+                if !whats_new {
+                    app.changelog_header_click.push((screen_y, inner.x, inner.x + width, *idx));
+                }
+                lines.push(Line::from(Span::styled(label, style)));
+            }
+            Item::Note(text) if text.is_empty() => lines.push(Line::from(String::new())),
+            Item::Note(text) => {
+                let style = if text.starts_with('-') || text.starts_with("- ") { note_style } else { dim };
+                lines.push(Line::from(Span::styled(format!("    {text}"), style)));
+            }
+        }
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+    if total > viewport {
+        let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
+        let dragging = app.scrollbar_dragging == Some(crate::app::ScrollKind::Changelog);
+        render_scrollbar(frame, track, scroll, total, viewport, dragging);
+        app.scroll_hits.push(crate::app::ScrollHit {
+            kind: crate::app::ScrollKind::Changelog,
+            track,
+            total,
+            viewport,
+        });
+    }
+    let _ = pad;
+}
+
 pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let Some(confirm) = &app.confirm else {
         return;
