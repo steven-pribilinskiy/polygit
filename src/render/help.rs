@@ -859,8 +859,8 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         ("Hotkeys", HelpTab::Hotkeys),
         ("CLI", HelpTab::CliFlags),
         ("Legend", HelpTab::Legend),
-        ("About", HelpTab::About),
         ("Design", HelpTab::DesignSystem),
+        ("About", HelpTab::About),
     ];
     let mut tab_spans: Vec<Span> = Vec::new();
     let mut tab_col = tab_bar_area.x;

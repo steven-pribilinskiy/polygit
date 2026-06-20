@@ -405,6 +405,7 @@ fn cursor_tip(cursor: Option<(u16, u16)>, text: String) -> Option<app::HoverTip>
         text,
         anchor: Rect { x: col, y: row, width: 1, height: 1 },
         placement: tui_pick::Placement::top_center(),
+        hide_column: None,
     })
 }
 
@@ -1252,29 +1253,41 @@ async fn run_event_loop(
             // cursor; column-header / count-tail tips carry their own anchor + side (below the
             // header). The floating engine flips/shifts each to stay on-screen.
             let cursor = app.hover;
-            let dwell: Option<app::HoverTip> = settings_tip
-                .and_then(|tip| cursor_tip(cursor, tip))
-                .or_else(|| help_url.and_then(|url| cursor_tip(cursor, url)))
-                .or_else(|| {
-                    cursor
-                        .and_then(|(col, row)| app.tooltip_at(col, row))
-                        .map(|(text, anchor, placement)| app::HoverTip { text, anchor, placement })
-                })
-                .or_else(|| {
-                    cursor
-                        .and_then(|(col, row)| app.command_at(col, row))
-                        .and_then(|cmd| cursor_tip(cursor, cmd.tooltip().to_string()))
-                });
-            let dwell_text = dwell.as_ref().map(|tip| tip.text.clone());
-            if dwell_text != hover_dwell_text {
-                hover_dwell_text = dwell_text;
-                hover_dwell_since = Instant::now();
-                app.hover_tooltip = None;
-            } else if let Some(tip) = dwell {
-                if app.hover_tooltip.is_none()
-                    && hover_dwell_since.elapsed() >= Duration::from_millis(1000)
-                {
-                    app.hover_tooltip = Some(tip);
+            // Keep the active tooltip alive while the cursor is over its own popup, so an
+            // interactive tooltip (e.g. a column header's `[x]` hide button) stays clickable as the
+            // cursor moves off the header onto it.
+            let over_popup = app.hover_tooltip.is_some()
+                && cursor.is_some_and(|(col, row)| point_in(app.tooltip_rect, col, row));
+            if !over_popup {
+                let dwell: Option<app::HoverTip> = settings_tip
+                    .and_then(|tip| cursor_tip(cursor, tip))
+                    .or_else(|| help_url.and_then(|url| cursor_tip(cursor, url)))
+                    .or_else(|| {
+                        cursor.and_then(|(col, row)| app.tooltip_at(col, row)).map(
+                            |(text, anchor, placement, hide_column)| app::HoverTip {
+                                text,
+                                anchor,
+                                placement,
+                                hide_column,
+                            },
+                        )
+                    })
+                    .or_else(|| {
+                        cursor
+                            .and_then(|(col, row)| app.command_at(col, row))
+                            .and_then(|cmd| cursor_tip(cursor, cmd.tooltip().to_string()))
+                    });
+                let dwell_text = dwell.as_ref().map(|tip| tip.text.clone());
+                if dwell_text != hover_dwell_text {
+                    hover_dwell_text = dwell_text;
+                    hover_dwell_since = Instant::now();
+                    app.hover_tooltip = None;
+                } else if let Some(tip) = dwell {
+                    if app.hover_tooltip.is_none()
+                        && hover_dwell_since.elapsed() >= Duration::from_millis(1000)
+                    {
+                        app.hover_tooltip = Some(tip);
+                    }
                 }
             }
             // Periodic local branch/status refresh (no pull) when enabled — interval scales with
@@ -1323,6 +1336,20 @@ async fn run_event_loop(
                 // Bare cursor motion carries no action.
                 if matches!(mouse.kind, MouseEventKind::Moved) {
                     continue;
+                }
+
+                // The dwell tooltip's `[x]` hides that column. The popup floats above every pane, so
+                // it's hit-tested first — before the splitter/scrollbar grabs underneath it.
+                if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                    if let Some((_, _, _, column)) = app.tooltip_hide_click.filter(|&(r, s, e, _)| {
+                        mouse.row == r && mouse.column >= s && mouse.column < e
+                    }) {
+                        app.toggle_column(column);
+                        app.save_state();
+                        app.hover_tooltip = None;
+                        app.tooltip_hide_click = None;
+                        continue;
+                    }
                 }
 
                 // Dragging the restored panel's top boundary resizes it (a horizontal splitter).
@@ -1643,10 +1670,14 @@ async fn run_event_loop(
                         ) {
                             app.toggle_all_settings_sections();
                         } else if let Some(tab) = section_click {
+                            // Click a header: focus it (it becomes the active item, no child) and
+                            // expand/collapse it.
+                            app.settings_on_header = Some(tab);
                             app.toggle_settings_section(tab);
                         } else if let Some((row_idx, option)) =
                             app.settings_hit_at(mouse.column, mouse.row)
                         {
+                            app.settings_on_header = None;
                             app.settings_selected = row_idx;
                             app.settings_tab = AppState::settings_tab_of_row(row_idx);
                             match option {
@@ -2361,12 +2392,28 @@ async fn run_event_loop(
                                 app.settings_cycle_tab(false);
                             }
                         }
-                        KeyCode::Char(' ') | KeyCode::Enter => app.toggle_selected_setting(),
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            // In accordion mode, enter/space on a header expands/collapses it; on a
+                            // row it toggles the setting. Other layouts always toggle the row.
+                            if app.settings_layout == crate::app::SettingsLayout::Accordion
+                                && app.settings_on_header.is_some()
+                            {
+                                app.toggle_focused_accordion_section();
+                            } else {
+                                app.toggle_selected_setting();
+                            }
+                        }
                         // `v` cycles the tabbed → accordion → flat layout (hint in the bottom border).
                         KeyCode::Char('v') => {
                             app.settings_layout = app.settings_layout.cycle();
                             app.settings_tab =
                                 AppState::settings_tab_of_row(app.settings_selected);
+                            // Entering accordion focuses the current row's section header; leaving
+                            // clears the header focus (other layouts select rows).
+                            app.settings_on_header =
+                                (app.settings_layout == crate::app::SettingsLayout::Accordion)
+                                    .then(|| AppState::settings_tab_of_row(app.settings_selected));
+                            app.settings_scroll = 0;
                             app.save_state();
                         }
                         _ => {}

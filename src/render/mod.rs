@@ -177,6 +177,18 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             if tab != app.settings_tab {
                 button_hits.push(row_rect(row, start, end));
             }
+        } else if let Some(&(row, start, end, section)) =
+            app.settings_section_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            // Accordion header chips tint on hover like the tab buttons; the active one keeps its
+            // solid highlight (no extra tint).
+            if app.settings_on_header != Some(section) {
+                button_hits.push(row_rect(row, start, end));
+            }
+        } else if let Some((row, start, end)) =
+            app.settings_collapse_all_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.settings_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
@@ -547,17 +559,22 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
 /// to its anchor — flipping to the opposite side and shifting along the cross axis to stay on-screen
 /// (e.g. a column header drops below, flipping above when cramped). Drawn before the palette pass so
 /// its semantic colors remap.
-fn render_tooltip(frame: &mut Frame, app: &AppState) {
-    let Some(tip) = app.hover_tooltip.as_ref() else {
+fn render_tooltip(frame: &mut Frame, app: &mut AppState) {
+    app.tooltip_hide_click = None;
+    app.tooltip_rect = Rect::default();
+    let Some(tip) = app.hover_tooltip.clone() else {
         return;
     };
     let area = frame.area();
     if area.width < 6 || area.height < 3 {
         return;
     }
+    // A `[x]` hide-column button trails the text when the tooltip is for an optional column.
+    let x_label = " [x]";
     let text_width = UnicodeWidthStr::width(tip.text.as_str()) as u16;
-    // border (2) + 1-cell horizontal padding (2) around the text.
-    let width = (text_width + 4).min(area.width);
+    let extra = if tip.hide_column.is_some() { x_label.len() as u16 } else { 0 };
+    // border (2) + 1-cell horizontal padding (2) around the text (+ the optional `[x]`).
+    let width = (text_width + extra + 4).min(area.width);
     let height = 3;
     let rect = tui_pick::position(
         tip.anchor,
@@ -567,7 +584,6 @@ fn render_tooltip(frame: &mut Frame, app: &AppState) {
         tui_pick::PositionOptions { offset: 0, flip: true, shift: true },
     )
     .rect;
-    let text = &tip.text;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -577,7 +593,19 @@ fn render_tooltip(frame: &mut Frame, app: &AppState) {
     cast_shadow(frame, rect);
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
-    frame.render_widget(Paragraph::new(text.clone()), inner);
+    app.tooltip_rect = rect;
+    if let Some(column) = tip.hide_column {
+        let line = Line::from(vec![
+            Span::raw(tip.text.clone()),
+            Span::styled(x_label, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        ]);
+        frame.render_widget(Paragraph::new(line), inner);
+        // The `[x]` sits after the text + a leading space (3 cells wide).
+        let x_start = inner.x + text_width + 1;
+        app.tooltip_hide_click = Some((inner.y, x_start, x_start + 3, column));
+    } else {
+        frame.render_widget(Paragraph::new(tip.text.clone()), inner);
+    }
 }
 
 /// Draw all widgets for the current state (colors still in the semantic ANSI palette).

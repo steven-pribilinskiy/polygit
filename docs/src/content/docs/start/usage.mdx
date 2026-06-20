@@ -108,7 +108,7 @@ the restored repo page's top border to resize `[4]`.
 Press `?` at any time for the in-app help modal — five tabs (**Hotkeys**, **CLI** — an
 interactive command builder where every flag is a checkbox (typed values auto-apply, related
 flags indent under their parent, `h` hides the help column, and the assembled command is
-clickable to copy), **Legend** with every glyph in both icon sets, **About**, and **Design**)
+clickable to copy), **Legend** with every glyph in both icon sets, **Design**, and **About**)
 switched with `Tab`. Only one modal is open at a time: clicking `, settings` while help is up closes help
 and opens settings (no stacking), and the live footer commands hover-highlight from inside any modal.
 Press `/` on **any tab** to search it (type to filter, `Esc` clears): the **Hotkeys** tab matches
@@ -133,8 +133,11 @@ vertical tabs — `←`/`→` or `Tab` switch, `↑`/`↓` move within a tab); p
 **tabbed → accordion → flat**. A **search box** sits at the top of the modal: press `/` to focus
 it and type to filter the rows across every tab into a flat list with the matched characters
 highlighted (`↑`/`↓` move through the matches, `space`/`enter` toggles, `Esc` clears the search). In the **accordion** layout every section stacks under a collapsible
-header (click a header — or `←`/`→` on the selected row's section — to fold/unfold it; a top
-`[- collapse all]` / `[+ expand all]` button folds them all at once; collapsed sections persist).
+header. `↑`/`↓` (or `j`/`k`) step through both the headers and the rows of expanded sections;
+`space`/`enter` (or `←`/`→`) on a focused header folds/unfolds it (when a header is focused no child
+row is active — the header itself is selected); clicking a header focuses **and** toggles it; a top
+`[- collapse all]` / `[+ expand all]` button folds them all at once; the content scrolls when it
+overflows; collapsed sections persist.
 The **flat** layout stacks every section expanded. Press **`R`** (or the footer `R reset` chip) to
 **reset every setting to its default** — a confirmation lists each setting that will change with its
 `current → default` value (data like favorites and workspaces is left untouched):

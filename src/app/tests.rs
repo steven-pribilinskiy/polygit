@@ -30,34 +30,38 @@
     }
 
     #[test]
-    fn accordion_collapse_hides_rows_and_nav_skips_them() {
+    fn accordion_nav_includes_headers_and_skips_collapsed_rows() {
         let mut state = state_named(&["a"]);
         state.settings_layout = SettingsLayout::Accordion;
         state.collapsed_settings.clear();
-        // Fully expanded: every row visible, not all-collapsed.
-        assert!(state.settings_row_visible(0));
-        assert!(state.settings_row_visible(3));
-        assert!(!state.settings_all_collapsed());
-        // Collapse General (tab 0 = rows 0,1,2): those rows hide; the next section stays visible.
-        state.toggle_settings_section(0);
+        state.settings_on_header = Some(0); // start focused on the first section header (Lists)
+        // Positions include every header; expanded sections also contribute their rows.
+        let positions = state.accordion_positions();
+        assert!(matches!(positions[0], AccPos::Header(0)));
+        assert!(positions.iter().any(|pos| matches!(pos, AccPos::Row(0))));
+        // Down from the Lists header lands on its first row (global row 0).
+        state.settings_move(1);
+        assert_eq!(state.settings_on_header, None);
+        assert_eq!(state.settings_selected, 0);
+        // Collapse Lists via its header → its rows drop out of the nav sequence.
+        state.settings_on_header = Some(0);
+        state.toggle_focused_accordion_section();
         assert!(state.settings_section_collapsed(0));
-        assert!(!state.settings_row_visible(0));
-        assert!(state.settings_row_visible(3));
-        // Nav can't move up into the collapsed General section.
-        state.settings_selected = 3;
-        state.settings_move(-1);
-        assert_eq!(state.settings_selected, 3);
+        assert!(!state.accordion_positions().iter().any(|pos| matches!(pos, AccPos::Row(0))));
+        // Down from the collapsed Lists header skips to the next header (Theming).
+        state.settings_on_header = Some(0);
+        state.settings_move(1);
+        assert_eq!(state.settings_on_header, Some(1));
+        // ←/→ helpers collapse / expand the focused section.
+        state.set_selected_settings_section(true);
+        assert!(state.settings_section_collapsed(1));
+        state.set_selected_settings_section(false);
+        assert!(!state.settings_section_collapsed(1));
         // Collapse-all then expand-all round-trips.
         state.toggle_all_settings_sections();
         assert!(state.settings_all_collapsed());
         state.toggle_all_settings_sections();
         assert!(state.collapsed_settings.is_empty());
-        // ←/→ helpers collapse / expand the selected row's section.
-        state.settings_selected = 3; // Theming
-        state.set_selected_settings_section(true);
-        assert!(state.settings_section_collapsed(AppState::settings_tab_of_row(3)));
-        state.set_selected_settings_section(false);
-        assert!(!state.settings_section_collapsed(AppState::settings_tab_of_row(3)));
     }
 
     #[test]
