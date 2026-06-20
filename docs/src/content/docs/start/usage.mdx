@@ -202,12 +202,13 @@ skips auto-pull, the Result row reads "Ready — auto-pull off"; press **`E`** t
 ## New-build reload
 
 polygit watches its own binary while running. When a newer build lands at the same path
-(e.g. `make install`'s atomic rename), a notice appears in the top-right corner with a
-`[reload]` button — clicking it restores the terminal and `exec`s the new binary with the same
-arguments, so the fresh build takes over in the same terminal and re-runs the pulls. `[x]`
-dismisses the notice until the binary changes again. The notice rides on top of every screen
-(the repo list, the repo page, and any open modal), so a freshly-installed build is always one
-click away.
+(e.g. `make install`'s atomic rename), a notice appears in the top-right corner reading
+`↺ new build installed · [^R reload] [^X]`. Press **`Ctrl-R`** (or click `[^R reload]`) to
+restore the terminal and `exec` the new binary with the same arguments, so the fresh build takes
+over in the same terminal and re-runs the pulls. Press **`Ctrl-X`** (or click `[^X]`) to dismiss
+the notice until the binary changes again. The notice rides on top of every screen (the repo
+list, the repo page, and any open modal), so a freshly-installed build is always one key away —
+and both keys work from anywhere, including inside a modal.
 
 Clicking the `built … ago` tag in the status bar opens a **Build info** modal showing the
 running version, when it was built, the **binary size** + watched path, the **settings file

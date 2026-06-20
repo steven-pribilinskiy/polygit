@@ -55,9 +55,11 @@ Source is a flat module set under `src/` (no submodules); each file is one conce
 
 The loop polls events with a 50ms timeout and calls `terminal.draw` every iteration regardless of input. Animations (spinner, refetch attention-flash, divider drag highlight) rely on this — they're derived from `Instant`/tick at render time, not driven by events.
 
-### UI philosophy: it's a web app in a terminal
+### UI philosophy: keyboard-first AND mouse-first, equally
 
-Treat every interactive element as clickable. Filter/sort/column chips, column headers, status-filter chips, menu entries, settings radios, the repo-page column-toggle chips and `[esc back]` button — all have a mouse counterpart wired through the capture-then-hit-test pattern. Disabled states render **dim and inert** (no click region), never hidden, so the affordance stays discoverable. A new keyboard binding without a clickable counterpart (or vice versa) is incomplete — add both.
+polygit is **both** a keyboard-driven TUI and a web-app-in-a-terminal — the two are equally important, never one at the expense of the other. **Every interactive element MUST have both a key binding and a mouse (click/hover) counterpart.** A keyboard action without a clickable affordance, or a clickable affordance without a key binding, is an incomplete, shippable-only-by-accident defect — add both, every time. This includes transient/floating UI like the new-build notice (it has `Ctrl-R`/`Ctrl-X` **and** clickable `[^R reload]`/`[^X]`), not just the main panes.
+
+When an element exposes a key, **surface that key in the element itself** (footer-hint style: `key label`, e.g. `[^R reload]`) so it's discoverable without the help modal. Clicks route through the capture-then-hit-test pattern; keys go through the event loop — a global/floating overlay's keys are handled at the top of the key match (before the per-view/modal gates) so they work from anywhere, mirroring its always-on mouse handler. Disabled states render **dim and inert** (no click region), never hidden, so the affordance stays discoverable.
 
 ### Geometry capture → hit-testing (load-bearing)
 
