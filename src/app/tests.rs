@@ -101,10 +101,14 @@
 
     #[test]
     fn help_tab_about_is_not_persisted() {
-        assert_eq!(HelpTab::About.persisted(), HelpTab::Hotkeys);
-        assert_eq!(HelpTab::Hotkeys.persisted(), HelpTab::Hotkeys);
-        assert_eq!(HelpTab::CliFlags.persisted(), HelpTab::CliFlags);
-        assert_eq!(HelpTab::Legend.persisted(), HelpTab::Legend);
+        let mut state = state_named(&["a"]);
+        // Switching to a useful tab tracks it for persistence.
+        state.set_help_tab(HelpTab::Legend);
+        assert_eq!(state.help_tab_persist, HelpTab::Legend);
+        // Switching to About shows it but does NOT change the persisted tab.
+        state.set_help_tab(HelpTab::About);
+        assert_eq!(state.help_tab, HelpTab::About);
+        assert_eq!(state.help_tab_persist, HelpTab::Legend);
     }
 
     /// `AppState::new` restores the user's real persisted preferences (sort, grouping, …) —

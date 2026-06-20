@@ -249,6 +249,15 @@ impl AppState {
         }
     }
 
+    /// Switch the active help tab, remembering it for persistence only when it isn't About (so
+    /// reopening help lands on the last *useful* tab, never the credits/links tab).
+    pub fn set_help_tab(&mut self, tab: HelpTab) {
+        self.help_tab = tab;
+        if tab != HelpTab::About {
+            self.help_tab_persist = tab;
+        }
+    }
+
     /// Open the help modal as the only modal (resets scroll).
     pub fn open_help(&mut self) {
         self.close_all_modals();
