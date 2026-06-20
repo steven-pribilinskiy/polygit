@@ -2423,6 +2423,10 @@ pub struct AppState {
     /// Set once the all-repos PR background pass has been spawned (when the PR column is enabled).
     /// Reset when the column is toggled off so re-enabling re-arms it.
     pub pr_pass_spawned: bool,
+    /// Latched true once any pull has landed a delta this session. Keeps the pulled/chg columns
+    /// stable: a retry/refetch (which clears `pull_result` at pull start, then resets it) no longer
+    /// flickers the column in and back out. Runtime-only, fresh per launch.
+    pub pulled_seen: bool,
 }
 
 impl AppState {
@@ -2657,6 +2661,7 @@ impl AppState {
             status_cache: crate::cache::load(),
             pr_cache: crate::pr_cache::load(),
             pr_pass_spawned: false,
+            pulled_seen: false,
         }
     }
 
@@ -5748,6 +5753,13 @@ impl AppState {
         self.repos.iter().any(|repo| repo.lock().unwrap().pull_result.is_some())
     }
 
+    /// Latch the pulled/chg columns on once a pull delta appears. Called each frame; cheap once set.
+    pub fn refresh_pulled_seen(&mut self) {
+        if !self.pulled_seen && self.any_pull_result() {
+            self.pulled_seen = true;
+        }
+    }
+
     /// Whether a column could show a meaningful value, or is still loading. Hidden only once
     /// everything it depends on has loaded AND every repo's value is trivial; pending data
     /// counts as available so columns don't flicker mid-scan. The always-on columns
@@ -5786,10 +5798,10 @@ impl AppState {
                     }
                 })
             }
-            // The pulled columns come from the pulls themselves: visible while pulls are still
-            // running (data may yet arrive), then auto-hide once everything settled with nothing
-            // pulled.
-            Column::PulledCommits | Column::PulledFiles => !self.all_done || self.any_pull_result(),
+            // The pulled columns come from the pulls themselves. Once any pull has landed a delta
+            // this session the columns latch on (`pulled_seen`) and stay — so a retry/refetch, which
+            // briefly clears every `pull_result`, no longer flickers them out and back in.
+            Column::PulledCommits | Column::PulledFiles => self.pulled_seen,
             // Self-fills via `gh` in the background; always available when enabled (cells are
             // blank for repos without a PR or not yet resolved).
             Column::PullRequest => true,
@@ -6083,6 +6095,29 @@ mod tests {
         assert!(!state.title_button_hit(28, 5)); // wrong row
         assert!(!state.title_button_hit(10, 4)); // left of both buttons (the drag handle)
         assert!(!state.title_button_hit(40, 4)); // half-open: end is exclusive
+    }
+
+    #[test]
+    fn pulled_columns_latch_on_and_dont_flicker() {
+        let mut state = state_named(&["a", "b"]);
+        state.columns.pulled_files = true;
+        state.columns.pulled_commits = true;
+        // Nothing pulled yet → the columns are hidden (auto-hide).
+        state.refresh_pulled_seen();
+        assert!(!state.pulled_seen);
+        assert!(!state.column_available(Column::PulledFiles));
+        assert!(!state.effective_columns().pulled_files);
+        // A pull lands a delta → the columns latch on.
+        state.repos[0].lock().unwrap().pull_result =
+            Some(PullResult { files: 3, ..Default::default() });
+        state.refresh_pulled_seen();
+        assert!(state.pulled_seen);
+        assert!(state.column_available(Column::PulledFiles));
+        assert!(state.effective_columns().pulled_files);
+        // A retry clears every pull_result mid-flight — the columns must NOT flicker out.
+        state.repos[0].lock().unwrap().pull_result = None;
+        state.refresh_pulled_seen();
+        assert!(state.column_available(Column::PulledFiles), "latched on, no flicker");
     }
 
     #[test]

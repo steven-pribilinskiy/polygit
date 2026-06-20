@@ -1287,6 +1287,8 @@ async fn run_event_loop(
             }
             app.divider_dragging = dragging_divider;
             app.scrollbar_dragging = scroll_drag;
+            // Latch the pulled/chg columns on once a delta lands, so a retry doesn't flicker them.
+            app.refresh_pulled_seen();
             // Master-detail: while the restored panel [4] is open and the list ([1]) has focus, keep
             // the panel pointed at the selected repo (cheap no-op when it's already on that repo).
             maybe_follow_repo_page(&mut app);

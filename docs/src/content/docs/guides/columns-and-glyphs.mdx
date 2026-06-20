@@ -29,7 +29,9 @@ Press `t` to enter the column-toggle leader, then a column key. The mode stays a
 
 The **pulled** (`p`) and **changed** (`c`) columns report what the *most recent pull this run*
 delivered — commits landed on the current branch and files touched. Repos that were already
-up to date show a dim `0`; both columns auto-hide once the run finishes with nothing pulled.
+up to date show a dim `0`; both columns stay hidden until a pull lands a delta, then remain for
+the rest of the session — so a retry / refetch (which briefly clears every result) doesn't
+flicker them in and out.
 The full breakdown (old→new sha, line counts, new tags/branches) lives in the info panel's
 **Pulled** row (`i`).
 
