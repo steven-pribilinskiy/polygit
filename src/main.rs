@@ -1584,6 +1584,33 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Header dropdown: click an item to activate it, `[x]`/outside to close, wheel moves.
+                if app.dropdown.is_some() {
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => app.dropdown_move(1),
+                        MouseEventKind::ScrollUp => app.dropdown_move(-1),
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if region_hit(app.dropdown_close_click, mouse.column, mouse.row)
+                                || !point_in(app.dropdown_area, mouse.column, mouse.row)
+                            {
+                                app.close_dropdown();
+                            } else if let Some(&(_, _, _, index)) = app
+                                .dropdown_item_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                            {
+                                if app.dropdown_activate(index) {
+                                    app.close_dropdown();
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Settings modal: click a row label to select it, a radio chip to set that
                 // value, [x] or anywhere outside to close. Everything else is swallowed so
                 // clicks never fall through to the view behind.
@@ -1813,6 +1840,18 @@ async fn run_event_loop(
                                 app.toggle_repo_page_maximized();
                             } else if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
                                 app.close_repo_page();
+                            } else if let Some((row, start, _)) =
+                                app.page_cols_click.filter(|&(r, s, e)| {
+                                    mouse.row == r && mouse.column >= s && mouse.column < e
+                                })
+                            {
+                                app.open_dropdown(app::DropdownKind::PageColumns, start, row);
+                            } else if let Some((row, start, _)) =
+                                app.page_sort_click.filter(|&(r, s, e)| {
+                                    mouse.row == r && mouse.column >= s && mouse.column < e
+                                })
+                            {
+                                app.open_dropdown(app::DropdownKind::PageSort, start, row);
                             } else if let Some(url) = pr_url {
                                 drop(app);
                                 open_url(&url);
@@ -1978,6 +2017,19 @@ async fn run_event_loop(
 
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
+                        // The list header's `[cols ▾]` / `[sort ▾]` chips open their dropdowns.
+                        if let Some((row, start, _)) = app.list_cols_click.filter(|&(r, s, e)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.open_dropdown(app::DropdownKind::ListColumns, start, row);
+                            continue;
+                        }
+                        if let Some((row, start, _)) = app.list_sort_click.filter(|&(r, s, e)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.open_dropdown(app::DropdownKind::ListSort, start, row);
+                            continue;
+                        }
                         // Click-to-focus: a click inside the panes focuses whichever panel it hit.
                         if point_in(app.list_area, mouse.column, mouse.row) {
                             app.focus_pane(Pane::List);
@@ -2220,6 +2272,24 @@ async fn run_event_loop(
                         _ => {}
                     }
                     app.show_build_info = false;
+                    continue;
+                }
+
+                // Header dropdown (`[cols ▾]` / `[sort ▾]`): arrows move, space/enter activate
+                // (columns stay open, sort closes), esc/q close.
+                if app.dropdown.is_some() {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.close_dropdown(),
+                        KeyCode::Down | KeyCode::Char('j') => app.dropdown_move(1),
+                        KeyCode::Up | KeyCode::Char('k') => app.dropdown_move(-1),
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            let index = app.dropdown.map_or(0, |dropdown| dropdown.selected);
+                            if app.dropdown_activate(index) {
+                                app.close_dropdown();
+                            }
+                        }
+                        _ => {}
+                    }
                     continue;
                 }
 

@@ -11,6 +11,7 @@ use crate::groups::{self, GroupSource, GroupsCache, GroupsConfig};
 mod types;
 pub use types::*;
 
+mod dropdown;
 mod state1;
 mod state2;
 mod state3;
@@ -320,6 +321,18 @@ pub struct AppState {
     pub repo_page_window_click: Option<(u16, u16, u16)>,
     /// The repo page's clickable PR cell on the current-branch row: (row, col_start, col_end, url).
     pub repo_page_pr_click: Option<(u16, u16, u16, String)>,
+    /// An open header `[… ▾]` dropdown (columns / sort), the mouse companion to the t/s leaders.
+    pub dropdown: Option<Dropdown>,
+    /// Dropdown geometry, captured each render: its outer rect, the `[x]` close region, and the
+    /// per-item click rows `(row, col_start, col_end, item index)`.
+    pub dropdown_area: Rect,
+    pub dropdown_close_click: Option<(u16, u16, u16)>,
+    pub dropdown_item_click: Vec<(u16, u16, u16, usize)>,
+    /// The clickable `[cols ▾]` / `[sort ▾]` chips on the list header and the repo-page title bar.
+    pub list_cols_click: Option<(u16, u16, u16)>,
+    pub list_sort_click: Option<(u16, u16, u16)>,
+    pub page_cols_click: Option<(u16, u16, u16)>,
+    pub page_sort_click: Option<(u16, u16, u16)>,
     /// Which repo-page branch columns are shown (persisted).
     pub repo_page_columns: RepoPageColumns,
     /// The page-local `t` column-toggle menu is open.
@@ -625,6 +638,14 @@ impl AppState {
             repo_page_back_click: None,
             repo_page_window_click: None,
             repo_page_pr_click: None,
+            dropdown: None,
+            dropdown_area: Rect::default(),
+            dropdown_close_click: None,
+            dropdown_item_click: Vec::new(),
+            list_cols_click: None,
+            list_sort_click: None,
+            page_cols_click: None,
+            page_sort_click: None,
             repo_page_columns: persisted.repo_page_columns,
             repo_page_toggle: false,
             repo_page_toggle_click: Vec::new(),

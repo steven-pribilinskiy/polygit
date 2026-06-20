@@ -29,8 +29,26 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     };
 
     let modal_open = app.any_modal_open();
+    // Mouse-friendly `[cols ▾]` / `[sort ▾]` chips on the top border (open the dropdown menus;
+    // the `t` / `s` leaders still work). Captured for click hit-testing.
+    let chip_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
+    let cols_text = "[cols ▾]";
+    let sort_text = "[sort ▾]";
+    let chips = Line::from(vec![
+        Span::styled(cols_text, chip_style),
+        Span::raw(" "),
+        Span::styled(sort_text, chip_style),
+    ])
+    .right_aligned();
+    let right_end = area.x + area.width.saturating_sub(1);
+    let sort_start = right_end.saturating_sub(sort_text.chars().count() as u16);
+    let cols_end = sort_start.saturating_sub(1);
+    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
+    app.list_sort_click = Some((area.y, sort_start, right_end));
+    app.list_cols_click = Some((area.y, cols_start, cols_end));
     let block = Block::default()
         .title(title)
+        .title_top(chips)
         .title_style(pane_title_style(modal_open))
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)

@@ -10,10 +10,10 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
-    AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, HelpTab,
-    HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow, PageRowKind, Pane,
-    RepoPageColumn, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit, ScrollKind,
-    SortColumn, SortDir, StatusFilter,
+    AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource,
+    DropdownKind, HelpTab, HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow,
+    PageRowKind, Pane, RepoPageColumn, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit,
+    ScrollKind, SortColumn, SortDir, StatusFilter,
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
@@ -621,6 +621,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.show_keyboard {
             render_keyboard_modal(frame, app, area);
         }
+        if app.dropdown.is_some() {
+            render_dropdown(frame, app, area);
+        }
         // The new-build notice and transient toast sit on top of everything, on every screen.
         render_update_notice(frame, app, area, tick);
         render_toast(frame, app, area);
@@ -723,6 +726,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // The keyboard viewer sits on top of help (it's launched from the Hotkeys tab).
     if app.show_keyboard {
         render_keyboard_modal(frame, app, area);
+    }
+    if app.dropdown.is_some() {
+        render_dropdown(frame, app, area);
     }
     // The new-build notice (top-right) and transient toast sit on top of everything.
     render_update_notice(frame, app, area, tick);

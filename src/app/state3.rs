@@ -212,6 +212,7 @@ impl AppState {
         self.diff_modal = None;
         self.copy_menu = None;
         self.base_picker = None;
+        self.dropdown = None;
         self.finder = None;
         self.picker = None;
     }

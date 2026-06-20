@@ -771,6 +771,25 @@
     }
 
     #[test]
+    fn dropdown_columns_toggle_and_sort_picks() {
+        let mut state = state_named(&["a"]);
+        state.columns.dirty = false;
+        // Columns dropdown: items reflect the flags; activating a column flips it and stays open.
+        state.open_dropdown(DropdownKind::ListColumns, 0, 0);
+        let items = state.dropdown_items();
+        let dirty_idx = items.iter().position(|(label, _)| label == "dirty").unwrap();
+        assert!(!items[dirty_idx].1);
+        assert!(!state.dropdown_activate(dirty_idx), "columns stay open");
+        assert!(state.columns.dirty);
+        // Sort dropdown: activating picks the sort and closes.
+        state.open_dropdown(DropdownKind::ListSort, 0, 0);
+        let items = state.dropdown_items();
+        let branch_idx = items.iter().position(|(label, _)| label == "branch").unwrap();
+        assert!(state.dropdown_activate(branch_idx), "sort closes on pick");
+        assert_eq!(state.sort_column, SortColumn::Branch);
+    }
+
+    #[test]
     fn repo_page_pr_column_available_only_with_a_pr() {
         let mut state = state_named(&["a"]);
         state.repos[0].lock().unwrap().page = Some(RepoPageData::default());

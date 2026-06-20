@@ -541,7 +541,14 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     // restore). Both are always-visible, clickable affordances.
     let win_glyph = if app.repo_page_maximized { icons.win_restore } else { icons.win_maximize };
     let back_text = "[esc back]";
+    let chip_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
+    let cols_text = "[cols ▾]";
+    let sort_text = "[sort ▾]";
     let title_top = Line::from(vec![
+        Span::styled(cols_text, chip_style),
+        Span::raw(" "),
+        Span::styled(sort_text, chip_style),
+        Span::raw("  "),
         Span::styled(win_glyph, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         Span::styled(back_text, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
@@ -554,6 +561,13 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let win_end = back_start.saturating_sub(1);
     let win_start = win_end.saturating_sub(1);
     app.repo_page_window_click = Some((area.y, win_start, win_end));
+    // The `[cols ▾]` / `[sort ▾]` chips sit left of the window controls (two-space gap).
+    let sort_end = win_start.saturating_sub(2);
+    let sort_start = sort_end.saturating_sub(sort_text.chars().count() as u16);
+    let cols_end = sort_start.saturating_sub(1);
+    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
+    app.page_sort_click = Some((area.y, sort_start, sort_end));
+    app.page_cols_click = Some((area.y, cols_start, cols_end));
     // Focused when restored and panel [4] holds focus, or always when maximized (it's the only pane).
     let focused = app.repo_page_maximized || app.focus == Pane::RepoPage;
     let modal_open = app.any_modal_open();
