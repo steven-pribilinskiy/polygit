@@ -72,6 +72,22 @@ pub(crate) fn footer_chip(key_text: &str, label: &str, key: HintKey) -> [(String
     ]
 }
 
+/// Like [`footer_chip`], but renders **disabled** (dim + inert: no key, so it's neither clickable
+/// nor hover-highlighted) when `enabled` is false — e.g. a scroll hint when nothing overflows.
+pub(crate) fn footer_chip_state(
+    key_text: &str,
+    label: &str,
+    key: HintKey,
+    enabled: bool,
+) -> [(String, Style, Option<HintKey>); 2] {
+    if enabled {
+        footer_chip(key_text, label, key)
+    } else {
+        let dim = Style::default().fg(Color::DarkGray);
+        [(key_text.to_string(), dim, None), (label.to_string(), dim, None)]
+    }
+}
+
 /// A non-clickable ` · ` separator segment for footer chips.
 pub(crate) fn footer_sep() -> (String, Style, Option<HintKey>) {
     (" · ".to_string(), Style::default().fg(Color::DarkGray), None)

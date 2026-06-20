@@ -208,16 +208,26 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let height = area.height.saturating_sub(4).clamp(12, 36);
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
+    // Estimate the preview viewport (inner height minus the header) to dim the scroll/move hint
+    // when nothing overflows. `header.len()` rows of header, border (2) + padding eat the rest.
+    let viewport_est =
+        (height as usize).saturating_sub(2 + pad as usize).saturating_sub(header.len());
+    let row_total = if has_tree {
+        crate::treeview::flatten(app.build_info_tree.as_ref().unwrap(), &app.build_info_tree_expanded).len()
+    } else {
+        app.build_info_settings_preview.len()
+    };
+    let can_scroll = row_total > viewport_est;
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     if has_tree {
-        footer.extend(footer_chip("j/k", " move", HintKey::Char('j')));
+        footer.extend(footer_chip_state("j/k", " move", HintKey::Char('j'), can_scroll));
         footer.push(footer_sep());
         footer.push(("space".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Char(' '))));
         footer.push(("/".to_string(), Style::default().fg(Color::DarkGray), None));
         footer.push(("enter".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Enter)));
         footer.push((" fold".to_string(), Style::default().fg(Color::DarkGray), Some(HintKey::Enter)));
     } else {
-        footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+        footer.extend(footer_chip_state("j/k", " scroll", HintKey::Char('j'), can_scroll));
     }
     footer.push(footer_sep());
     footer.extend(footer_chip("r", " restart", HintKey::Char('r')));
@@ -405,8 +415,10 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     } else {
         " Changelog ".to_string()
     };
+    // Dim the scroll hint when the content fits (inner height = modal height minus border+padding).
+    let can_scroll = items.len() > (height as usize).saturating_sub(2 + pad as usize);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
-    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    footer.extend(footer_chip_state("j/k", " scroll", HintKey::Char('j'), can_scroll));
     if !whats_new {
         footer.push(footer_sep());
         footer.push(("space".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Char(' '))));
