@@ -811,7 +811,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 22;
+    pub const SETTINGS_ROWS: usize = 28;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -855,6 +855,14 @@ impl AppState {
                         (toggle with b)",
             (21, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
                         scales the interval with the repo count",
+            (22, _) => "Master switch for all hover tooltips. Off hides every tooltip; the per-area \
+                        toggles below have no effect. (Tooltips still need Hover effects on.)",
+            (23, _) => "Tooltips for the footer / status-bar commands (what each command does)",
+            (24, _) => "Tooltips for the column-title headers — also the source of the clickable \
+                        [x] hide-column button",
+            (25, _) => "Tooltips for a group / folder header's right-corner count (its breakdown)",
+            (26, _) => "Tooltips for the settings rows (what each setting does)",
+            (27, _) => "Tooltips for the help / About links (the link's URL, browser-style)",
             _ => return None,
         })
     }
@@ -1052,7 +1060,8 @@ impl AppState {
     /// (Lists), 3 icons · 4 hide-zeros · 5 theme · 6 background · 7 contrast · 8 selection ·
     /// 9 button-hover (Theming), 10 auto-pull · 11 limit · 12 in-tree (Sync), 13 hover · 14 flash ·
     /// 15 highlight (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-tabs ·
-    /// 20 repo-page (restored/maximized) · 21 branch-check (Layout).
+    /// 20 repo-page (restored/maximized) · 21 branch-check (Layout), 22 all-tooltips · 23 footer ·
+    /// 24 headers · 25 counts · 26 settings · 27 links (Tooltips).
     pub fn toggle_selected_setting(&mut self) {
         match self.settings_selected {
             0 => {
@@ -1093,6 +1102,12 @@ impl AppState {
             19 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
             20 => self.repo_page_maximized = !self.repo_page_maximized,
             21 => self.branch_check = self.branch_check.cycle(),
+            22 => self.tooltips.enabled = !self.tooltips.enabled,
+            23 => self.tooltips.footer = !self.tooltips.footer,
+            24 => self.tooltips.headers = !self.tooltips.headers,
+            25 => self.tooltips.counts = !self.tooltips.counts,
+            26 => self.tooltips.settings = !self.tooltips.settings,
+            27 => self.tooltips.links = !self.tooltips.links,
             _ => {}
         }
         self.save_state();

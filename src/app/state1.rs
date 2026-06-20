@@ -341,6 +341,7 @@ impl AppState {
             show_splitter: self.show_splitter,
             changed_row_flash: self.changed_row_flash,
             changed_row_highlight: self.changed_row_highlight,
+            tooltips: self.tooltips,
         });
     }
 
@@ -672,6 +673,18 @@ impl AppState {
             (20, 1) => self.repo_page_maximized = true,
             (21, 0) => self.branch_check = BranchCheck::Off,
             (21, 1) => self.branch_check = BranchCheck::Auto,
+            (22, 0) => self.tooltips.enabled = true,
+            (22, 1) => self.tooltips.enabled = false,
+            (23, 0) => self.tooltips.footer = true,
+            (23, 1) => self.tooltips.footer = false,
+            (24, 0) => self.tooltips.headers = true,
+            (24, 1) => self.tooltips.headers = false,
+            (25, 0) => self.tooltips.counts = true,
+            (25, 1) => self.tooltips.counts = false,
+            (26, 0) => self.tooltips.settings = true,
+            (26, 1) => self.tooltips.settings = false,
+            (27, 0) => self.tooltips.links = true,
+            (27, 1) => self.tooltips.links = false,
             _ => return,
         }
         self.save_state();
@@ -736,6 +749,12 @@ impl AppState {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
             },
+            22 => usize::from(!self.tooltips.enabled),
+            23 => usize::from(!self.tooltips.footer),
+            24 => usize::from(!self.tooltips.headers),
+            25 => usize::from(!self.tooltips.counts),
+            26 => usize::from(!self.tooltips.settings),
+            27 => usize::from(!self.tooltips.links),
             _ => 0,
         }
     }
@@ -763,7 +782,8 @@ impl AppState {
     pub fn settings_default_option(row: usize) -> usize {
         match row {
             // Defaults whose active option is the first (on / auto / unicode / restored / …).
-            3 | 5 | 6 | 7 | 8 | 10 | 14 | 17 | 18 | 19 | 20 | 21 => 0,
+            // The Tooltips group (22–27) all default on (index 0).
+            3 | 5 | 6 | 7 | 8 | 10 | 14 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 => 0,
             // 9 button-hover defaults to `subtle` (index 1), 11 auto-pull-limit to `100` (index 1),
             // and every remaining boolean defaults off (index 1).
             _ => 1,
@@ -816,6 +836,7 @@ impl AppState {
         self.repo_page_tabs = RepoTabsMode::Off;
         self.repo_page_maximized = false;
         self.branch_check = BranchCheck::Off;
+        self.tooltips = TooltipPrefs::default();
         self.recompute_group_assignments();
         self.rebuild_tree();
         self.save_state();

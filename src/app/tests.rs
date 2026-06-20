@@ -137,6 +137,8 @@
         state.auto_pull_max_repos = 100;
         state.auto_pull_in_tree = false;
         state.auto_pull_suppressed = false;
+        // Tooltip prefs also persist — pin them to the all-on default for hermetic settings tests.
+        state.tooltips = crate::app::TooltipPrefs::default();
         state
     }
 
@@ -1532,6 +1534,39 @@
         let active = state.settings_active_option(9);
         state.toggle_selected_setting();
         assert_ne!(state.settings_active_option(9), active);
+    }
+
+    #[test]
+    fn tooltip_settings_group_toggles_each_area() {
+        let mut state = normalized(state_named(&["a"]));
+        // All on by default → option 0 for every Tooltips row (22..=27).
+        for row in 22..=27 {
+            assert_eq!(state.settings_active_option(row), 0, "row {row} defaults on");
+        }
+        // Setting a row off flips just its flag (option 1).
+        state.set_setting_option(22, 1); // master
+        assert!(!state.tooltips.enabled);
+        assert_eq!(state.settings_active_option(22), 1);
+        state.set_setting_option(24, 1); // column headers
+        assert!(!state.tooltips.headers);
+        assert!(state.tooltips.footer, "an unrelated area stays on");
+        // The label-cycle path (toggle_selected_setting) flips the selected row.
+        state.settings_selected = 26; // settings rows
+        state.toggle_selected_setting();
+        assert!(!state.tooltips.settings);
+        // Defaults: every Tooltips row reads as already-default (no reset entry).
+        let mut fresh = normalized(state_named(&["a"]));
+        fresh.tooltips = crate::app::TooltipPrefs::default();
+        for row in 22..=27 {
+            assert_eq!(
+                fresh.settings_active_option(row),
+                AppState::settings_default_option(row),
+                "row {row} is at its default"
+            );
+        }
+        // A reset restores every area to on.
+        state.apply_settings_reset();
+        assert_eq!(state.tooltips, crate::app::TooltipPrefs::default());
     }
 
     #[test]

@@ -448,6 +448,9 @@ pub struct AppState {
     pub changed_row_flash: bool,
     /// Steadily highlight changed cells for the attention window (persisted, default off).
     pub changed_row_highlight: bool,
+    /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). Persisted,
+    /// all default on. Tooltips still require `hover_effects` (for cursor tracking).
+    pub tooltips: TooltipPrefs,
     /// Current mouse position `(col, row)` while `hover_effects` is on, else `None`. Drives the
     /// post-render hover highlight; never persisted.
     pub hover: Option<(u16, u16)>,
@@ -722,6 +725,7 @@ impl AppState {
             show_splitter: persisted.show_splitter,
             changed_row_flash: persisted.changed_row_flash,
             changed_row_highlight: persisted.changed_row_highlight,
+            tooltips: persisted.tooltips,
             hover: None,
             hover_tooltip: None,
             hover_tooltips: Vec::new(),

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::{
     Background, BranchCheck, ButtonHoverStyle, ColumnFlags, Contrast, HelpTab, IconStyle,
     RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn, SortDir, Theme,
+    TooltipPrefs,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -133,6 +134,9 @@ pub struct PersistedState {
     /// Periodic local branch/status refresh (off / auto). Default off.
     #[serde(default)]
     pub branch_check: BranchCheck,
+    /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). All default on.
+    #[serde(default)]
+    pub tooltips: TooltipPrefs,
 }
 
 impl PersistedState {

@@ -1071,12 +1071,18 @@ impl RepoTabsMode {
 /// helpers (tab ranges). The row *data* (labels/options) is built in `render_settings`; the counts
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
-pub const SETTINGS_TABS: &[(&str, usize)] =
-    &[("Lists", 3), ("Theming", 7), ("Sync", 3), ("Interaction", 3), ("Layout", 6)];
+pub const SETTINGS_TABS: &[(&str, usize)] = &[
+    ("Lists", 3),
+    ("Theming", 7),
+    ("Sync", 3),
+    ("Interaction", 3),
+    ("Layout", 6),
+    ("Tooltips", 6),
+];
 
 /// Every settings row's label in global row order — the single list the search filter matches
 /// against (keep in sync with the inline `sections` in `render_settings`).
-pub const SETTINGS_LABELS: [&str; 22] = [
+pub const SETTINGS_LABELS: [&str; 28] = [
     "Grouping",            // 0
     "Tree view",           // 1
     "Hide folder lines",   // 2
@@ -1099,6 +1105,12 @@ pub const SETTINGS_LABELS: [&str; 22] = [
     "Repo page tabs",      // 19
     "Repo page",           // 20
     "Auto branch-check",   // 21
+    "All tooltips",        // 22
+    "Footer commands",     // 23
+    "Column headers",      // 24
+    "Group counts",        // 25
+    "Settings rows",       // 26
+    "Help links",          // 27
 ];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
@@ -1249,6 +1261,17 @@ pub struct ClickRegion {
     pub command: Command,
 }
 
+/// Which part of the UI a captured hover-tooltip region belongs to — so the per-area Tooltips
+/// settings can gate it. (Footer-command, settings-row, and help-link tooltips don't go through
+/// `hover_tooltips`; they're gated at their own dwell branches.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TooltipArea {
+    /// A column-title header (also the source of the `[x]` hide-column button).
+    Header,
+    /// A group / folder header's right-corner count tail.
+    Count,
+}
+
 /// A captured dwell-tooltip region: the hover hit-area, the text, the element the popup anchors to,
 /// and the preferred side (the floating engine flips/shifts to keep it on-screen). Column headers
 /// anchor to the full header cell with `bottom-start` (drop below, flipping above when cramped).
@@ -1262,6 +1285,49 @@ pub struct TooltipRegion {
     pub placement: tui_pick::Placement,
     /// When set, the tooltip shows a clickable `[x]` that hides this list column.
     pub hide_column: Option<Column>,
+    /// Which UI area this region belongs to (for the per-area Tooltips settings).
+    pub area: TooltipArea,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Per-area tooltip enablement. `enabled` is the master switch; the rest gate individual areas.
+/// All default on (tooltips still require `hover_effects`, which provides the cursor tracking).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TooltipPrefs {
+    /// Master switch — off hides every tooltip regardless of the per-area flags below.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Footer / status-bar command tooltips (what each command does).
+    #[serde(default = "default_true")]
+    pub footer: bool,
+    /// Column-title header tooltips (also carries the `[x]` hide-column button).
+    #[serde(default = "default_true")]
+    pub headers: bool,
+    /// Group / folder header count-tail breakdown tooltips.
+    #[serde(default = "default_true")]
+    pub counts: bool,
+    /// Settings-row tooltips (what each setting does).
+    #[serde(default = "default_true")]
+    pub settings: bool,
+    /// Help / About link URL tooltips.
+    #[serde(default = "default_true")]
+    pub links: bool,
+}
+
+impl Default for TooltipPrefs {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            footer: true,
+            headers: true,
+            counts: true,
+            settings: true,
+            links: true,
+        }
+    }
 }
 
 /// The active dwell tooltip (after the ~1s dwell): text + the element it anchors to + preferred side.
