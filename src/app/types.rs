@@ -618,6 +618,13 @@ pub enum DropdownKind {
     PageSort,
 }
 
+/// One navigable position in the accordion settings layout: a section header or a setting row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AccPos {
+    Header(usize),
+    Row(usize),
+}
+
 /// An open header dropdown overlay: anchored under the `[… ▾]` chip that opened it.
 #[derive(Debug, Clone, Copy)]
 pub struct Dropdown {
@@ -720,25 +727,25 @@ pub enum HelpTab {
 }
 
 impl HelpTab {
-    /// Next tab (Tab key): Hotkeys → CLI & Flags → Legend → About → Design System → Hotkeys.
+    /// Next tab (Tab key): Hotkeys → CLI & Flags → Legend → Design System → About → Hotkeys.
     pub fn next(self) -> Self {
         match self {
             HelpTab::Hotkeys => HelpTab::CliFlags,
             HelpTab::CliFlags => HelpTab::Legend,
-            HelpTab::Legend => HelpTab::About,
-            HelpTab::About => HelpTab::DesignSystem,
-            HelpTab::DesignSystem => HelpTab::Hotkeys,
+            HelpTab::Legend => HelpTab::DesignSystem,
+            HelpTab::DesignSystem => HelpTab::About,
+            HelpTab::About => HelpTab::Hotkeys,
         }
     }
 
     /// Previous tab (Shift+Tab).
     pub fn prev(self) -> Self {
         match self {
-            HelpTab::Hotkeys => HelpTab::DesignSystem,
+            HelpTab::Hotkeys => HelpTab::About,
             HelpTab::CliFlags => HelpTab::Hotkeys,
             HelpTab::Legend => HelpTab::CliFlags,
-            HelpTab::About => HelpTab::Legend,
-            HelpTab::DesignSystem => HelpTab::About,
+            HelpTab::DesignSystem => HelpTab::Legend,
+            HelpTab::About => HelpTab::DesignSystem,
         }
     }
 
@@ -1253,6 +1260,8 @@ pub struct TooltipRegion {
     pub text: String,
     pub anchor: Rect,
     pub placement: tui_pick::Placement,
+    /// When set, the tooltip shows a clickable `[x]` that hides this list column.
+    pub hide_column: Option<Column>,
 }
 
 /// The active dwell tooltip (after the ~1s dwell): text + the element it anchors to + preferred side.
@@ -1261,6 +1270,8 @@ pub struct HoverTip {
     pub text: String,
     pub anchor: Rect,
     pub placement: tui_pick::Placement,
+    /// When set, the tooltip shows a clickable `[x]` that hides this list column.
+    pub hide_column: Option<Column>,
 }
 
 /// The keystroke a clickable hint stands in for. Clicking the hint injects this key, so it runs

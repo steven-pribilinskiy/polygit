@@ -272,6 +272,12 @@ pub struct AppState {
     pub show_settings: bool,
     /// Selected (global) row in the settings modal — see `SETTINGS_TABS` for the row order.
     pub settings_selected: usize,
+    /// Accordion layout only: when `Some(section)`, the selection is on that section's header (the
+    /// header is the active item, no child row is selected). `None` → a row is selected.
+    pub settings_on_header: Option<usize>,
+    /// Accordion-layout scroll offset (logical lines from the top), so a tall settings set scrolls
+    /// to keep the selection visible instead of clipping lower sections.
+    pub settings_scroll: usize,
     /// Active settings tab (index into `SETTINGS_TABS`) in the tabbed layout.
     pub settings_tab: usize,
     /// Settings search query (empty = no filter). When non-empty the modal shows a flat list of the
@@ -451,6 +457,11 @@ pub struct AppState {
     /// Dwell-tooltip regions captured each frame. Covers status-bar commands (via [`Self::command_at`]),
     /// the column headers, and group/folder count tails. Hovering one ~1s shows its text.
     pub hover_tooltips: Vec<TooltipRegion>,
+    /// The active tooltip popup's rect (captured each render) — lets the dwell keep the tooltip
+    /// alive while the cursor moves onto it (so its `[x]` hide-column button stays clickable).
+    pub tooltip_rect: Rect,
+    /// The tooltip's clickable `[x]` hide-column button: (row, col_start, col_end, column).
+    pub tooltip_hide_click: Option<(u16, u16, u16, Column)>,
     /// Set once discovery completes and the launch decision skipped pulling — the run is then
     /// "settled" without any repo being pulled, and the footer offers a manual pull-everything.
     pub auto_pull_suppressed: bool,
@@ -610,6 +621,8 @@ impl AppState {
             auto_dark,
             show_settings: false,
             settings_selected: 0,
+            settings_on_header: None,
+            settings_scroll: 0,
             settings_tab: 0,
             settings_search: String::new(),
             settings_search_focused: false,
@@ -712,6 +725,8 @@ impl AppState {
             hover: None,
             hover_tooltip: None,
             hover_tooltips: Vec::new(),
+            tooltip_rect: Rect::default(),
+            tooltip_hide_click: None,
             auto_pull_suppressed: false,
             status_cache: crate::cache::load(),
             pr_cache: crate::pr_cache::load(),

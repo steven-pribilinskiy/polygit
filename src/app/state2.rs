@@ -914,15 +914,6 @@ impl AppState {
             .is_some_and(|(name, _)| self.collapsed_settings.contains(*name))
     }
 
-    /// Whether a global settings row is currently visible (accordion: not in a collapsed section;
-    /// tabbed/flat: always). Used by keyboard nav to skip hidden rows.
-    pub(crate) fn settings_row_visible(&self, row: usize) -> bool {
-        if self.settings_layout != SettingsLayout::Accordion {
-            return true;
-        }
-        !self.settings_section_collapsed(Self::settings_tab_of_row(row))
-    }
-
     /// Toggle a settings section's collapsed state (accordion layout). The selection stays on its
     /// row — even when hidden — so its header stays highlighted and ←/→ can re-expand it.
     pub fn toggle_settings_section(&mut self, tab_idx: usize) {
@@ -937,12 +928,15 @@ impl AppState {
         self.save_state();
     }
 
-    /// Collapse (or expand) the section holding the current selection (accordion ←/→).
+    /// Collapse (or expand) the focused section (accordion ←/→) — its header or the selected row's
+    /// section. Expanding while on a header keeps focus on the header.
     pub fn set_selected_settings_section(&mut self, collapse: bool) {
         if self.settings_layout != SettingsLayout::Accordion {
             return;
         }
-        let tab = Self::settings_tab_of_row(self.settings_selected);
+        let tab = self
+            .settings_on_header
+            .unwrap_or_else(|| Self::settings_tab_of_row(self.settings_selected));
         if self.settings_section_collapsed(tab) != collapse {
             self.toggle_settings_section(tab);
         }
@@ -965,6 +959,54 @@ impl AppState {
         self.save_state();
     }
 
+    /// The accordion's navigable positions top-to-bottom: each section's header, then (when the
+    /// section is expanded) its rows. Rows in collapsed sections are omitted but still advance the
+    /// global row index so `Row(_)` stays correct.
+    pub fn accordion_positions(&self) -> Vec<AccPos> {
+        let mut positions = Vec::new();
+        let mut row = 0usize;
+        for (section, (_, count)) in SETTINGS_TABS.iter().enumerate() {
+            positions.push(AccPos::Header(section));
+            let collapsed = self.settings_section_collapsed(section);
+            for _ in 0..*count {
+                if !collapsed {
+                    positions.push(AccPos::Row(row));
+                }
+                row += 1;
+            }
+        }
+        positions
+    }
+
+    /// The accordion's currently-selected position (header or row).
+    pub fn accordion_selection(&self) -> AccPos {
+        match self.settings_on_header {
+            Some(section) => AccPos::Header(section),
+            None => AccPos::Row(self.settings_selected),
+        }
+    }
+
+    /// Apply an accordion position as the selection (updates header-vs-row state).
+    fn set_accordion_selection(&mut self, position: AccPos) {
+        match position {
+            AccPos::Header(section) => self.settings_on_header = Some(section),
+            AccPos::Row(row) => {
+                self.settings_on_header = None;
+                self.settings_selected = row;
+                self.settings_tab = Self::settings_tab_of_row(row);
+            }
+        }
+    }
+
+    /// Toggle the accordion section that currently holds focus — its own header, or the section of
+    /// the selected row. Used by `enter`/`space` and a header click.
+    pub fn toggle_focused_accordion_section(&mut self) {
+        let section = self
+            .settings_on_header
+            .unwrap_or_else(|| Self::settings_tab_of_row(self.settings_selected));
+        self.toggle_settings_section(section);
+    }
+
     /// Move the settings selection by `delta`, clamped to the active tab in the tabbed layout (and
     /// to the whole list in flat/accordion). In accordion mode, rows in collapsed sections are
     /// skipped. Keeps `settings_tab` in sync with the selection.
@@ -981,32 +1023,27 @@ impl AppState {
             self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
             return;
         }
+        if self.settings_layout == SettingsLayout::Accordion {
+            // Navigate the interleaved header/row sequence (headers are selectable; rows in
+            // collapsed sections are skipped because they aren't in `accordion_positions`).
+            let positions = self.accordion_positions();
+            if positions.is_empty() {
+                return;
+            }
+            let current =
+                positions.iter().position(|pos| *pos == self.accordion_selection()).unwrap_or(0);
+            let next = (current as isize + delta).clamp(0, positions.len() as isize - 1) as usize;
+            self.set_accordion_selection(positions[next]);
+            return;
+        }
         let (lo, hi) = if self.settings_layout == SettingsLayout::Tabbed {
             let (start, len) = Self::settings_tab_range(self.settings_tab);
             (start as isize, (start + len).saturating_sub(1) as isize)
         } else {
             (0, Self::SETTINGS_ROWS.saturating_sub(1) as isize)
         };
-        if self.settings_layout == SettingsLayout::Accordion {
-            let dir = delta.signum();
-            if dir != 0 {
-                let mut idx = self.settings_selected as isize;
-                for _ in 0..delta.abs() {
-                    let mut next = idx + dir;
-                    while next >= lo && next <= hi && !self.settings_row_visible(next as usize) {
-                        next += dir;
-                    }
-                    if next < lo || next > hi {
-                        break;
-                    }
-                    idx = next;
-                }
-                self.settings_selected = idx.clamp(lo, hi) as usize;
-            }
-        } else {
-            let current = self.settings_selected as isize;
-            self.settings_selected = (current + delta).clamp(lo, hi) as usize;
-        }
+        let current = self.settings_selected as isize;
+        self.settings_selected = (current + delta).clamp(lo, hi) as usize;
         self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
     }
 

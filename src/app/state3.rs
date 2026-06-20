@@ -124,11 +124,15 @@ impl AppState {
 
     /// The dwell tooltip for a captured region (column header / group-count tail) at a point: its
     /// text, the element to anchor the popup to, and the preferred side.
-    pub fn tooltip_at(&self, col: u16, row: u16) -> Option<(String, Rect, tui_pick::Placement)> {
+    pub fn tooltip_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<(String, Rect, tui_pick::Placement, Option<Column>)> {
         self.hover_tooltips
             .iter()
             .find(|region| region.row == row && col >= region.col_start && col < region.col_end)
-            .map(|region| (region.text.clone(), region.anchor, region.placement))
+            .map(|region| (region.text.clone(), region.anchor, region.placement, region.hide_column))
     }
 
     fn selected_status_matches(&self, predicate: impl Fn(&RepoStatus) -> bool) -> bool {
@@ -229,6 +233,10 @@ impl AppState {
         self.close_all_modals();
         self.show_settings = true;
         self.settings_selected = 0;
+        // Accordion opens focused on the first section header; other layouts on the first row.
+        self.settings_on_header =
+            (self.settings_layout == crate::app::SettingsLayout::Accordion).then_some(0);
+        self.settings_scroll = 0;
         self.settings_search.clear();
         self.settings_search_focused = false;
     }

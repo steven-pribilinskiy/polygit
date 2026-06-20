@@ -841,49 +841,112 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         };
         frame.render_widget(Paragraph::new(content_lines), content_area);
     } else if accordion {
-        let mut lines: Vec<Line> = Vec::new();
-        // Expand/collapse-all button (label flips once every section is collapsed).
-        let btn_label = if all_collapsed { "[+ expand all]" } else { "[- collapse all]" };
-        let btn_y = inner.y + lines.len() as u16;
-        let btn_w = UnicodeWidthStr::width(btn_label) as u16;
-        app.settings_collapse_all_click = Some((btn_y, inner.x + 2, inner.x + 2 + btn_w));
-        lines.push(Line::from(Span::styled(
-            format!("  {btn_label}"),
-            Style::default().fg(Color::Cyan),
-        )));
-        lines.push(Line::from(String::new()));
-        let selected_section = AppState::settings_tab_of_row(app.settings_selected);
+        // A logical line in the accordion (built as metadata first, so we can scroll the window
+        // and only capture click regions for the visible lines).
+        enum AccItem {
+            CollapseAll,
+            Blank,
+            Header(usize),
+            Row(usize),
+            GroupsHint,
+        }
+        let groups_empty = app.groups.is_empty();
+        let mut items: Vec<AccItem> = vec![AccItem::CollapseAll, AccItem::Blank];
         let mut row_idx = 0usize;
-        for (tab_idx, (name, count)) in SETTINGS_TABS.iter().enumerate() {
-            // A blank line between sections so the collapsible headers don't run together.
+        for (tab_idx, (_, count)) in SETTINGS_TABS.iter().enumerate() {
             if tab_idx > 0 {
-                lines.push(Line::from(String::new()));
+                items.push(AccItem::Blank);
             }
+            items.push(AccItem::Header(tab_idx));
             let collapsed = section_collapsed[tab_idx];
-            let chevron = if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
-            // The section owning the selection gets a cursor + brighter style so a selection hidden
-            // inside a collapsed section stays discoverable (←/→ collapse/expand it).
-            let owns_selection = tab_idx == selected_section;
-            let cursor = if owns_selection { ">" } else { " " };
-            let header = format!(" {cursor}{chevron} {name}");
-            let header_y = inner.y + lines.len() as u16;
-            let header_w = UnicodeWidthStr::width(header.as_str()) as u16;
-            app.settings_section_click.push((header_y, inner.x, inner.x + header_w, tab_idx));
-            let style = if owns_selection {
-                section_style.add_modifier(Modifier::REVERSED)
-            } else {
-                section_style
-            };
-            lines.push(Line::from(Span::styled(header, style)));
-            for _ in 0..*count {
+            for offset in 0..*count {
                 if !collapsed {
-                    let row_y = inner.y + lines.len() as u16;
-                    push_row(row_idx, inner.x, row_y, &mut lines);
+                    items.push(AccItem::Row(row_idx));
+                    // The "no groups defined" hint sits under the Grouping row (global row 0).
+                    if row_idx == 0 && offset == 0 && groups_empty {
+                        items.push(AccItem::GroupsHint);
+                    }
                 }
                 row_idx += 1;
             }
         }
+        // Scroll the window to keep the selected position (header or row) visible.
+        let selection = app.accordion_selection();
+        let sel_line = items.iter().position(|item| match (item, selection) {
+            (AccItem::Header(section), crate::app::AccPos::Header(target)) => section == &target,
+            (AccItem::Row(row), crate::app::AccPos::Row(target)) => row == &target,
+            _ => false,
+        });
+        let viewport = inner.height as usize;
+        let mut scroll = app.settings_scroll.min(items.len().saturating_sub(viewport));
+        if let Some(sel) = sel_line {
+            if sel < scroll {
+                scroll = sel;
+            } else if viewport > 0 && sel >= scroll + viewport {
+                scroll = sel + 1 - viewport;
+            }
+        }
+        app.settings_scroll = scroll;
+        app.settings_collapse_all_click = None;
+        let active_header = Style::default()
+            .fg(Color::Black)
+            .bg(Color::LightCyan)
+            .add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line> = Vec::new();
+        for (offset, item) in items.iter().skip(scroll).take(viewport).enumerate() {
+            let screen_y = inner.y + offset as u16;
+            match item {
+                AccItem::CollapseAll => {
+                    let btn_label = if all_collapsed { "[+ expand all]" } else { "[- collapse all]" };
+                    let btn_w = UnicodeWidthStr::width(btn_label) as u16;
+                    app.settings_collapse_all_click =
+                        Some((screen_y, inner.x + 2, inner.x + 2 + btn_w));
+                    lines.push(Line::from(Span::styled(
+                        format!("  {btn_label}"),
+                        Style::default().fg(Color::Cyan),
+                    )));
+                }
+                AccItem::Blank => lines.push(Line::from(String::new())),
+                AccItem::Header(tab_idx) => {
+                    let (name, _) = SETTINGS_TABS[*tab_idx];
+                    let collapsed = section_collapsed[*tab_idx];
+                    let chevron = if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
+                    let active = app.settings_on_header == Some(*tab_idx);
+                    let header = format!(" {chevron} {name} ");
+                    let header_w = UnicodeWidthStr::width(header.as_str()) as u16;
+                    app.settings_section_click.push((screen_y, inner.x, inner.x + header_w, *tab_idx));
+                    let style = if active { active_header } else { section_style };
+                    lines.push(Line::from(Span::styled(header, style)));
+                }
+                AccItem::Row(row) => {
+                    let (label, options) = &all_rows[*row];
+                    let underline_idx = if *row == 5 { theme_underline } else { None };
+                    let disabled = *row == 4 && emoji_icons;
+                    lines.push(settings_row_line(
+                        *row,
+                        app.settings_on_header.is_none() && app.settings_selected == *row,
+                        label,
+                        options,
+                        (inner.x, screen_y),
+                        true,
+                        underline_idx,
+                        disabled,
+                        None,
+                        &mut app.settings_click,
+                    ));
+                }
+                AccItem::GroupsHint => lines.push(Line::from(Span::styled(
+                    "      no groups defined — ~/.config/polygit/groups.json",
+                    Style::default().fg(Color::DarkGray),
+                ))),
+            }
+        }
         frame.render_widget(Paragraph::new(lines), inner);
+        // A scrollbar when the content overflows the modal.
+        if items.len() > viewport {
+            let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
+            render_scrollbar(frame, track, scroll, items.len(), viewport, false);
+        }
     } else {
         let mut lines: Vec<Line> = Vec::new();
         if !app.panel_padding {

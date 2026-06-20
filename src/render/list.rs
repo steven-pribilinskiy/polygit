@@ -439,6 +439,8 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                 // left-aligned to the column, flipping above when there's no room below.
                 anchor: Rect { x: start, y: header.y, width: end.saturating_sub(start), height: header.height },
                 placement: tui_pick::Placement::bottom_start(),
+                // Optional columns can be hidden straight from the tooltip's `[x]`.
+                hide_column: sort_column_hideable(sort),
             });
         }
     }
@@ -545,6 +547,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                     text,
                     anchor: Rect { x: start, y: screen_row, width: end.saturating_sub(start), height: 1 },
                     placement: tui_pick::Placement::bottom_start(),
+                    hide_column: None,
                 });
             }
         }
@@ -766,6 +769,24 @@ pub(crate) fn header_marker(collapsible: bool, collapsed: bool) -> &'static str 
         "▸ "
     } else {
         "▾ "
+    }
+}
+
+/// The optional list `Column` a sortable header maps to, for the tooltip's `[x]` hide button.
+/// `Name` / `Branch` are always shown and return `None` (nothing to hide).
+fn sort_column_hideable(sort: SortColumn) -> Option<Column> {
+    match sort {
+        SortColumn::Name | SortColumn::Branch => None,
+        SortColumn::Status => Some(Column::Status),
+        SortColumn::AheadBehind => Some(Column::AheadBehind),
+        SortColumn::Dirty => Some(Column::Dirty),
+        SortColumn::LastCommit => Some(Column::LastCommit),
+        SortColumn::Worktrees => Some(Column::Worktrees),
+        SortColumn::Branches => Some(Column::Branches),
+        SortColumn::Stashes => Some(Column::Stashes),
+        SortColumn::PulledCommits => Some(Column::PulledCommits),
+        SortColumn::PulledFiles => Some(Column::PulledFiles),
+        SortColumn::PullRequest => Some(Column::PullRequest),
     }
 }
 
