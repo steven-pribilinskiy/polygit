@@ -504,7 +504,7 @@
           "Delete"
         ],
         "action": "Remove the selected repo's (or folder header's) folder from the workspace",
-        "note": "drops the root from the persisted workspace and hides its repos; re-add via the picker",
+        "note": "drops the root and hides its repos; persisted to the active named workspace (`-w`), session-only otherwise; re-add via the picker",
         "keywords": [
           "remove",
           "folder",

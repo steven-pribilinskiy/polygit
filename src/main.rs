@@ -19,10 +19,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-    KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
@@ -32,7 +32,8 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
-use ratatui::Terminal;
+use ratatui::{Frame, Terminal};
+use std::collections::HashMap;
 
 use app::{
     point_in, region_hit, AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog,
@@ -59,10 +60,20 @@ fn now_unix() -> i64 {
 /// Interactive polyrepo git dashboard — discover, status, and pull many repos.
 #[derive(Parser, Debug)]
 #[command(name = "polygit", version, about)]
+#[command(args_conflicts_with_subcommands = true)]
 struct Cli {
-    /// Directories to pull repos from — each may itself be a single repo. Merged with the
-    /// persisted workspace; with none and nothing persisted, defaults to the cwd.
+    /// Subcommand (e.g. `ws` to manage workspaces); omit for the default scan.
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// Directories to pull repos from — each may itself be a single repo. With none, scans the
+    /// current directory. (Use `-w <name>` to open a saved workspace instead.)
     dirs: Vec<PathBuf>,
+
+    /// Open a saved workspace by name. With DIRS, (re)defines that workspace as those folders;
+    /// a new name with no DIRS starts from the cwd. The folder picker (`A`) edits the active one.
+    #[arg(short = 'w', long, value_name = "NAME")]
+    workspace: Option<String>,
 
     /// Maximum concurrent pulls (default: nproc)
     #[arg(short = 'j', long, env = "PULL_JOBS")]
@@ -95,6 +106,25 @@ struct Cli {
     /// Write the profile report to this file instead of stderr
     #[arg(long, value_name = "FILE")]
     profile_out: Option<PathBuf>,
+}
+
+/// Top-level subcommands. New commands slot in here; each gets its own `--help`/`help`.
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Manage saved workspaces — opens an interactive picker; `ws ls` lists them.
+    #[command(visible_aliases = ["workspace", "workspaces"])]
+    Ws {
+        #[command(subcommand)]
+        action: Option<WsAction>,
+    },
+}
+
+/// `ws` subcommands.
+#[derive(Subcommand, Debug)]
+enum WsAction {
+    /// List saved workspaces and their folders
+    #[command(visible_alias = "list")]
+    Ls,
 }
 
 #[tokio::main]
@@ -600,24 +630,47 @@ fn confirm_for_row(repo_idx: usize, row: &PageRow) -> Option<ConfirmDialog> {
 async fn run() -> Result<i32> {
     let cli = Cli::parse();
 
-    // Resolve the launch roots: the union of the persisted workspace and any CLI dirs (canonicalized
-    // + deduped, order preserved). With neither, fall back to the cwd. CLI dirs are merged in so they
-    // join the persisted set; the picker adds/removes roots at runtime.
-    let roots = resolve_roots(&cli.dirs)?;
-
     let max_jobs = cli
         .jobs
         .filter(|&jobs| jobs > 0)
         .unwrap_or_else(num_cpus::get);
-
     // Recursive scanning is the default; `--no-recursive` (or `--depth 1`) restores the legacy
     // single-level scan. `--depth 0` is meaningless, so floor it at 1.
     let max_depth = if cli.no_recursive { 1 } else { cli.depth.max(1) };
-
-    // Determine whether to use TUI
     let use_tui = !cli.no_tui && io::stderr().is_terminal();
-
     let profiling = profile::profile_enabled(cli.profile);
+
+    // Subcommands.
+    if let Some(Commands::Ws { action }) = &cli.command {
+        match action {
+            Some(WsAction::Ls) => return list_workspaces(),
+            None => {
+                // The picker is interactive — fall back to a printed list without a TTY.
+                if !use_tui {
+                    return list_workspaces();
+                }
+                return match pick_workspace()? {
+                    Some((name, roots)) => {
+                        run_tui(
+                            roots,
+                            Some(name),
+                            max_jobs,
+                            max_depth,
+                            cli.timeout,
+                            cli.no_worktrees,
+                            profiling,
+                            cli.profile_out,
+                        )
+                        .await
+                    }
+                    None => Ok(0),
+                };
+            }
+        }
+    }
+
+    // Default run: the CLI dirs (or the cwd), or a named workspace via `-w`.
+    let (roots, active_workspace) = resolve_roots(&cli.dirs, cli.workspace.as_deref())?;
 
     if !use_tui {
         return plain::run_plain(
@@ -634,6 +687,7 @@ async fn run() -> Result<i32> {
 
     run_tui(
         roots,
+        active_workspace,
         max_jobs,
         max_depth,
         cli.timeout,
@@ -644,9 +698,14 @@ async fn run() -> Result<i32> {
     .await
 }
 
-/// The launch roots: the persisted workspace unioned with any CLI dirs (canonicalized + deduped,
-/// order preserved). Empty on both → the cwd. CLI dirs join the persisted set so they're remembered.
-fn resolve_roots(cli_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
+/// Resolve the launch roots and the active workspace name (canonicalized + deduped, order
+/// preserved). With `-w <name>`: open that workspace's saved folders, or — when DIRS are given —
+/// (re)define it as those. Without `-w`: just the CLI dirs, else the cwd; never a saved workspace.
+/// A brand-new / emptied workspace seeds from the cwd so there's something to scan.
+fn resolve_roots(
+    cli_dirs: &[PathBuf],
+    workspace: Option<&str>,
+) -> Result<(Vec<PathBuf>, Option<String>)> {
     let mut out: Vec<PathBuf> = Vec::new();
     let add = |path: PathBuf, out: &mut Vec<PathBuf>| {
         let abs = std::fs::canonicalize(&path).unwrap_or(path);
@@ -654,21 +713,162 @@ fn resolve_roots(cli_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
             out.push(abs);
         }
     };
-    for persisted in crate::persist::load().roots {
-        add(PathBuf::from(persisted), &mut out);
-    }
     for dir in cli_dirs {
         add(dir.clone(), &mut out);
     }
-    if out.is_empty() {
-        out.push(std::env::current_dir()?);
+    match workspace {
+        Some(name) => {
+            if out.is_empty() {
+                if let Some(roots) = crate::persist::load().workspaces_migrated().get(name) {
+                    for root in roots {
+                        add(PathBuf::from(root), &mut out);
+                    }
+                }
+            }
+            if out.is_empty() {
+                out.push(std::env::current_dir()?);
+            }
+            Ok((out, Some(name.to_string())))
+        }
+        None => {
+            if out.is_empty() {
+                out.push(std::env::current_dir()?);
+            }
+            Ok((out, None))
+        }
     }
-    Ok(out)
+}
+
+/// Print the saved workspaces (name → folders) to stdout. Used by `ws ls` and as the no-TTY
+/// fallback for the `ws` picker.
+fn list_workspaces() -> Result<i32> {
+    let workspaces = crate::persist::load().workspaces_migrated();
+    if workspaces.is_empty() {
+        println!("No saved workspaces yet.");
+        println!("Create one:  polygit -w <name> <dir>...");
+        return Ok(0);
+    }
+    let mut names: Vec<&String> = workspaces.keys().collect();
+    names.sort();
+    println!("Saved workspaces — open with `polygit -w <name>` or pick with `polygit ws`:\n");
+    for name in names {
+        let roots = &workspaces[name];
+        let plural = if roots.len() == 1 { "" } else { "s" };
+        println!("  {name}  ({} folder{plural})", roots.len());
+        for root in roots {
+            println!("      {root}");
+        }
+    }
+    Ok(0)
+}
+
+/// Interactive workspace picker (`polygit ws`): a full-screen list of saved workspaces. Returns the
+/// chosen `(name, roots)`, or `None` if cancelled / none saved.
+fn pick_workspace() -> Result<Option<(String, Vec<PathBuf>)>> {
+    let workspaces = crate::persist::load().workspaces_migrated();
+    if workspaces.is_empty() {
+        list_workspaces()?;
+        return Ok(None);
+    }
+    let mut names: Vec<String> = workspaces.keys().cloned().collect();
+    names.sort();
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+
+    let mut selected = 0usize;
+    let outcome = loop {
+        terminal.draw(|frame| render_workspace_picker(frame, &names, &workspaces, selected))?;
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => break None,
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break None,
+                KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if selected + 1 < names.len() {
+                        selected += 1;
+                    }
+                }
+                KeyCode::Home | KeyCode::Char('g') => selected = 0,
+                KeyCode::End | KeyCode::Char('G') => selected = names.len().saturating_sub(1),
+                KeyCode::Enter => {
+                    let name = names[selected].clone();
+                    let roots = workspaces[&name].iter().map(PathBuf::from).collect();
+                    break Some((name, roots));
+                }
+                _ => {}
+            }
+        }
+    };
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    Ok(outcome)
+}
+
+/// Draw the `ws` picker: a bordered, centered list of workspace names with their folder counts.
+fn render_workspace_picker(
+    frame: &mut Frame,
+    names: &[String],
+    workspaces: &HashMap<String, Vec<String>>,
+    selected: usize,
+) {
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState};
+
+    let full = frame.area();
+    let width = full.width.min(80);
+    let height = full.height.min(names.len() as u16 + 4).max(5);
+    let area = Rect {
+        x: full.x + (full.width.saturating_sub(width)) / 2,
+        y: full.y + (full.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" polygit · pick a workspace ")
+        .title_bottom(Line::from(Span::styled(
+            " ↑↓ move · enter open · esc cancel ",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+    let items: Vec<ListItem> = names
+        .iter()
+        .map(|name| {
+            let count = workspaces.get(name).map_or(0, Vec::len);
+            let plural = if count == 1 { "" } else { "s" };
+            ListItem::new(Line::from(vec![
+                Span::styled(name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(format!("  ({count} folder{plural})"), Style::default().fg(Color::DarkGray)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .highlight_symbol("▶ ");
+
+    let mut state = ListState::default();
+    state.select(Some(selected));
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 /// TUI entry point: sets up terminal, runs the event loop, and restores on exit.
+#[allow(clippy::too_many_arguments)]
 async fn run_tui(
     roots: Vec<PathBuf>,
+    active_workspace: Option<String>,
     max_jobs: usize,
     max_depth: usize,
     timeout_secs: u64,
@@ -689,13 +889,15 @@ async fn run_tui(
     let groups_cache = groups::load_cache();
     let icon_style = {
         let mut app = app_state.lock().unwrap();
-        // The scanned roots drive the tree forest + the persisted workspace.
+        // The scanned roots drive the tree forest; an active workspace persists them by name.
         app.root_dirs = roots.clone();
+        app.active_workspace = active_workspace;
         // Capture discovery settings so the picker can scan a runtime-added root the same way.
         app.discovery_max_depth = max_depth;
         app.discovery_timeout_secs = timeout_secs;
         app.discovery_no_worktrees = no_worktrees;
-        app.save_state(); // persist the union so a no-args relaunch restores these roots
+        // Persist the active workspace's folder set (a no-op for an ad-hoc cwd/CLI-dirs session).
+        app.save_state();
         let group_errors = app.init_groups(groups_config, &groups_cache);
         if let Some(error) = groups_config_error.or_else(|| group_errors.into_iter().next()) {
             app.show_toast(error);

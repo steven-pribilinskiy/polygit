@@ -45,8 +45,9 @@ closes it.
 - **Throttling** — if a remote rate-limits the run (HTTP 429 / "rate limit" / SSH connection
   throttling), those repos get a distinct **throttled** state (`↯`), a warning banner appears,
   concurrency is automatically halved, and the repos are re-queued with exponential backoff.
-- **Panes** — the focused pane (`Tab`, or `1`/`2`) shows a bright rounded border and a `[1]`/`[2]`
-  label; the divider shows a grip and highlights while you drag it.
+- **Panels** — `Tab`/`Shift-Tab` cycle focus across the visible panels (`[1]` list · `[2]` info ·
+  `[3]` result · `[4]` repo page), or `1`-`4` jump directly; the focused panel shows a bright
+  rounded border. The divider shows a grip and highlights while you drag it.
 - **`l` opens [lazygit](https://github.com/jesseduffield/lazygit)** — lazygit is a fast,
   full-featured terminal UI for git (stage hunks, commit, branch, merge, rebase, cherry-pick,
   resolve conflicts, browse the log, and more). `l` suspends `polygit` and opens lazygit in the
