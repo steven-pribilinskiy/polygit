@@ -163,6 +163,8 @@ pub struct AppState {
     /// Clickable radio regions on the Design System help tab: (row, col_start, col_end, settings
     /// row_idx, Option<option_idx>) — same shape as `settings_click`, dispatched the same way.
     pub help_design_click: Vec<(u16, u16, u16, usize, Option<usize>)>,
+    /// The Design System tab's "preview confirm dialog" button region: (row, col_start, col_end).
+    pub help_preview_click: Option<(u16, u16, u16)>,
     // Keyboard viewer (a button on the Hotkeys help tab opens it):
     /// The interactive keyboard modal is open. While open it captures every keypress (Esc closes).
     pub show_keyboard: bool,
@@ -313,8 +315,6 @@ pub struct AppState {
     pub copy_menu_click: Vec<(u16, usize)>,
     pub confirm_area: Rect,
     pub confirm_close_click: Option<(u16, u16, u16)>,
-    pub confirm_yes_click: Option<(u16, u16, u16)>,
-    pub confirm_no_click: Option<(u16, u16, u16)>,
     pub diff_modal_area: Rect,
     pub diff_modal_close_click: Option<(u16, u16, u16)>,
     /// Clickable status-filter chips in the diff modal: `(row, col_start, col_end, bucket)`
@@ -574,6 +574,7 @@ impl AppState {
             help_tab_click: Vec::new(),
             help_close_click: None,
             help_design_click: Vec::new(),
+            help_preview_click: None,
             show_keyboard: false,
             keyboard_selected: None,
             keyboard_scroll: 0,
@@ -645,8 +646,6 @@ impl AppState {
             copy_menu_click: Vec::new(),
             confirm_area: Rect::default(),
             confirm_close_click: None,
-            confirm_yes_click: None,
-            confirm_no_click: None,
             diff_modal_area: Rect::default(),
             diff_modal_close_click: None,
             diff_chips_click: Vec::new(),

@@ -162,8 +162,15 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
         }
     } else if app.confirm.is_some() {
-        if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
-            button_hits.push(row_rect(region.row, region.col_start, region.col_end));
+        if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            // The yes/no chips: light up the key and its label together (siblings by key).
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.confirm_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
         }
     } else if app.show_settings {
         if let Some(&(row, start, end, ..)) =
@@ -248,6 +255,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, ..)) =
             app.help_design_click.iter().find(|&&(r, s, e, ..)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.help_preview_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
         } else if app.help_links.iter().any(|&(row, _)| row == hrow)
