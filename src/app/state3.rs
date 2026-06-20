@@ -329,10 +329,89 @@ impl AppState {
             .and_then(|dir| std::fs::read_dir(dir).ok())
             .map(|entries| entries.filter(|entry| entry.is_ok()).count())
             .unwrap_or(0);
-        self.build_info_settings_preview = settings
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .map(|text| text.lines().map(str::to_string).collect())
-            .unwrap_or_default();
+        let raw = settings.and_then(|path| std::fs::read_to_string(path).ok()).unwrap_or_default();
+        // Parse into a collapsible tree (collapsed by default); keep the raw lines as a fallback for
+        // when the file isn't valid JSON.
+        self.build_info_tree = crate::treeview::DataNode::parse_json(&raw);
+        self.build_info_tree_expanded.clear();
+        self.build_info_tree_selected = 0;
+        self.build_info_settings_preview = raw.lines().map(str::to_string).collect();
+    }
+
+    /// Flatten the settings tree to its currently-visible rows (empty when there's no tree).
+    pub fn build_info_tree_rows(&self) -> Vec<crate::treeview::TreeRow> {
+        self.build_info_tree
+            .as_ref()
+            .map(|tree| crate::treeview::flatten(tree, &self.build_info_tree_expanded))
+            .unwrap_or_default()
+    }
+
+    /// Toggle (fold/unfold) the container at the selected settings-tree row, if it is one.
+    pub fn build_info_toggle_selected(&mut self) {
+        let rows = self.build_info_tree_rows();
+        if let Some(row) = rows.get(self.build_info_tree_selected) {
+            if matches!(row.kind, crate::treeview::RowKind::Container { .. })
+                && !self.build_info_tree_expanded.remove(&row.path)
+            {
+                self.build_info_tree_expanded.insert(row.path.clone());
+            }
+        }
+    }
+
+    /// Expand (`expand = true`) or collapse every container in the settings tree.
+    pub fn build_info_fold_all(&mut self, expand: bool) {
+        if expand {
+            if let Some(tree) = &self.build_info_tree {
+                self.build_info_tree_expanded =
+                    crate::treeview::all_container_paths(tree).into_iter().collect();
+            }
+        } else {
+            self.build_info_tree_expanded.clear();
+        }
+    }
+
+    /// Move the settings-tree selection by `delta`, clamped to the visible rows.
+    pub fn build_info_tree_move(&mut self, delta: isize) {
+        let len = self.build_info_tree_rows().len();
+        if len == 0 {
+            return;
+        }
+        let next = (self.build_info_tree_selected as isize).saturating_add(delta).clamp(0, len as isize - 1);
+        self.build_info_tree_selected = next as usize;
+    }
+
+    /// Expand the selected container (→). If it's already expanded or a scalar, no-op.
+    pub fn build_info_tree_expand(&mut self) {
+        let rows = self.build_info_tree_rows();
+        if let Some(row) = rows.get(self.build_info_tree_selected) {
+            if let crate::treeview::RowKind::Container { collapsed: true, .. } = row.kind {
+                self.build_info_tree_expanded.insert(row.path.clone());
+            }
+        }
+    }
+
+    /// Collapse the selected container (←); if it's a leaf or already collapsed, jump to its parent.
+    pub fn build_info_tree_collapse_or_parent(&mut self) {
+        let rows = self.build_info_tree_rows();
+        let Some(row) = rows.get(self.build_info_tree_selected) else {
+            return;
+        };
+        let is_open_container =
+            matches!(row.kind, crate::treeview::RowKind::Container { collapsed: false, .. });
+        if is_open_container {
+            self.build_info_tree_expanded.remove(&row.path);
+            return;
+        }
+        // Jump to the nearest previous row at a shallower depth (the parent).
+        let depth = row.depth;
+        if depth > 0 {
+            for index in (0..self.build_info_tree_selected).rev() {
+                if rows[index].depth < depth {
+                    self.build_info_tree_selected = index;
+                    break;
+                }
+            }
+        }
     }
 
     /// Whether a footer `Command` is actionable in the current context (ignoring modal/leader

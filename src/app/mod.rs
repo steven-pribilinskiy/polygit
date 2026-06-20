@@ -418,6 +418,18 @@ pub struct AppState {
     pub build_info_config_count: usize,
     pub build_info_settings_preview: Vec<String>,
     pub build_info_scroll: usize,
+    /// The settings preview parsed into a collapsible tree (`None` if it isn't valid JSON — then the
+    /// raw `build_info_settings_preview` lines render instead). Built when the modal opens.
+    pub build_info_tree: Option<crate::treeview::DataNode>,
+    /// Expanded container paths in the settings tree (everything else is collapsed by default).
+    pub build_info_tree_expanded: std::collections::HashSet<String>,
+    /// Selected row in the settings tree (index into the flattened visible rows).
+    pub build_info_tree_selected: usize,
+    /// Clickable container-row regions in the settings tree: (row, col_start, col_end, row index).
+    pub build_info_tree_click: Vec<(u16, u16, u16, usize)>,
+    /// The settings-tree fold-all / unfold-all hint-button regions.
+    pub build_info_fold_all_click: Option<(u16, u16, u16)>,
+    pub build_info_unfold_all_click: Option<(u16, u16, u16)>,
     // Changelog / What's New modal (the `vX.Y.Z` status-bar tag opens the changelog; an update
     // pops the What's New view — releases newer than the last-seen version, all expanded):
     /// The changelog modal is open.
@@ -750,6 +762,12 @@ impl AppState {
             build_info_config_count: 0,
             build_info_settings_preview: Vec::new(),
             build_info_scroll: 0,
+            build_info_tree: None,
+            build_info_tree_expanded: std::collections::HashSet::new(),
+            build_info_tree_selected: 0,
+            build_info_tree_click: Vec::new(),
+            build_info_fold_all_click: None,
+            build_info_unfold_all_click: None,
             // Pop "What's New" when this build is newer than the one last run (e.g. after a reload).
             show_changelog: show_whats_new,
             changelog_whats_new: show_whats_new,
