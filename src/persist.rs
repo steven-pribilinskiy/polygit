@@ -146,6 +146,9 @@ pub struct PersistedState {
     /// CLI builder: when to show each flag's help text (always / on-hover / never). Default on-hover.
     #[serde(default)]
     pub cli_help_mode: crate::app::CliHelpMode,
+    /// Diff modal render style (raw / unified / split). Default raw.
+    #[serde(default)]
+    pub diff_view: crate::app::DiffView,
 }
 
 impl PersistedState {

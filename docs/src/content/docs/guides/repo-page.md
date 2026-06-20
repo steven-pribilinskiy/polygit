@@ -91,7 +91,11 @@ also pick up panel padding when that setting is on):
   without moving the selection).
 - **Bottom — the selected file's diff**, loaded on demand. Scroll it with `PgUp`/`PgDn`/`Home`/`End`
   or the wheel. The panel title shows the full file path, left-truncating (with a leading `…`)
-  only when it doesn't fit the line.
+  only when it doesn't fit the line. **`v` cycles the render style — raw / unified / split**
+  (persisted, shown in the footer): **raw** keeps git's own colored output; **unified** and **split**
+  are structured, line-numbered, **syntax-highlighted** GitHub-PR-style views (split = old on the
+  left, new on the right) with a faint green/red wash on added/removed lines. Highlighting is a
+  lightweight, language-aware lexer keyed off the file extension.
 
 When a change set has more than 10 files across at least two statuses, a clickable
 **status-filter chip row** appears above the list — `[ all N ]`, `[ M … ]`, `[ A … ]`, … with

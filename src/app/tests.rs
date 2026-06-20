@@ -695,6 +695,7 @@
         DiffModal {
             source: DiffSource::Branch { path: PathBuf::from("/tmp"), name: "x".into() },
             mode: DiffMode::Uncommitted,
+            view: crate::app::DiffView::Raw,
             focus: DiffFocus::Files,
             files: statuses
                 .iter()

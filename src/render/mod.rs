@@ -10,7 +10,7 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
-    AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource,
+    AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, DiffView,
     DropdownKind, HelpTab, HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow,
     PageRowKind, Pane, RepoPageColumn, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit,
     ScrollKind, SortColumn, SortDir, StatusFilter,
