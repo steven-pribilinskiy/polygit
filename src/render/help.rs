@@ -72,6 +72,11 @@ pub(crate) fn help_items_about(notes_expanded: bool) -> Vec<(Line<'static>, Opti
 /// `render_help` re-runs the row at the real screen position to register its click regions.
 pub(crate) const DESIGN_RADIO_PREFIX: &str = "\u{1f}designradio:";
 
+/// Click sentinel for the Design System "preview confirm dialog" button.
+pub(crate) const DESIGN_PREVIEW_CONFIRM: &str = "\u{1f}designpreview:confirm";
+/// The preview button's label (shared by the builder and the click-region capture in `render_help`).
+pub(crate) const DESIGN_PREVIEW_LABEL: &str = "preview confirm dialog";
+
 /// The label + options (text, is-active) for a Design System radio, by the **settings** global row
 /// index it mirrors (Theme=5 · Background=6 · Contrast=7 · Selection=8). Owned/`'static` so the
 /// `&AppState` read ends before the caller mutably borrows `app.help_design_click`.
@@ -268,6 +273,14 @@ pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Op
     radio_spans.push(Span::raw("   "));
     radio_spans.extend(radio("option", false, &radio_style).spans);
     items.push((Line::from(radio_spans), None));
+
+    // Dialogs — a live preview button that opens the shared confirm dialog (the same ConfirmDialog
+    // every destructive action uses), so the dialog is discoverable + inspectable from here.
+    items.push((Line::from(""), None));
+    items.push((Line::from(Span::styled("Components — dialogs".to_string(), group_style)), None));
+    let mut preview_spans = vec![Span::styled("  ".to_string(), dim)];
+    preview_spans.extend(button(DESIGN_PREVIEW_LABEL, Interaction::Normal, &button_style(active_hover)).spans);
+    items.push((Line::from(preview_spans), Some(DESIGN_PREVIEW_CONFIRM.to_string())));
 
     items
 }
@@ -920,6 +933,7 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.cli_flag_click.clear();
     app.cli_copy_click = None;
     app.help_design_click.clear();
+    app.help_preview_click = None;
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, url)) in items[start..end].iter().enumerate() {
         let row = content_area.y + offset as u16;
@@ -943,6 +957,12 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                         &mut app.help_design_click,
                     );
                 }
+            }
+            Some(DESIGN_PREVIEW_CONFIRM) => {
+                // The button is `  ` + a bracketed label; capture its span for click + hover.
+                let width = UnicodeWidthStr::width(format!(" {DESIGN_PREVIEW_LABEL} ").as_str()) as u16;
+                let start = content_area.x + 2;
+                app.help_preview_click = Some((row, start, start + width));
             }
             Some(TOGGLE_NOTES) => app.help_notes_toggle_row = Some(row),
             Some(CLI_COPY) => {

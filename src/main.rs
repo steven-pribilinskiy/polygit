@@ -162,6 +162,8 @@ fn spawn_confirm_action(app_state: &Arc<Mutex<AppState>>, action: ConfirmAction)
             app.apply_settings_reset();
             app.show_toast("settings reset to defaults".to_string());
         }
+        // The design-system preview: accepting just closes the dialog (already taken by the caller).
+        ConfirmAction::Preview => {}
     }
 }
 
@@ -1715,17 +1717,13 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Confirmation dialog: clickable [y]/[n], [x] or outside to cancel.
+                // Confirmation dialog: the yes/no footer chips inject `y`/`n` (same handler as the
+                // keys); the [x] button or a click outside cancels.
                 if app.confirm.is_some() {
                     if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-                        if region_hit(app.confirm_yes_click, mouse.column, mouse.row) {
-                            let action = app.confirm.take().map(|dialog| dialog.action);
-                            if let Some(action) = action {
-                                drop(app);
-                                spawn_confirm_action(&app_state, action);
-                            }
-                        } else if region_hit(app.confirm_no_click, mouse.column, mouse.row)
-                            || region_hit(app.confirm_close_click, mouse.column, mouse.row)
+                        if let Some(hint) = app.hint_at(mouse.column, mouse.row) {
+                            synthetic_keys.push_back(hint_key_event(hint));
+                        } else if region_hit(app.confirm_close_click, mouse.column, mouse.row)
                             || !point_in(app.confirm_area, mouse.column, mouse.row)
                         {
                             app.confirm = None;
@@ -2045,6 +2043,22 @@ async fn run_event_loop(
                                         app.toggle_selected_setting();
                                     }
                                 }
+                            } else if region_hit(app.help_preview_click, mouse.column, mouse.row) {
+                                // Open the shared confirm dialog as a live preview (accepting is a
+                                // no-op — it just closes).
+                                app.confirm = Some(app::ConfirmDialog {
+                                    message: "Reset 8 settings to defaults?".to_string(),
+                                    action: app::ConfirmAction::Preview,
+                                    danger: false,
+                                    restore_files: Vec::new(),
+                                    delete_files: Vec::new(),
+                                    detail_lines: vec![
+                                        "Grouping: on → off".to_string(),
+                                        "Background: terminal → normal".to_string(),
+                                        "Hover effects: on → off".to_string(),
+                                    ],
+                                    detail_title: Some("Will reset:".to_string()),
+                                });
                             } else if let Some(url) = app.help_link_at(mouse.row) {
                                 drop(app);
                                 open_url(&url);

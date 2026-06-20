@@ -1521,6 +1521,8 @@ pub enum ConfirmAction {
     DiscardChanges { repo_idx: usize, path: PathBuf },
     /// Reset every settings-modal preference to its default.
     ResetSettings,
+    /// A no-op accept — used by the design-system preview so "yes" just closes the dialog.
+    Preview,
 }
 
 /// A yes/no confirmation modal.

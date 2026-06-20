@@ -363,25 +363,16 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
         )));
     }
     lines.push(Line::from(String::new()));
-    // The yes/no prompt — both halves are clickable.
-    let yes_text = "[y/enter] yes";
-    let gap = "     ";
-    let no_text = "[n] no";
+    // The yes/no prompt reuses the shared footer-chip buttons (cyan key + dim label), registered as
+    // HintClick regions so they hover-highlight and click-inject `y`/`n` through the same path as
+    // every other modal footer — no bespoke confirm-button styling or hit-testing.
     let prompt_y = inner.y + lines.len() as u16;
-    if prompt_y < inner.y + inner.height {
-        let yes_start = inner.x + 2;
-        let yes_end = yes_start + yes_text.len() as u16;
-        let no_start = yes_end + gap.len() as u16;
-        app.confirm_yes_click = Some((prompt_y, yes_start, yes_end));
-        app.confirm_no_click = Some((prompt_y, no_start, no_start + no_text.len() as u16));
-    } else {
-        app.confirm_yes_click = None;
-        app.confirm_no_click = None;
-    }
-    lines.push(Line::from(Span::styled(
-        format!("  {yes_text}{gap}{no_text}"),
-        Style::default().fg(Color::DarkGray),
-    )));
+    let mut segments: Vec<(String, Style, Option<HintKey>)> = vec![("  ".to_string(), Style::default(), None)];
+    segments.extend(footer_chip("y/enter", " yes", HintKey::Char('y')));
+    segments.push(footer_sep());
+    segments.extend(footer_chip("n/esc", " no", HintKey::Char('n')));
+    let prompt_line = build_hint_footer(segments, inner.x, prompt_y, &mut app.hint_click);
+    lines.push(prompt_line);
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
