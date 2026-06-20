@@ -1023,6 +1023,10 @@ impl AppState {
                 self.keyboard_scroll = value;
                 false
             }
+            ScrollKind::Settings => {
+                self.settings_scroll = value;
+                false
+            }
         }
     }
 

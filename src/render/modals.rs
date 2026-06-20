@@ -684,7 +684,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 }
             }
         }
-        (content_w.max(40), rows)
+        // +1 reserves a right-hand gutter for the scrollbar so the widest row (e.g. Background's
+        // "terminal" chip) isn't cropped under it.
+        (content_w.max(40) + 1, rows)
     } else {
         let row_count = all_rows.len() as u16;
         (content_w.max(40), row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16)
@@ -905,9 +907,38 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             _ => false,
         });
         let viewport = inner.height as usize;
-        let mut scroll = app.settings_scroll.min(items.len().saturating_sub(viewport));
-        if let Some(sel) = sel_line {
-            if sel < scroll {
+        let max_scroll = items.len().saturating_sub(viewport);
+        // The first selectable line (a header/row) sits after the lead-in (collapse-all + blank).
+        let first_sel = items
+            .iter()
+            .position(|item| matches!(item, AccItem::Header(_) | AccItem::Row(_)))
+            .unwrap_or(0);
+        let mut scroll = app.settings_scroll.min(max_scroll);
+        if app.scrollbar_dragging == Some(crate::app::ScrollKind::Settings) {
+            // A scrollbar drag drives the view; move the selection onto the first selectable line
+            // now visible so the keyboard selection stays in sync (and the next non-drag frame
+            // doesn't snap the view back to the old selection).
+            if let Some((_, item)) = items
+                .iter()
+                .enumerate()
+                .skip(scroll)
+                .find(|(_, item)| matches!(item, AccItem::Header(_) | AccItem::Row(_)))
+            {
+                match item {
+                    AccItem::Header(tab) => app.settings_on_header = Some(*tab),
+                    AccItem::Row(row) => {
+                        app.settings_on_header = None;
+                        app.settings_selected = *row;
+                    }
+                    _ => {}
+                }
+            }
+        } else if let Some(sel) = sel_line {
+            if sel <= first_sel {
+                // Selecting the first section header reveals the very top (collapse-all + blank),
+                // so the thumb sits at the top — matching "I'm at the top of the list".
+                scroll = 0;
+            } else if sel < scroll {
                 scroll = sel;
             } else if viewport > 0 && sel >= scroll + viewport {
                 scroll = sel + 1 - viewport;
@@ -969,10 +1000,18 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             }
         }
         frame.render_widget(Paragraph::new(lines), inner);
-        // A scrollbar when the content overflows the modal.
+        // A scrollbar when the content overflows the modal — registered as a ScrollHit so it's
+        // mouse-draggable (the generic handler maps a grab to `ScrollKind::Settings`).
         if items.len() > viewport {
             let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
-            render_scrollbar(frame, track, scroll, items.len(), viewport, false);
+            let dragging = app.scrollbar_dragging == Some(crate::app::ScrollKind::Settings);
+            render_scrollbar(frame, track, scroll, items.len(), viewport, dragging);
+            app.scroll_hits.push(crate::app::ScrollHit {
+                kind: crate::app::ScrollKind::Settings,
+                track,
+                total: items.len(),
+                viewport,
+            });
         }
     } else {
         let mut lines: Vec<Line> = Vec::new();
