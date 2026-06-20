@@ -583,7 +583,7 @@
           "t"
         ],
         "action": "Column-toggle menu",
-        "note": "then b/y/a/m/d/c/u/f/g/s → ahead-behind/dirty/added/modified/deleted/total/upstream/base/age/subject; clickable chips; empty columns auto-hide and their chip is dim/inert; persisted",
+        "note": "then b/y/a/m/d/c/u/f/g/r/s → ahead-behind/dirty/added/modified/deleted/total/upstream/age/pr/subject (pr = the current branch's open #N, clickable, via gh); clickable chips; empty columns auto-hide and their chip is dim/inert; persisted. Stash rows render the same change-stat columns (added/modified/deleted/total), loaded lazily from git stash show",
         "keywords": [
           "columns",
           "added",

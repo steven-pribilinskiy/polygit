@@ -682,8 +682,25 @@ pub async fn list_stashes(dir: &Path) -> Vec<StashInfo> {
         .map(|(index, label)| StashInfo {
             index,
             label: label.to_string(),
+            stats: None,
         })
         .collect()
+}
+
+/// Change stats for a stash entry (`git stash show --name-status stash@{index}`), counted into
+/// added/modified/deleted like a branch diff. `None` when the command fails.
+pub async fn stash_diff_stats(dir: &Path, index: usize) -> Option<BranchStats> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git")
+        .args(["-C", dir_str, "stash", "show", "--name-status", &format!("stash@{{{index}}}")])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let (added, modified, deleted) = count_name_status(&String::from_utf8_lossy(&output.stdout));
+    Some(BranchStats { added, modified, deleted })
 }
 
 /// Recent commits on the current branch (newest first), for the repo page's Commits tab.
