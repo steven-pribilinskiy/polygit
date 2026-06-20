@@ -1595,17 +1595,20 @@
         for row in 22..=27 {
             assert_eq!(state.settings_active_option(row), 0, "row {row} defaults on");
         }
-        // Setting a row off flips just its flag (option 1).
-        state.set_setting_option(22, 1); // master
-        assert!(!state.tooltips.enabled);
+        // "All tooltips" off (row 22) cascades to every area.
+        state.set_setting_option(22, 1);
+        assert!(state.tooltips.all_off());
         assert_eq!(state.settings_active_option(22), 1);
-        state.set_setting_option(24, 1); // column headers
-        assert!(!state.tooltips.headers);
-        assert!(state.tooltips.footer, "an unrelated area stays on");
-        // The label-cycle path (toggle_selected_setting) flips the selected row.
-        state.settings_selected = 26; // settings rows
-        state.toggle_selected_setting();
-        assert!(!state.tooltips.settings);
+        // Turning one area back on makes the master mixed (neither radio active → option 2).
+        state.set_setting_option(24, 0); // column headers on
+        assert!(state.tooltips.headers && !state.tooltips.footer);
+        assert_eq!(state.settings_active_option(22), 2, "mixed → no radio active");
+        // "All tooltips" on (row 22) cascades every area back on.
+        state.set_setting_option(22, 0);
+        assert!(state.tooltips.all_on());
+        // An individual change (settings rows off) flips just that flag.
+        state.set_setting_option(26, 1);
+        assert!(!state.tooltips.settings && state.tooltips.footer);
         // Defaults: every Tooltips row reads as already-default (no reset entry).
         let mut fresh = normalized(state_named(&["a"]));
         fresh.tooltips = crate::app::TooltipPrefs::default();

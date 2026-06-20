@@ -1273,30 +1273,29 @@ async fn run_event_loop(
             // cursor; column-header / count-tail tips carry their own anchor + side (below the
             // header). The floating engine flips/shifts each to stay on-screen.
             let cursor = app.hover;
-            // Keep the active tooltip alive while the cursor is over its own popup, so an
-            // interactive tooltip (e.g. a column header's `[x]` hide button) stays clickable as the
-            // cursor moves off the header onto it.
-            let over_popup = app.hover_tooltip.is_some()
-                && cursor.is_some_and(|(col, row)| point_in(app.tooltip_rect, col, row));
+            // Keep the active tooltip alive while the cursor is over its own popup OR its anchor
+            // (the header it dropped from) — so moving from the header down into the popup never
+            // crosses a dead gap (e.g. the column-header underline row) that would dismiss it before
+            // you can reach the `[x]` hide button.
+            let over_popup = app.hover_tooltip.as_ref().is_some_and(|tip| {
+                cursor.is_some_and(|(col, row)| {
+                    point_in(app.tooltip_rect, col, row) || point_in(tip.anchor, col, row)
+                })
+            });
             if !over_popup {
                 // Per-area tooltip gating: the master switch plus each area's own toggle (the
                 // Tooltips settings group). `cursor_tip` still requires `hover_effects` upstream.
                 let tips = app.tooltips;
                 let dwell: Option<app::HoverTip> = settings_tip
-                    .filter(|_| tips.enabled && tips.settings)
+                    .filter(|_| tips.settings)
                     .and_then(|tip| cursor_tip(cursor, tip))
                     .or_else(|| {
-                        help_url
-                            .filter(|_| tips.enabled && tips.links)
-                            .and_then(|url| cursor_tip(cursor, url))
+                        help_url.filter(|_| tips.links).and_then(|url| cursor_tip(cursor, url))
                     })
                     .or_else(|| {
-                        cli_cmd_tip.filter(|_| tips.enabled).and_then(|tip| cursor_tip(cursor, tip))
+                        cli_cmd_tip.filter(|_| tips.settings).and_then(|tip| cursor_tip(cursor, tip))
                     })
                     .or_else(|| {
-                        if !tips.enabled {
-                            return None;
-                        }
                         cursor.and_then(|(col, row)| app.tooltip_at(col, row)).and_then(
                             |(text, anchor, placement, hide_column, area)| {
                                 let allowed = match area {
@@ -1313,7 +1312,7 @@ async fn run_event_loop(
                         )
                     })
                     .or_else(|| {
-                        if !(tips.enabled && tips.footer) {
+                        if !tips.footer {
                             return None;
                         }
                         cursor

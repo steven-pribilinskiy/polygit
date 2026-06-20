@@ -1102,7 +1102,7 @@ impl AppState {
             19 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
             20 => self.repo_page_maximized = !self.repo_page_maximized,
             21 => self.branch_check = self.branch_check.cycle(),
-            22 => self.tooltips.enabled = !self.tooltips.enabled,
+            22 => self.tooltips.set_all(!self.tooltips.all_on()),
             23 => self.tooltips.footer = !self.tooltips.footer,
             24 => self.tooltips.headers = !self.tooltips.headers,
             25 => self.tooltips.counts = !self.tooltips.counts,

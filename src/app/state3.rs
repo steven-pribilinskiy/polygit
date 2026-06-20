@@ -845,8 +845,11 @@ impl AppState {
     }
 
     /// Whether the repo page is currently rendered as tabs (mode Auto + ≥2 non-empty sections).
+    /// Maximized is always a single, full view — every section stacked, no tab bar.
     pub fn repo_page_tabbed(&self) -> bool {
-        self.repo_page_tabs == RepoTabsMode::Auto && self.repo_page_present_tabs().len() >= 2
+        !self.repo_page_maximized
+            && self.repo_page_tabs == RepoTabsMode::Auto
+            && self.repo_page_present_tabs().len() >= 2
     }
 
     /// Switch the active repo-page tab, resetting the selection to its first row.
