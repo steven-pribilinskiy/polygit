@@ -3,6 +3,89 @@ use super::*;
 /// Render the yes/no confirmation dialog (keyboard-driven: y / n / Esc).
 /// Render the build-info modal (opened by clicking the "built … ago" status tag): the running
 /// version, the watched executable path, when it was built, and how new-build watching works.
+/// Human-readable byte size (e.g. `1.2 MB`).
+pub(crate) fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
+}
+
+/// Lightweight JSON syntax highlighting for one line: keys cyan, string values green, numbers /
+/// booleans / null yellow, punctuation dim. Heuristic (per-line), good enough for a preview.
+pub(crate) fn highlight_json_line(line: &str) -> Line<'static> {
+    let key = Style::default().fg(Color::Cyan);
+    let string = Style::default().fg(Color::Green);
+    let number = Style::default().fg(Color::Yellow);
+    let punct = Style::default().fg(Color::DarkGray);
+    let plain = Style::default().fg(Color::Gray);
+    let chars: Vec<char> = line.chars().collect();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '"' {
+            // Consume the whole string literal (respecting `\"`).
+            let start = index;
+            index += 1;
+            while index < chars.len() {
+                if chars[index] == '\\' {
+                    index += 2;
+                    continue;
+                }
+                if chars[index] == '"' {
+                    index += 1;
+                    break;
+                }
+                index += 1;
+            }
+            let text: String = chars[start..index.min(chars.len())].iter().collect();
+            // A string followed by `:` (ignoring spaces) is an object key.
+            let mut peek = index;
+            while peek < chars.len() && chars[peek] == ' ' {
+                peek += 1;
+            }
+            let is_key = peek < chars.len() && chars[peek] == ':';
+            spans.push(Span::styled(text, if is_key { key } else { string }));
+        } else if ch.is_ascii_digit() || (ch == '-' && chars.get(index + 1).is_some_and(|next| next.is_ascii_digit())) {
+            let start = index;
+            index += 1;
+            while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == '.') {
+                index += 1;
+            }
+            spans.push(Span::styled(chars[start..index].iter().collect::<String>(), number));
+        } else if chars[index..].iter().collect::<String>().starts_with("true")
+            || chars[index..].iter().collect::<String>().starts_with("false")
+            || chars[index..].iter().collect::<String>().starts_with("null")
+        {
+            let word = if chars[index..].iter().collect::<String>().starts_with("false") {
+                "false"
+            } else if chars[index..].iter().collect::<String>().starts_with("true") {
+                "true"
+            } else {
+                "null"
+            };
+            spans.push(Span::styled(word.to_string(), number));
+            index += word.len();
+        } else if matches!(ch, '{' | '}' | '[' | ']' | ':' | ',') {
+            spans.push(Span::styled(ch.to_string(), punct));
+            index += 1;
+        } else {
+            spans.push(Span::styled(ch.to_string(), plain));
+            index += 1;
+        }
+    }
+    Line::from(spans)
+}
+
 pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let built = app
         .binary_built
@@ -13,29 +96,9 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let value = Style::default().fg(Color::Gray);
     let dim = Style::default().fg(Color::DarkGray);
     let field = |name: &str, text: String| {
-        Line::from(vec![
-            Span::styled(format!("{name:<9}"), label),
-            Span::styled(text, value),
-        ])
+        Line::from(vec![Span::styled(format!("{name:<10}"), label), Span::styled(text, value)])
     };
 
-    let mut lines: Vec<Line> = vec![
-        field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string()),
-        field("Built", built),
-        field("Path", app.exe_path.clone()),
-        Line::from(String::new()),
-        Line::from(Span::styled("Watching this file for new builds", label)),
-        Line::from(Span::styled(
-            "polygit polls this executable's size + mtime every few seconds. When a newer",
-            dim,
-        )),
-        Line::from(Span::styled(
-            "build lands at the same path (e.g. make install's atomic rename), a ↺ [reload]",
-            dim,
-        )),
-        Line::from(Span::styled("notice appears top-right on every screen.", dim)),
-        Line::from(String::new()),
-    ];
     let status = if app.update_available && !app.update_dismissed {
         Span::styled(
             "● A new build is available — click [reload] to restart.",
@@ -46,18 +109,28 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     } else {
         Span::styled("✓ Running the latest build on disk.", Style::default().fg(Color::Green))
     };
-    lines.push(Line::from(status));
+    let header: Vec<Line> = vec![
+        field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string()),
+        field("Built", built),
+        field("Binary", format!("{} ({})", human_size(app.build_info_binary_size), app.exe_path)),
+        field(
+            "Settings",
+            format!("{}  ({} files in config)", app.build_info_settings_path, app.build_info_config_count),
+        ),
+        Line::from(status),
+        Line::from(String::new()),
+        Line::from(Span::styled("Settings preview (state.json)", label)),
+    ];
 
+    // A roomy modal: header + a scrollable JSON preview filling the rest.
     let pad = if app.panel_padding { 2 } else { 0 };
-    let content_width = lines.iter().map(|line| line.width()).max().unwrap_or(40) as u16 + 4 + pad;
-    let width = content_width.clamp(40, area.width.saturating_sub(4).max(40));
-    // Allow two extra rows in case a long path wraps.
-    let height = (lines.len() as u16 + 4 + pad).min(area.height.saturating_sub(2).max(8));
+    let width = area.width.saturating_sub(8).clamp(40, 100);
+    let height = area.height.saturating_sub(4).clamp(12, 36);
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
-    // Clickable bottom-border footer: `r` exec-restarts the binary (same as the reload notice),
-    // `esc` closes.
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    footer.push(footer_sep());
     footer.extend(footer_chip("r", " restart", HintKey::Char('r')));
     footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
@@ -74,7 +147,36 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     app.build_info_close_click = close_click;
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+
+    // Header rows at the top, then the scrollable preview in whatever's left.
+    let header_h = header.len() as u16;
+    let header_area = Rect { height: header_h.min(inner.height), ..inner };
+    frame.render_widget(Paragraph::new(header).wrap(Wrap { trim: false }), header_area);
+    if inner.height <= header_h + 1 {
+        return;
+    }
+    let preview = Rect {
+        y: inner.y + header_h,
+        height: inner.height - header_h,
+        // Leave the last column for a scrollbar.
+        width: inner.width.saturating_sub(1),
+        ..inner
+    };
+    let total = app.build_info_settings_preview.len();
+    let viewport = preview.height as usize;
+    let max_scroll = total.saturating_sub(viewport);
+    if app.build_info_scroll > max_scroll {
+        app.build_info_scroll = max_scroll;
+    }
+    let start = app.build_info_scroll;
+    let visible: Vec<Line> = app.build_info_settings_preview[start..(start + viewport).min(total)]
+        .iter()
+        .map(|line| highlight_json_line(line))
+        .collect();
+    frame.render_widget(Paragraph::new(visible), preview);
+    let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
+    render_scrollbar(frame, track, app.build_info_scroll, total, viewport, false);
+    let _ = pad;
 }
 
 pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {

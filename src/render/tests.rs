@@ -73,3 +73,25 @@
         assert!(!plain.contains("f filter"));
         assert!(joined(&branch, DiffFocus::Files, true).contains("f filter"));
     }
+
+    #[test]
+    fn human_size_scales_units() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(2048), "2.0 KB");
+        assert_eq!(human_size(5 * 1024 * 1024), "5.0 MB");
+    }
+
+    #[test]
+    fn highlight_json_line_colors_keys_strings_numbers() {
+        let line = highlight_json_line("  \"theme\": \"dark\", \"n\": 42");
+        let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
+        assert_eq!(text, "  \"theme\": \"dark\", \"n\": 42");
+        // The first string is a key (cyan), the second a value (green), 42 a number (yellow).
+        let key = line.spans.iter().find(|span| span.content.contains("theme")).unwrap();
+        assert_eq!(key.style.fg, Some(Color::Cyan));
+        let val = line.spans.iter().find(|span| span.content.contains("dark")).unwrap();
+        assert_eq!(val.style.fg, Some(Color::Green));
+        let num = line.spans.iter().find(|span| span.content.contains("42")).unwrap();
+        assert_eq!(num.style.fg, Some(Color::Yellow));
+    }

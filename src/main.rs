@@ -1571,8 +1571,15 @@ async fn run_event_loop(
                 // Build-info modal: footer hints (`r` restart / `esc` close) are handled by the
                 // hint-click injection above; any other click dismisses it.
                 if app.show_build_info {
-                    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                        app.show_build_info = false;
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            app.build_info_scroll = app.build_info_scroll.saturating_add(3);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.build_info_scroll = app.build_info_scroll.saturating_sub(3);
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => app.show_build_info = false,
+                        _ => {}
                     }
                     continue;
                 }
@@ -2176,7 +2183,8 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Build-info modal: Ctrl-C quits, `r` exec-restarts, any other key dismisses it.
+                // Build-info modal: Ctrl-C quits, `r` exec-restarts, j/k/PgUp/PgDn scroll the
+                // settings preview, any other key dismisses it.
                 if app.show_build_info {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2187,6 +2195,29 @@ async fn run_event_loop(
                     if key.code == KeyCode::Char('r') {
                         drop(app);
                         return Ok(RELOAD_EXIT);
+                    }
+                    match key.code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            app.build_info_scroll = app.build_info_scroll.saturating_add(1);
+                            continue;
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.build_info_scroll = app.build_info_scroll.saturating_sub(1);
+                            continue;
+                        }
+                        KeyCode::PageDown => {
+                            app.build_info_scroll = app.build_info_scroll.saturating_add(10);
+                            continue;
+                        }
+                        KeyCode::PageUp => {
+                            app.build_info_scroll = app.build_info_scroll.saturating_sub(10);
+                            continue;
+                        }
+                        KeyCode::Char('g') | KeyCode::Home => {
+                            app.build_info_scroll = 0;
+                            continue;
+                        }
+                        _ => {}
                     }
                     app.show_build_info = false;
                     continue;

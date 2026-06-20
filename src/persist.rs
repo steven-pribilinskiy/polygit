@@ -202,7 +202,7 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(new_dir)
 }
 
-fn state_path() -> Option<PathBuf> {
+pub fn state_path() -> Option<PathBuf> {
     Some(config_dir()?.join("state.json"))
 }
 
