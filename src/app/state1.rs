@@ -343,6 +343,7 @@ impl AppState {
             changed_row_highlight: self.changed_row_highlight,
             tooltips: self.tooltips,
             design_layout: self.design_layout,
+            last_seen_version: env!("CARGO_PKG_VERSION").to_string(),
         });
     }
 
@@ -1026,6 +1027,10 @@ impl AppState {
             }
             ScrollKind::Settings => {
                 self.settings_scroll = value;
+                false
+            }
+            ScrollKind::Changelog => {
+                self.changelog_scroll = value;
                 false
             }
         }

@@ -418,6 +418,24 @@ pub struct AppState {
     pub build_info_config_count: usize,
     pub build_info_settings_preview: Vec<String>,
     pub build_info_scroll: usize,
+    // Changelog / What's New modal (the `vX.Y.Z` status-bar tag opens the changelog; an update
+    // pops the What's New view — releases newer than the last-seen version, all expanded):
+    /// The changelog modal is open.
+    pub show_changelog: bool,
+    /// In "What's New" mode (filtered to releases since `whats_new_since`, all expanded) vs the full
+    /// changelog (every release, accordion, the latest two expanded).
+    pub changelog_whats_new: bool,
+    /// The version last run — releases above it are "new" in the What's New view. Empty on first run.
+    pub whats_new_since: String,
+    /// Collapsed release versions in the full changelog accordion.
+    pub changelog_collapsed: std::collections::HashSet<String>,
+    /// Selected release (index into the release list) for keyboard fold/nav in the full changelog.
+    pub changelog_selected: usize,
+    pub changelog_scroll: usize,
+    pub changelog_area: Rect,
+    pub changelog_close_click: Option<(u16, u16, u16)>,
+    /// Clickable accordion-header regions: (row, col_start, col_end, release index).
+    pub changelog_header_click: Vec<(u16, u16, u16, usize)>,
     // Grouping (`z`, groups from ~/.config/polygit/groups.json):
     /// Render the list grouped (`z` toggles; persisted). Inert while `groups` is empty.
     pub grouping_enabled: bool,
@@ -499,6 +517,12 @@ impl AppState {
         // Restore persisted UI preferences (columns, info state, splitter), falling back to
         // defaults for anything missing or invalid.
         let persisted = crate::persist::load();
+        // "What's New" pops when this build is newer than the version last run (skipped on first
+        // run, when there's nothing to compare against).
+        let prev_seen_version = persisted.last_seen_version.clone();
+        let show_whats_new = !prev_seen_version.is_empty()
+            && crate::changelog::version_cmp(env!("CARGO_PKG_VERSION"), &prev_seen_version)
+                == std::cmp::Ordering::Greater;
         let split_ratio = if persisted.split_ratio >= Self::MIN_SPLIT {
             persisted.split_ratio.clamp(Self::MIN_SPLIT, Self::MAX_SPLIT)
         } else {
@@ -726,6 +750,16 @@ impl AppState {
             build_info_config_count: 0,
             build_info_settings_preview: Vec::new(),
             build_info_scroll: 0,
+            // Pop "What's New" when this build is newer than the one last run (e.g. after a reload).
+            show_changelog: show_whats_new,
+            changelog_whats_new: show_whats_new,
+            whats_new_since: prev_seen_version,
+            changelog_collapsed: std::collections::HashSet::new(),
+            changelog_selected: 0,
+            changelog_scroll: 0,
+            changelog_area: Rect::default(),
+            changelog_close_click: None,
+            changelog_header_click: Vec::new(),
             grouping_enabled: persisted.grouping_enabled,
             groups: Vec::new(),
             repo_group_map: Vec::new(),

@@ -203,6 +203,7 @@ impl AppState {
             || self.diff_modal.is_some()
             || self.copy_menu.is_some()
             || self.base_picker.is_some()
+            || self.show_changelog
     }
 
     /// Close every overlay modal so a freshly-opened one is the only one on screen (single-modal
@@ -221,6 +222,31 @@ impl AppState {
         self.dropdown = None;
         self.finder = None;
         self.picker = None;
+        self.show_changelog = false;
+    }
+
+    /// Open the changelog modal. `whats_new` filters to releases newer than the last-seen version
+    /// (all expanded); otherwise the full changelog opens with all but the latest two collapsed.
+    pub fn open_changelog(&mut self, whats_new: bool) {
+        self.close_all_modals();
+        self.show_changelog = true;
+        self.changelog_whats_new = whats_new;
+        self.changelog_scroll = 0;
+        self.changelog_selected = 0;
+        if !whats_new {
+            self.changelog_collapsed = crate::changelog::releases()
+                .iter()
+                .skip(2)
+                .map(|release| release.version.to_string())
+                .collect();
+        }
+    }
+
+    /// Toggle a release's collapsed state in the full changelog accordion.
+    pub fn toggle_changelog_release(&mut self, version: &str) {
+        if !self.changelog_collapsed.remove(version) {
+            self.changelog_collapsed.insert(version.to_string());
+        }
     }
 
     /// Open the help modal as the only modal (resets scroll).

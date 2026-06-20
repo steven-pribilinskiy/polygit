@@ -1,5 +1,6 @@
 mod app;
 mod cache;
+mod changelog;
 mod git;
 mod groups;
 mod keymap;
@@ -562,6 +563,7 @@ fn dispatch_command(
         }
         Cmd::Settings => app.open_settings(),
         Cmd::ShowBuildInfo => app.open_build_info(),
+        Cmd::ShowChangelog => app.open_changelog(false),
         Cmd::NavDown => {
             app.nav_down();
         }
@@ -892,6 +894,9 @@ async fn run_tui(
     let auto_dark = theme::detect_dark_background();
 
     let app_state = Arc::new(Mutex::new(AppState::new(Vec::new(), max_jobs, auto_dark)));
+    // Persist the current version now so the "What's New" modal (raised when this build is newer
+    // than the last-seen one) doesn't re-pop on the next launch even if nothing else is saved.
+    app_state.lock().unwrap().save_state();
     // Load group definitions (optional, user-edited) + the dynamic-membership cache.
     let (groups_config, groups_config_error) = groups::load_config();
     let groups_cache = groups::load_cache();
@@ -1640,6 +1645,41 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Changelog modal: click an accordion header to select + fold it, `[x]`/outside to
+                // close, wheel scrolls (the scrollbar grab is handled by the generic handler above).
+                if app.show_changelog {
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            app.changelog_scroll = app.changelog_scroll.saturating_add(3);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.changelog_scroll = app.changelog_scroll.saturating_sub(3);
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(idx) = app
+                                .changelog_header_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., idx)| idx)
+                            {
+                                app.changelog_selected = idx;
+                                if let Some(release) = changelog::releases().get(idx) {
+                                    let version = release.version.to_string();
+                                    app.toggle_changelog_release(&version);
+                                }
+                            } else if region_hit(app.changelog_close_click, mouse.column, mouse.row)
+                                || !point_in(app.changelog_area, mouse.column, mouse.row)
+                            {
+                                app.show_changelog = false;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Header dropdown: click an item to activate it, `[x]`/outside to close, wheel moves.
                 if app.dropdown.is_some() {
                     match mouse.kind {
@@ -2368,6 +2408,65 @@ async fn run_event_loop(
                         _ => {}
                     }
                     app.show_build_info = false;
+                    continue;
+                }
+
+                // Changelog / What's New modal: Ctrl-C quits, esc/q closes. Full changelog: j/k move
+                // the selected release, space/enter folds it, g/G jump. What's New: pure scroll.
+                if app.show_changelog {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    let releases = changelog::releases();
+                    let last = releases.len().saturating_sub(1);
+                    let whats_new = app.changelog_whats_new;
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.show_changelog = false,
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if whats_new {
+                                app.changelog_scroll = app.changelog_scroll.saturating_add(1);
+                            } else {
+                                app.changelog_selected = (app.changelog_selected + 1).min(last);
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if whats_new {
+                                app.changelog_scroll = app.changelog_scroll.saturating_sub(1);
+                            } else {
+                                app.changelog_selected = app.changelog_selected.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            app.changelog_scroll = app.changelog_scroll.saturating_add(10);
+                        }
+                        KeyCode::PageUp => {
+                            app.changelog_scroll = app.changelog_scroll.saturating_sub(10);
+                        }
+                        KeyCode::Char('g') | KeyCode::Home => {
+                            if whats_new {
+                                app.changelog_scroll = 0;
+                            } else {
+                                app.changelog_selected = 0;
+                            }
+                        }
+                        KeyCode::Char('G') | KeyCode::End => {
+                            if whats_new {
+                                app.changelog_scroll = usize::MAX;
+                            } else {
+                                app.changelog_selected = last;
+                            }
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter if !whats_new => {
+                            if let Some(release) = releases.get(app.changelog_selected) {
+                                let version = release.version.to_string();
+                                app.toggle_changelog_release(&version);
+                            }
+                        }
+                        _ => {}
+                    }
                     continue;
                 }
 

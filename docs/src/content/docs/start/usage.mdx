@@ -225,6 +225,12 @@ scroll). `r` (a clickable hint in the bottom border, next to `esc close`) exec-r
 latest build; `esc`, the `[x]`, or a click **outside** closes it (clicking inside is inert, so you
 can scroll the preview without it vanishing).
 
+Clicking the `vX.Y.Z` tag opens the **Changelog**: every release as a collapsible accordion whose
+header is the version + a time-ago (`▸ v2.60.0 · 2d ago`), with the latest two expanded. `j`/`k`
+select a release, `space`/`enter` (or a header click) fold it, `g`/`G` jump. After you reload into a
+newer build, a **What's New** modal pops automatically with every release since the version you last
+ran. The notes are embedded from `CHANGELOG.md`.
+
 ## Reading the result
 
 When the run finishes, a **Result** summary row reports how many repos were updated, were

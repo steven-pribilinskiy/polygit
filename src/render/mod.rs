@@ -332,6 +332,23 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         }
+    } else if app.show_changelog {
+        if let Some(&(row, start, end, idx)) =
+            app.changelog_header_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            // The selected header keeps its solid highlight (no extra hover tint).
+            if idx != app.changelog_selected {
+                button_hits.push(row_rect(row, start, end));
+            }
+        } else if let Some((row, start, end)) =
+            app.changelog_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        }
     } else if app.repo_page.is_some() {
         if let Some(&(row, start, end, _)) =
             app.repo_page_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
@@ -653,6 +670,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.show_build_info {
             render_build_info(frame, app, area);
         }
+        if app.show_changelog {
+            render_changelog(frame, app, area);
+        }
         if app.copy_menu.is_some() {
             render_copy_menu(frame, app, area);
         }
@@ -762,6 +782,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.show_build_info {
         render_build_info(frame, app, area);
+    }
+    if app.show_changelog {
+        render_changelog(frame, app, area);
     }
     if app.finder.is_some() {
         render_finder_overlay(frame, app, area);

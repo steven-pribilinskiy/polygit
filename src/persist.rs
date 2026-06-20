@@ -140,6 +140,9 @@ pub struct PersistedState {
     /// Help Design System tab layout (flat / tabbed). Default flat.
     #[serde(default)]
     pub design_layout: DesignLayout,
+    /// The app version last run — drives the "What's New" modal after an update. Empty on first run.
+    #[serde(default)]
+    pub last_seen_version: String,
 }
 
 impl PersistedState {
