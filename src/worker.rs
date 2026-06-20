@@ -875,6 +875,8 @@ pub async fn run_prepare_discard(
                 danger: true,
                 restore_files: restore,
                 delete_files: delete,
+                detail_lines: Vec::new(),
+                detail_title: None,
             });
         }
         Err(err) => {
@@ -904,6 +906,8 @@ pub async fn run_prepare_drop_stash(
         danger: true,
         restore_files: Vec::new(),
         delete_files: files,
+        detail_lines: Vec::new(),
+        detail_title: None,
     });
 }
 

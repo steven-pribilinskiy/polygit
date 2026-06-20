@@ -157,6 +157,11 @@ fn spawn_confirm_action(app_state: &Arc<Mutex<AppState>>, action: ConfirmAction)
         ConfirmAction::DiscardChanges { repo_idx, path } => {
             tokio::spawn(run_discard_changes(app_state, repo_idx, path));
         }
+        ConfirmAction::ResetSettings => {
+            let mut app = app_state.lock().unwrap();
+            app.apply_settings_reset();
+            app.show_toast("settings reset to defaults".to_string());
+        }
     }
 }
 
@@ -2184,6 +2189,14 @@ async fn run_event_loop(
                     {
                         drop(app);
                         return Ok(130);
+                    }
+                    // `R` (or the footer `R reset` chip) resets all settings to defaults via a
+                    // confirmation — handled before search so the chip works even while typing.
+                    if let KeyCode::Char('R') = key.code {
+                        if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                            app.open_settings_reset_confirm();
+                            continue;
+                        }
                     }
                     // Search input focused: typing edits the query; Enter/Down jumps to the results;
                     // Esc clears + unfocuses; everything else is captured as text.

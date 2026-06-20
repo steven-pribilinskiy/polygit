@@ -414,7 +414,7 @@
           ","
         ],
         "action": "Open the settings modal",
-        "note": "General: panel padding · grouping · tree view — Theming: icons (Unicode/emoji) · theme (auto/dark/light, auto re-detects live) · background (normal/soft/terminal) · contrast (normal/soft) — Sync: auto-pull on launch · auto-pull limit (50/100/250/∞) · auto-pull in tree view; rows and radio chips are clickable, [x]/outside-click closes",
+        "note": "General: panel padding · grouping · tree view — Theming: icons (Unicode/emoji) · theme (auto/dark/light, auto re-detects live) · background (normal/soft/terminal) · contrast (normal/soft) — Sync: auto-pull on launch · auto-pull limit (50/100/250/∞) · auto-pull in tree view; rows and radio chips are clickable, [x]/outside-click closes. Press R (or the R reset footer chip) to reset all settings to defaults — a confirmation lists each change as current → default",
         "keywords": [
           "settings",
           "preferences",

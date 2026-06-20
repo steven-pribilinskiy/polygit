@@ -1416,6 +1416,8 @@ pub enum ConfirmAction {
     DropStash { repo_idx: usize, index: usize },
     RemoveWorktree { repo_idx: usize, path: PathBuf, force: bool },
     DiscardChanges { repo_idx: usize, path: PathBuf },
+    /// Reset every settings-modal preference to its default.
+    ResetSettings,
 }
 
 /// A yes/no confirmation modal.
@@ -1429,10 +1431,14 @@ pub struct ConfirmDialog {
     pub restore_files: Vec<String>,
     /// Untracked files a discard would delete (shown in the dialog body).
     pub delete_files: Vec<String>,
+    /// Generic pre-formatted body lines (e.g. the settings a reset will change), shown verbatim
+    /// under the message below an optional `detail_title` header.
+    pub detail_lines: Vec<String>,
+    pub detail_title: Option<String>,
 }
 
 impl ConfirmDialog {
-    /// A dialog with no per-file detail body.
+    /// A dialog with no detail body.
     pub fn simple(message: String, action: ConfirmAction, danger: bool) -> Self {
         Self {
             message,
@@ -1440,6 +1446,8 @@ impl ConfirmDialog {
             danger,
             restore_files: Vec::new(),
             delete_files: Vec::new(),
+            detail_lines: Vec::new(),
+            detail_title: None,
         }
     }
 }
@@ -3402,6 +3410,112 @@ impl AppState {
             },
             _ => 0,
         }
+    }
+
+    /// The option labels for settings row `row` (the single source the modal renders and the
+    /// reset-plan formats). Boolean rows are `on`/`off`; the rest list their choices in order.
+    pub fn settings_option_labels(row: usize) -> &'static [&'static str] {
+        match row {
+            3 => &["unicode", "emoji"],
+            5 => &["auto", "dark", "light"],
+            6 => &["normal", "soft", "terminal"],
+            7 => &["normal", "soft"],
+            8 => &["blue", "subtle"],
+            9 => &["inverted", "subtle"],
+            11 => &["50", "100", "250", "\u{221e}"],
+            19 => &["off", "auto"],
+            20 => &["restored", "maximized"],
+            21 => &["off", "auto"],
+            _ => &["on", "off"],
+        }
+    }
+
+    /// The default option index for settings row `row` (mirrors the field defaults in
+    /// `persist.rs` / the enum `#[default]`s). Used to detect what a reset would change.
+    pub fn settings_default_option(row: usize) -> usize {
+        match row {
+            // Defaults whose active option is the first (on / auto / unicode / restored / …).
+            3 | 5 | 6 | 7 | 8 | 10 | 14 | 17 | 18 | 19 | 20 | 21 => 0,
+            // 9 button-hover defaults to `subtle` (index 1), 11 auto-pull-limit to `100` (index 1),
+            // and every remaining boolean defaults off (index 1).
+            _ => 1,
+        }
+    }
+
+    /// The settings that differ from their defaults, formatted `Label: current → default`.
+    /// Empty when everything is already at defaults.
+    pub fn settings_reset_plan(&self) -> Vec<String> {
+        (0..Self::SETTINGS_ROWS)
+            .filter_map(|row| {
+                let current = self.settings_active_option(row);
+                let default = Self::settings_default_option(row);
+                if current == default {
+                    return None;
+                }
+                let labels = Self::settings_option_labels(row);
+                Some(format!(
+                    "{}: {} \u{2192} {}",
+                    SETTINGS_LABELS[row],
+                    labels.get(current).copied().unwrap_or("?"),
+                    labels.get(default).copied().unwrap_or("?"),
+                ))
+            })
+            .collect()
+    }
+
+    /// Reset every settings-modal preference to its default (data — favorites, workspaces, caches,
+    /// collapsed sets — is left untouched). Rebuilds the derived list state and persists.
+    pub fn apply_settings_reset(&mut self) {
+        self.grouping_enabled = false;
+        self.tree_enabled = false;
+        self.hide_folder_lines = false;
+        self.icon_style = IconStyle::Unicode;
+        self.hide_zero_counts = false;
+        self.theme = Theme::Auto;
+        self.background = Background::Normal;
+        self.contrast = Contrast::Normal;
+        self.selection_style = SelectionStyle::Blue;
+        self.button_hover_style = ButtonHoverStyle::Subtle;
+        self.auto_pull_on_launch = true;
+        self.auto_pull_max_repos = 100;
+        self.auto_pull_in_tree = false;
+        self.hover_effects = false;
+        self.changed_row_flash = true;
+        self.changed_row_highlight = false;
+        self.panel_padding = false;
+        self.show_borders = true;
+        self.show_splitter = true;
+        self.repo_page_tabs = RepoTabsMode::Off;
+        self.repo_page_maximized = false;
+        self.branch_check = BranchCheck::Off;
+        self.recompute_group_assignments();
+        self.rebuild_tree();
+        self.save_state();
+    }
+
+    /// Open the reset-to-defaults confirmation (listing the settings that will change), or toast
+    /// when nothing differs from the defaults.
+    pub fn open_settings_reset_confirm(&mut self) {
+        let plan = self.settings_reset_plan();
+        if plan.is_empty() {
+            self.show_toast("settings already at defaults".to_string());
+            return;
+        }
+        // Single-modal invariant: replace the settings modal with the confirm (which renders + takes
+        // input on top of the main view). Settings stays closed after; reopen with `,` if needed.
+        self.show_settings = false;
+        self.settings_clear_search();
+        let count = plan.len();
+        let plural = if count == 1 { "" } else { "s" };
+        self.confirm = Some(ConfirmDialog {
+            message: format!("Reset {count} setting{plural} to defaults?"),
+            action: ConfirmAction::ResetSettings,
+            danger: false,
+            restore_files: Vec::new(),
+            delete_files: Vec::new(),
+            detail_lines: plan,
+            detail_title: Some("Will reset:".to_string()),
+        });
     }
 
     pub const DEFAULT_SPLIT: f64 = 0.4;
@@ -6118,6 +6232,30 @@ mod tests {
         state.repos[0].lock().unwrap().pull_result = None;
         state.refresh_pulled_seen();
         assert!(state.column_available(Column::PulledFiles), "latched on, no flicker");
+    }
+
+    #[test]
+    fn settings_reset_clears_every_diff() {
+        let mut state = state_named(&["a"]);
+        // Diverge a few settings from their defaults.
+        state.theme = Theme::Dark;
+        state.icon_style = IconStyle::Emoji;
+        state.grouping_enabled = true;
+        state.show_borders = false;
+        let plan = state.settings_reset_plan();
+        assert!(plan.iter().any(|line| line.starts_with("Theme: dark")), "{plan:?}");
+        assert!(plan.iter().any(|line| line.contains("emoji")));
+        assert!(!plan.is_empty());
+        // After a reset, every row matches its default and the plan is empty.
+        state.apply_settings_reset();
+        for (row, label) in SETTINGS_LABELS.iter().enumerate() {
+            assert_eq!(
+                state.settings_active_option(row),
+                AppState::settings_default_option(row),
+                "row {row} ({label}) not at default after reset",
+            );
+        }
+        assert!(state.settings_reset_plan().is_empty());
     }
 
     #[test]
