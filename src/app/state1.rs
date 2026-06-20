@@ -345,6 +345,7 @@ impl AppState {
             design_layout: self.design_layout,
             last_seen_version: env!("CARGO_PKG_VERSION").to_string(),
             cli_help_mode: self.cli_builder.help_mode,
+            diff_view: self.diff_view,
         });
     }
 

@@ -245,6 +245,8 @@ pub struct AppState {
     pub repo_page_click: Vec<(u16, usize)>,
     /// The 90% diff modal (stash diff or a dirty branch/worktree diff), if open.
     pub diff_modal: Option<DiffModal>,
+    /// Persisted diff-modal render style (raw / unified / split); new modals open in it.
+    pub diff_view: DiffView,
     /// Visible line count of the diff modal's diff panel, captured at render for PgUp/PgDn.
     pub diff_modal_viewport: usize,
     /// Visible row count of the diff modal's file-list panel (to keep the selection in view).
@@ -668,6 +670,7 @@ impl AppState {
             scrollbar_dragging: None,
             repo_page_click: Vec::new(),
             diff_modal: None,
+            diff_view: persisted.diff_view,
             diff_modal_viewport: 0,
             diff_files_viewport: 0,
             diff_files_area: Rect::default(),

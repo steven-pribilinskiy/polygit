@@ -56,7 +56,10 @@
     fn diff_modal_footer_depends_on_focus_and_source() {
         // Flatten the footer's segment texts so the content assertions read naturally.
         let joined = |source: &DiffSource, focus: DiffFocus, chips: bool| -> String {
-            diff_modal_footer(source, focus, chips).iter().map(|(text, _, _)| text.as_str()).collect()
+            diff_modal_footer(source, focus, chips, crate::app::DiffView::Raw)
+                .iter()
+                .map(|(text, _, _)| text.as_str())
+                .collect()
         };
         let stash = DiffSource::Stash { path: "/tmp".into(), index: 0, label: "x".into() };
         let files = joined(&stash, DiffFocus::Files, false);

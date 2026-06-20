@@ -108,6 +108,15 @@ impl Palette {
     pub fn subtle_selection_hover_bg(&self) -> Color {
         blend_toward(self.selection_bg, self.base_bg, 0.64)
     }
+
+    /// Subtle line backgrounds for added / removed diff lines (GitHub-PR style) — a faint wash of
+    /// the ok/error color toward the surface, so syntax-highlighted text stays readable on top.
+    pub fn diff_add_bg(&self) -> Color {
+        blend_toward(self.ok, self.base_bg, 0.82)
+    }
+    pub fn diff_del_bg(&self) -> Color {
+        blend_toward(self.error, self.base_bg, 0.82)
+    }
 }
 
 static DARK_NORMAL: Palette = Palette {

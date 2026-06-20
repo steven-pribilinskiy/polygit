@@ -1,6 +1,7 @@
 mod app;
 mod cache;
 mod changelog;
+mod diffview;
 mod git;
 mod groups;
 mod keymap;
@@ -2901,6 +2902,8 @@ async fn run_event_loop(
                                 continue;
                             }
                         }
+                        // `v` cycles the diff render style (raw → unified → split).
+                        KeyCode::Char('v') => app.diff_modal_cycle_view(),
                         // Clear/delete what the modal is showing: close the modal, then raise the
                         // confirm dialog over the repo page.
                         KeyCode::Char('d') => {

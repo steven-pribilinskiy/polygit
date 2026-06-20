@@ -209,6 +209,35 @@ pub enum DiffMode {
     BaseBranch,
 }
 
+/// How the diff modal renders the selected file: `Raw` keeps git's own colored output; `Unified`
+/// and `Split` are structured, syntax-highlighted, GitHub-PR-style views.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffView {
+    #[default]
+    Raw,
+    Unified,
+    Split,
+}
+
+impl DiffView {
+    /// Cycle Raw → Unified → Split → Raw.
+    pub fn cycle(self) -> Self {
+        match self {
+            DiffView::Raw => DiffView::Unified,
+            DiffView::Unified => DiffView::Split,
+            DiffView::Split => DiffView::Raw,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            DiffView::Raw => "raw",
+            DiffView::Unified => "unified",
+            DiffView::Split => "split",
+        }
+    }
+}
+
 /// What a diff modal is showing.
 #[derive(Debug, Clone)]
 pub enum DiffSource {
@@ -255,6 +284,8 @@ pub enum Pane {
 pub struct DiffModal {
     pub source: DiffSource,
     pub mode: DiffMode,
+    /// Render style: raw (git color) / unified / split. Persisted across opens.
+    pub view: DiffView,
     /// Which panel `j/k/g/G` drive (Tab toggles).
     pub focus: DiffFocus,
     /// The changed files (top panel). `None` while the list is still loading.

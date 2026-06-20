@@ -3,6 +3,16 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.65.0 — 2026-06-20
+diff modal: raw / unified / split views with syntax highlighting
+- `v` cycles the diff render style (persisted, shown in the footer): raw keeps
+  git's own colored output; unified and split are structured, line-numbered,
+  syntax-highlighted GitHub-PR-style views (split = old left / new right) with a
+  faint green/red wash on added/removed lines.
+- new src/diffview.rs: ANSI-stripping unified-diff parser (line numbers + split
+  pairing) and a lightweight, language-aware syntax highlighter keyed off the
+  file extension; palette gains diff_add_bg/diff_del_bg.
+
 ## v2.64.0 — 2026-06-20
 CLI builder overhaul: source-driven flags, checkboxes, multiline clickable command
 - source-driven flag list now includes the missing `-w/--workspace` (and `-j/--jobs`

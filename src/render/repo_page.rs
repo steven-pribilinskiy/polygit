@@ -18,6 +18,7 @@ pub(crate) fn diff_modal_footer(
     source: &DiffSource,
     focus: DiffFocus,
     chips: bool,
+    view: crate::app::DiffView,
 ) -> Vec<(String, Style, Option<HintKey>)> {
     let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let hint = Style::default().fg(Color::DarkGray);
@@ -58,6 +59,10 @@ pub(crate) fn diff_modal_footer(
         seg.push(("t".to_string(), key, Some(HintKey::Char('t'))));
         seg.push((" toggle".to_string(), hint, Some(HintKey::Char('t'))));
     }
+    // View toggle: raw / unified / split.
+    seg.push(sep.clone());
+    seg.push(("v".to_string(), key, Some(HintKey::Char('v'))));
+    seg.push((format!(" {}", view.label()), hint, Some(HintKey::Char('v'))));
     let delete_label = match source {
         DiffSource::Stash { .. } => Some(" drop"),
         DiffSource::Dirty { .. } => Some(" discard/remove"),
@@ -73,11 +78,168 @@ pub(crate) fn diff_modal_footer(
     seg
 }
 
+/// Color for a syntax token in the unified/split diff views (semantic ANSI so `apply_palette`
+/// themes them; an optional `bg` tints the whole line for added/removed rows).
+fn tok_style(tok: crate::diffview::Tok, bg: Option<Color>) -> Style {
+    use crate::diffview::Tok;
+    let style = match tok {
+        Tok::Keyword => Style::default().fg(Color::Magenta),
+        Tok::Str => Style::default().fg(Color::Green),
+        Tok::Num => Style::default().fg(Color::Yellow),
+        Tok::Comment => Style::default().fg(Color::DarkGray),
+        Tok::Punct => Style::default().fg(Color::Gray),
+        Tok::Plain => Style::default(),
+    };
+    match bg {
+        Some(bg) => style.bg(bg),
+        None => style,
+    }
+}
+
+/// Render the diff as a unified view: `old new ± code` rows, line-numbered, syntax-highlighted,
+/// with a faint green/red wash on added/removed lines (filled to `width`).
+fn diff_unified_lines(
+    raw: &[String],
+    path: &str,
+    width: u16,
+    palette: &crate::theme::Palette,
+) -> Vec<Line<'static>> {
+    use crate::diffview::{self, DiffLineKind};
+    let rows = diffview::parse(raw);
+    let num_w = rows
+        .iter()
+        .filter_map(|row| row.old.max(row.new))
+        .max()
+        .map(|n| n.to_string().len())
+        .unwrap_or(2)
+        .max(2);
+    let faint = Style::default().fg(Color::DarkGray);
+    rows.iter()
+        .map(|row| match row.kind {
+            DiffLineKind::Hunk => Line::from(Span::styled(
+                row.text.clone(),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )),
+            DiffLineKind::Meta => Line::from(Span::styled(row.text.clone(), faint)),
+            _ => {
+                let (bg, sign, sign_color) = match row.kind {
+                    DiffLineKind::Add => (Some(palette.diff_add_bg()), '+', Color::Green),
+                    DiffLineKind::Del => (Some(palette.diff_del_bg()), '-', Color::Red),
+                    _ => (None, ' ', Color::DarkGray),
+                };
+                let oldn = row.old.map(|n| n.to_string()).unwrap_or_default();
+                let newn = row.new.map(|n| n.to_string()).unwrap_or_default();
+                let base = |style: Style| if let Some(bg) = bg { style.bg(bg) } else { style };
+                let mut spans = vec![
+                    Span::styled(format!("{oldn:>num_w$} {newn:>num_w$} "), base(faint)),
+                    Span::styled(format!("{sign} "), base(Style::default().fg(sign_color))),
+                ];
+                let mut used = num_w * 2 + 2 + 2;
+                for (text, tok) in diffview::highlight(&row.text, path) {
+                    used += UnicodeWidthStr::width(text.as_str());
+                    spans.push(Span::styled(text, tok_style(tok, bg)));
+                }
+                if let Some(bg) = bg {
+                    let pad = (width as usize).saturating_sub(used);
+                    spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
+                }
+                Line::from(spans)
+            }
+        })
+        .collect()
+}
+
+/// One side of a split-diff row: `num code` padded to `code_w`, washed by the line's add/del bg.
+fn split_half(
+    row: Option<&crate::diffview::DiffRow>,
+    path: &str,
+    num_w: usize,
+    code_w: usize,
+    use_new_number: bool,
+    palette: &crate::theme::Palette,
+) -> Vec<Span<'static>> {
+    use crate::diffview::{self, DiffLineKind};
+    let Some(row) = row else {
+        return vec![Span::raw(" ".repeat(num_w + 1 + code_w))];
+    };
+    let bg = match row.kind {
+        DiffLineKind::Add => Some(palette.diff_add_bg()),
+        DiffLineKind::Del => Some(palette.diff_del_bg()),
+        _ => None,
+    };
+    let base = |style: Style| if let Some(bg) = bg { style.bg(bg) } else { style };
+    let number = if use_new_number { row.new } else { row.old };
+    let numstr = number.map(|n| n.to_string()).unwrap_or_default();
+    let mut spans =
+        vec![Span::styled(format!("{numstr:>num_w$} "), base(Style::default().fg(Color::DarkGray)))];
+    let mut used = 0usize;
+    for (text, tok) in diffview::highlight(&row.text, path) {
+        let take = UnicodeWidthStr::width(text.as_str());
+        if used + take > code_w {
+            break;
+        }
+        used += take;
+        spans.push(Span::styled(text, tok_style(tok, bg)));
+    }
+    spans.push(Span::styled(" ".repeat(code_w.saturating_sub(used)), base(Style::default())));
+    spans
+}
+
+/// Render the diff side-by-side: old lines on the left, new on the right, each line-numbered and
+/// syntax-highlighted; changed lines wash green/red.
+fn diff_split_lines(
+    raw: &[String],
+    path: &str,
+    width: u16,
+    palette: &crate::theme::Palette,
+) -> Vec<Line<'static>> {
+    use crate::diffview::{self, DiffLineKind};
+    let rows = diffview::parse(raw);
+    let split = diffview::to_split(&rows);
+    let num_w = rows
+        .iter()
+        .filter_map(|row| row.old.max(row.new))
+        .max()
+        .map(|n| n.to_string().len())
+        .unwrap_or(2)
+        .max(2);
+    let half = (width as usize).saturating_sub(1) / 2;
+    let code_w = half.saturating_sub(num_w + 1);
+    split
+        .iter()
+        .map(|srow| {
+            if srow.full {
+                let row = srow.left.as_ref().or(srow.right.as_ref());
+                let (text, style) = match row {
+                    Some(row) if row.kind == DiffLineKind::Hunk => (
+                        row.text.clone(),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ),
+                    Some(row) => (row.text.clone(), Style::default().fg(Color::DarkGray)),
+                    None => (String::new(), Style::default()),
+                };
+                return Line::from(Span::styled(text, style));
+            }
+            let mut spans = split_half(srow.left.as_ref(), path, num_w, code_w, false, palette);
+            spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+            spans.extend(split_half(srow.right.as_ref(), path, num_w, code_w, true, palette));
+            Line::from(spans)
+        })
+        .collect()
+}
+
 pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let modal_width = (area.width * 9 / 10).max(20);
     let modal_height = (area.height * 9 / 10).max(8);
     let modal_area = centered_rect(modal_width, modal_height, area);
 
+    let view = app.diff_modal.as_ref().map(|modal| modal.view).unwrap_or_default();
+    let diff_path = app
+        .diff_modal
+        .as_ref()
+        .and_then(|modal| modal.files.get(modal.selected).map(|file| file.path.clone()))
+        .unwrap_or_default();
+    let palette = app.palette();
     // Owned snapshot so the immutable borrow ends before we write scroll/areas back.
     let (
         title,
@@ -109,7 +271,7 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
             }
             DiffSource::Branch { name, .. } => format!(" {name} · vs base branch "),
         };
-        let footer = diff_modal_footer(&modal.source, modal.focus, modal.chips_active());
+        let footer = diff_modal_footer(&modal.source, modal.focus, modal.chips_active(), modal.view);
         (
             title,
             footer,
@@ -295,12 +457,17 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     let diff_content = Rect { width: diff_inner.width.saturating_sub(1), ..diff_inner };
 
     let diff_view_h = diff_content.height as usize;
-    let diff_total = diff_lines.len();
+    // Build the full rendered lines for the active view, then window by scroll. Unified/split parse
+    // + syntax-highlight the diff (GitHub-PR style); raw keeps git's own colored output.
+    let rendered: Vec<Line> = match view {
+        DiffView::Raw => diff_lines.iter().map(|line| ansi_line_to_ratatui(line)).collect(),
+        DiffView::Unified => diff_unified_lines(&diff_lines, &diff_path, diff_content.width, &palette),
+        DiffView::Split => diff_split_lines(&diff_lines, &diff_path, diff_content.width, &palette),
+    };
+    let diff_total = rendered.len();
     let diff_scroll = diff_scroll_req.min(diff_total.saturating_sub(diff_view_h));
-    let diff_view: Vec<Line> = diff_lines[diff_scroll..(diff_scroll + diff_view_h).min(diff_total)]
-        .iter()
-        .map(|line| ansi_line_to_ratatui(line))
-        .collect();
+    let diff_view: Vec<Line> =
+        rendered[diff_scroll..(diff_scroll + diff_view_h).min(diff_total)].to_vec();
     frame.render_widget(Paragraph::new(diff_view), diff_content);
     render_scrollbar(
         frame,

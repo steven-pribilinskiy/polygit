@@ -1011,6 +1011,7 @@ impl AppState {
         self.diff_modal = Some(DiffModal {
             source,
             mode: DiffMode::Uncommitted,
+            view: self.diff_view,
             focus: DiffFocus::Files,
             files: Vec::new(),
             selected: 0,
@@ -1021,6 +1022,16 @@ impl AppState {
             diff_loading: true,
             status_filter: None,
         });
+    }
+
+    /// Cycle the diff render style (raw → unified → split), persisting the choice for new modals.
+    pub fn diff_modal_cycle_view(&mut self) {
+        self.diff_view = self.diff_view.cycle();
+        if let Some(modal) = self.diff_modal.as_mut() {
+            modal.view = self.diff_view;
+            modal.scroll = 0;
+        }
+        self.save_state();
     }
 
     /// Toggle which diff-modal panel `j/k/g/G` drive (`Tab`).
