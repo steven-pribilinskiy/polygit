@@ -640,7 +640,7 @@ impl AppState {
                 last_commit_rel: String::new(),
                 last_commit_secs: 0,
                 subject: String::new(),
-                stats: None,
+                stats: stash.stats,
                 commit_sha: String::new(),
                 author: String::new(),
                 merge_base_short: None,
@@ -776,6 +776,7 @@ impl AppState {
             RepoPageColumn::Upstream => columns.upstream = !columns.upstream,
             RepoPageColumn::Base => columns.base = !columns.base,
             RepoPageColumn::Age => columns.age = !columns.age,
+            RepoPageColumn::PullRequest => columns.pull_request = !columns.pull_request,
             RepoPageColumn::Subject => columns.subject = !columns.subject,
         }
     }
@@ -792,6 +793,8 @@ impl AppState {
         };
         match column {
             RepoPageColumn::Age | RepoPageColumn::Subject | RepoPageColumn::Base => true,
+            // The PR column only carries data when the repo's current branch has an open PR.
+            RepoPageColumn::PullRequest => state.pr.is_some(),
             RepoPageColumn::AheadBehind | RepoPageColumn::Upstream => {
                 page.branches.iter().any(|branch| branch.upstream.is_some())
             }
@@ -828,6 +831,7 @@ impl AppState {
             upstream: on(columns.upstream, RepoPageColumn::Upstream),
             base: on(columns.base, RepoPageColumn::Base),
             age: columns.age,
+            pull_request: on(columns.pull_request, RepoPageColumn::PullRequest),
             subject: columns.subject,
         }
     }

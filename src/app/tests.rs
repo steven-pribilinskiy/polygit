@@ -767,6 +767,38 @@
     }
 
     #[test]
+    fn repo_page_pr_column_available_only_with_a_pr() {
+        let mut state = state_named(&["a"]);
+        state.repos[0].lock().unwrap().page = Some(RepoPageData::default());
+        state.repo_page = Some(0);
+        assert!(!state.repo_page_column_available(RepoPageColumn::PullRequest));
+        state.repos[0].lock().unwrap().pr =
+            Some(PrInfo { number: 42, title: "x".into(), url: "http://e/42".into() });
+        assert!(state.repo_page_column_available(RepoPageColumn::PullRequest));
+        // Toggling flips the stored flag (default on).
+        assert!(state.repo_page_columns.pull_request);
+        state.toggle_repo_page_column(RepoPageColumn::PullRequest);
+        assert!(!state.repo_page_columns.pull_request);
+    }
+
+    #[test]
+    fn stash_rows_carry_their_change_stats() {
+        let mut state = state_named(&["a"]);
+        state.repos[0].lock().unwrap().page = Some(RepoPageData {
+            stashes: vec![StashInfo {
+                index: 0,
+                label: "WIP on main".into(),
+                stats: Some(BranchStats { added: 1, modified: 2, deleted: 0 }),
+            }],
+            ..Default::default()
+        });
+        state.repo_page = Some(0);
+        let rows = state.repo_page_rows();
+        let stash = rows.iter().find(|row| row.kind == PageRowKind::Stash).unwrap();
+        assert_eq!(stash.stats.map(|stat| stat.total()), Some(3));
+    }
+
+    #[test]
     fn diff_select_steps_through_visible_list() {
         let statuses = ["M", "D", "A", "M", "D", "A", "M", "D", "A", "M", "D", "A"];
         let mut state = state_named(&["a"]);

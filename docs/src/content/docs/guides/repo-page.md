@@ -18,7 +18,8 @@ appear when there's something to list.
   fresh ahead/behind vs upstream, an uncommitted-change count, **added / modified / deleted /
   total** change counts vs the base branch, the upstream name, last-commit date, and subject.
 - **`⑂ WORKTREES`** — each linked worktree's branch and path.
-- **`≡ STASHES`** — every stash entry.
+- **`≡ STASHES`** — every stash entry, with its own **added / modified / deleted / total** change
+  counts (from `git stash show`, loaded lazily) shown in the same columns as branches.
 
 A red `●` marks any branch or worktree with uncommitted changes; count cells show a dim zero
 rather than a blank. The result of an action (e.g. "Dropped stash@{0}") and any fetch error
@@ -27,8 +28,9 @@ appear in a banner pinned to the bottom row.
 ### Columns (`t`) and the info panel (`i`)
 
 Press `t` to open the column-toggle menu, then a chip key — `b` ahead/behind, `y` dirty,
-`a` added, `m` modified, `d` deleted, `c` total, `u` upstream, `g` age, `s` subject — or click
-a chip. The added/modified/deleted counts are each branch's changes vs the merge-base with the
+`a` added, `m` modified, `d` deleted, `c` total, `u` upstream, `g` age, `r` pr, `s` subject — or
+click a chip. The **pr** column shows the current branch's open pull request (a clickable `#N`, via
+`gh`) on the HEAD row, blank on the others. The added/modified/deleted counts are each branch's changes vs the merge-base with the
 repo's default branch, computed in the background (cells show `…` until ready). A column every
 branch leaves empty auto-hides and its chip goes dim and inert. Choices persist across runs.
 The page distributes its width across the visible columns — hiding columns reclaims that space

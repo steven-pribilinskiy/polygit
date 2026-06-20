@@ -453,7 +453,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     };
     let selected = app.repo_page_selected.min(rows.len().saturating_sub(1));
 
-    let (name, path, loading, fetched, fetch_error, pulling) = {
+    let (name, path, loading, fetched, fetch_error, pulling, head_pr) = {
         let state = app.repos[idx].lock().unwrap();
         let (fetched, fetch_error) = match &state.page {
             Some(page) => (page.fetched, page.fetch_error.clone()),
@@ -466,6 +466,8 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             fetched,
             fetch_error,
             state.pull_loading,
+            // The current branch's open PR (for the `pr` column on the HEAD row).
+            state.pr.as_ref().map(|pr| (format!("#{}", pr.number), pr.url.clone())),
         )
     };
     let head_branch = rows
@@ -598,7 +600,8 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         + usize::from(columns.total) * count_cell_w
         + if columns.upstream { 30 } else { 0 } // "  " + 28
         + if columns.base { 30 } else { 0 } // "  " + 28
-        + if columns.age { 16 } else { 0 }; // "  " + 14
+        + if columns.age { 16 } else { 0 } // "  " + 14
+        + if columns.pull_request { 9 } else { 0 }; // "  " + 7
     let branch_floor = "branch".len() + 1; // +1 so the sort ▲/▼ never overflows the header
     let natural_branch =
         rows.iter().map(|row| row.branch.chars().count()).max().unwrap_or(8).max(branch_floor);
@@ -619,21 +622,24 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let data_cells = |ahead: Option<u32>,
                       behind: Option<u32>,
                       stats: Option<crate::app::BranchStats>,
-                      dirty_count: u32,
+                      dirty: Option<u32>,
                       upstream: &str,
                       base: &str,
                       base_override: bool,
+                      base_clickable: bool,
+                      pr: Option<&str>,
                       age: &str,
                       subject: &str|
-     -> (Vec<Span<'static>>, Option<usize>) {
+     -> (Vec<Span<'static>>, Option<usize>, Option<usize>) {
         let mut spans: Vec<Span> = Vec::new();
         let mut base_index = None;
+        let mut pr_index = None;
         if columns.ahead_behind {
             spans.push(Span::raw("  "));
             spans.extend(ahead_behind_spans(ahead, behind, 10, icons));
         }
         if columns.dirty {
-            spans.push(count_cell(icons.dirty, Some(dirty_count), count_w, Color::Yellow));
+            spans.push(count_cell(icons.dirty, dirty, count_w, Color::Yellow));
         }
         if columns.added {
             spans.push(count_cell("+", stats.map(|stat| stat.added), count_w, Color::Green));
@@ -653,32 +659,51 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             spans.push(Span::styled(format!("  {:<28}", truncate_str(upstream, 28)), label));
         }
         if columns.base {
-            base_index = Some(spans.len());
-            let inner = if base.is_empty() {
-                "…".to_string()
-            } else if base_override {
-                format!("{}*", truncate_str(base, 27))
+            if base_clickable {
+                base_index = Some(spans.len());
+                let inner = if base.is_empty() {
+                    "…".to_string()
+                } else if base_override {
+                    format!("{}*", truncate_str(base, 27))
+                } else {
+                    truncate_str(base, 28)
+                };
+                // Pad to the header's fixed 28-cell width so `age`/`subject` stay aligned.
+                let text = format!("  {inner:<28}");
+                let style = if base.is_empty() {
+                    label
+                } else if base_override {
+                    base_override_style
+                } else {
+                    base_style
+                };
+                spans.push(Span::styled(text, style));
             } else {
-                truncate_str(base, 28)
-            };
-            // Pad to the header's fixed 28-cell width so `age`/`subject` stay aligned.
-            let text = format!("  {inner:<28}");
-            let style = if base.is_empty() {
-                label
-            } else if base_override {
-                base_override_style
-            } else {
-                base_style
-            };
-            spans.push(Span::styled(text, style));
+                // Stash rows have no base branch — keep the column slot blank (and not clickable).
+                spans.push(Span::styled(format!("  {:<28}", ""), label));
+            }
         }
         if columns.age {
             spans.push(Span::styled(format!("  {:<14}", truncate_str(age, 14)), label));
         }
+        if columns.pull_request {
+            // `#N` on the current-branch row (clickable → opens the PR); blank elsewhere. Fixed
+            // 7-cell width (after a 2-space gap) so the following subject stays aligned.
+            let text = pr.unwrap_or("");
+            if pr.is_some() {
+                pr_index = Some(spans.len());
+            }
+            let style = if pr.is_some() {
+                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
+            } else {
+                label
+            };
+            spans.push(Span::styled(format!("  {text:<7}"), style));
+        }
         if columns.subject {
             spans.push(Span::styled(format!("  {}", truncate_str(subject, subject_w)), label));
         }
-        (spans, base_index)
+        (spans, base_index, pr_index)
     };
 
     // The column-header line, aligned to the data columns and clickable to sort. `count_cell`
@@ -735,6 +760,10 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         if columns.age {
             cell(&mut spans, &mut hcol, "  ", "age", 14, RepoPageSort::Age);
         }
+        if columns.pull_request {
+            // Static (PR isn't sortable — only the current branch carries one).
+            spans.push(Span::styled(format!("  {:<7}", "pr"), label));
+        }
         if columns.subject {
             cell(&mut spans, &mut hcol, "  ", "subject", 0, RepoPageSort::Subject);
         }
@@ -757,6 +786,8 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     // pair is the `base` cell's column range (relative to the line start) for click hit-testing;
     // None for headers/blanks/stash rows. The banner / fetch error render in a fixed bottom row.
     let mut items: Vec<PageItem> = Vec::new();
+    // The single clickable PR cell (current-branch row): (absolute item index, start, end, url).
+    let mut pr_item: Option<(usize, u16, u16, String)> = None;
 
     // Tabbed mode: a clickable tab bar (Branches/Worktrees/Stashes/Commits) replaces the section
     // headers, and only the active tab's rows render (rows are already filtered to it).
@@ -821,21 +852,31 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         );
         let mut line_spans = vec![marker, name_span];
         let prefix_width: usize = line_spans.iter().map(|span| span.width()).sum();
-        let (cells, base_index) = data_cells(
+        let pr_text = if row.is_head { head_pr.as_ref().map(|(text, _)| text.as_str()) } else { None };
+        let (cells, base_index, pr_index) = data_cells(
             row.ahead,
             row.behind,
             row.stats,
-            row.dirty_count,
+            Some(row.dirty_count),
             &row.upstream.clone().unwrap_or_default(),
             &row.base.clone().unwrap_or_default(),
             row.base_is_override,
+            true,
+            pr_text,
             &row.last_commit_rel,
             &row.subject,
         );
-        let base_range = base_index.map(|index| {
+        let span_range = |index: usize| {
             let start = prefix_width + cells[..index].iter().map(|span| span.width()).sum::<usize>();
             (start as u16, (start + cells[index].width()) as u16)
-        });
+        };
+        let base_range = base_index.map(span_range);
+        // The HEAD row's `#N` PR cell is clickable (opens the PR). Recorded by absolute item index
+        // so the scroll-windowed draw loop can register its screen-row click target.
+        if let (Some(index), Some((_, url))) = (pr_index, head_pr.as_ref()) {
+            let (start, end) = span_range(index);
+            pr_item = Some((items.len(), start, end, url.clone()));
+        }
         line_spans.extend(cells);
         items.push((Line::from(line_spans), Some(sel_index), base_range));
     }
@@ -858,14 +899,16 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
                 Span::styled(format!("  {:<name_pad$}", truncate_str(&row.branch, name_pad)), cyan);
             let mut line_spans = vec![name_span];
             let prefix_width: usize = line_spans.iter().map(|span| span.width()).sum();
-            let (cells, base_index) = data_cells(
+            let (cells, base_index, _) = data_cells(
                 row.ahead,
                 row.behind,
                 row.stats,
-                row.dirty_count,
+                Some(row.dirty_count),
                 &row.upstream.clone().unwrap_or_default(),
                 &row.base.clone().unwrap_or_default(),
                 row.base_is_override,
+                true,
+                None,
                 &row.last_commit_rel,
                 &row.path.display().to_string(),
             );
@@ -892,15 +935,31 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             if row.kind != PageRowKind::Stash {
                 continue;
             }
+            // Stash rows flow through the same column system as branches: a `stash@{N}` name, the
+            // change stats (added/modified/deleted/total, from `git stash show`), and the stash
+            // label as the subject. Branch-only columns (ahead/behind, dirty, upstream, base, age)
+            // stay blank, and the base cell isn't clickable.
             let stash_ref = format!("stash@{{{}}}", row.stash_index.unwrap_or(0));
-            items.push((
-                Line::from(vec![
-                    Span::styled(format!("  {stash_ref:<10}"), Style::default().fg(Color::Magenta)),
-                    Span::styled(format!("  {}", truncate_str(&row.branch, 70)), value),
-                ]),
-                Some(sel_index),
+            let name_span = Span::styled(
+                format!("  {:<name_pad$}", truncate_str(&stash_ref, name_pad)),
+                Style::default().fg(Color::Magenta),
+            );
+            let (cells, _, _) = data_cells(
                 None,
-            ));
+                None,
+                row.stats,
+                None,
+                "",
+                "",
+                false,
+                false,
+                None,
+                "",
+                &row.branch,
+            );
+            let mut line_spans = vec![name_span];
+            line_spans.extend(cells);
+            items.push((Line::from(line_spans), Some(sel_index), None));
         }
     }
 
@@ -973,9 +1032,18 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     app.repo_page_click.clear();
     app.base_cell_click.clear();
     app.repo_page_sort_click.clear();
+    app.repo_page_pr_click = None;
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, sel, base_range)) in items[start..end].iter().enumerate() {
         let mut line = line.clone();
+        // Register the clickable PR cell when the current-branch row is on screen.
+        if let Some((item_index, pr_start, pr_end, url)) = &pr_item {
+            if start + offset == *item_index {
+                let screen_row = inner.y + offset as u16;
+                app.repo_page_pr_click =
+                    Some((screen_row, inner.x + *pr_start, inner.x + *pr_end, url.clone()));
+            }
+        }
         // Register the clickable sort headers when the header row is on screen.
         if start + offset == header_item_index {
             let screen_row = inner.y + offset as u16;
@@ -1058,7 +1126,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             }
             _ => Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
         };
-        let entries: [(RepoPageColumn, &str, &str, bool); 9] = [
+        let entries: [(RepoPageColumn, &str, &str, bool); 10] = [
             (RepoPageColumn::AheadBehind, "b", "↑↓", columns.ahead_behind),
             (RepoPageColumn::Dirty, "y", "dirty", columns.dirty),
             (RepoPageColumn::Added, "a", "added", columns.added),
@@ -1067,6 +1135,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             (RepoPageColumn::Total, "c", "total", columns.total),
             (RepoPageColumn::Upstream, "u", "upstream", columns.upstream),
             (RepoPageColumn::Age, "g", "age", columns.age),
+            (RepoPageColumn::PullRequest, "r", "pr", columns.pull_request),
             (RepoPageColumn::Subject, "s", "subject", columns.subject),
         ];
         let mut spans: Vec<Span> = vec![Span::styled(" cols: ", label)];

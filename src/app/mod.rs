@@ -318,6 +318,8 @@ pub struct AppState {
     pub repo_page_back_click: Option<(u16, u16, u16)>,
     /// The repo page's clickable maximize/restore button on the top border (left of `[esc back]`).
     pub repo_page_window_click: Option<(u16, u16, u16)>,
+    /// The repo page's clickable PR cell on the current-branch row: (row, col_start, col_end, url).
+    pub repo_page_pr_click: Option<(u16, u16, u16, String)>,
     /// Which repo-page branch columns are shown (persisted).
     pub repo_page_columns: RepoPageColumns,
     /// The page-local `t` column-toggle menu is open.
@@ -613,6 +615,7 @@ impl AppState {
             help_area: Rect::default(),
             repo_page_back_click: None,
             repo_page_window_click: None,
+            repo_page_pr_click: None,
             repo_page_columns: persisted.repo_page_columns,
             repo_page_toggle: false,
             repo_page_toggle_click: Vec::new(),

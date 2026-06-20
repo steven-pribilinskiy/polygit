@@ -1795,10 +1795,21 @@ async fn run_event_loop(
                                     mouse.row == row && mouse.column >= start && mouse.column < end
                                 })
                                 .map(|&(.., kind)| kind);
+                            let pr_url = app
+                                .repo_page_pr_click
+                                .as_ref()
+                                .filter(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|(_, _, _, url)| url.clone());
                             if region_hit(app.repo_page_window_click, mouse.column, mouse.row) {
                                 app.toggle_repo_page_maximized();
                             } else if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
                                 app.close_repo_page();
+                            } else if let Some(url) = pr_url {
+                                drop(app);
+                                open_url(&url);
+                                continue;
                             } else if let Some(kind) = tab_click {
                                 app.repo_page_select_tab(kind);
                             } else if let Some(column) =
@@ -2584,6 +2595,7 @@ async fn run_event_loop(
                             KeyCode::Char('u') => Some(RepoPageColumn::Upstream),
                             KeyCode::Char('f') => Some(RepoPageColumn::Base),
                             KeyCode::Char('g') => Some(RepoPageColumn::Age),
+                            KeyCode::Char('r') => Some(RepoPageColumn::PullRequest),
                             KeyCode::Char('s') => Some(RepoPageColumn::Subject),
                             _ => None,
                         };

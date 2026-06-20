@@ -187,6 +187,8 @@ pub struct WorktreeInfo {
 pub struct StashInfo {
     pub index: usize,
     pub label: String,
+    /// Change counts (vs the stash's parent) — `None` until the stash-stats worker fills them in.
+    pub stats: Option<BranchStats>,
 }
 
 /// A recent commit on the repo page's Commits tab (read-only).
@@ -477,6 +479,8 @@ pub enum RepoPageColumn {
     Upstream,
     Base,
     Age,
+    /// Open pull request for the current branch (via `gh`), shown as a clickable `#N` on the HEAD row.
+    PullRequest,
     Subject,
 }
 
@@ -546,6 +550,7 @@ pub struct RepoPageColumns {
     pub upstream: bool,
     pub base: bool,
     pub age: bool,
+    pub pull_request: bool,
     pub subject: bool,
 }
 
@@ -561,6 +566,7 @@ impl Default for RepoPageColumns {
             upstream: true,
             base: true,
             age: true,
+            pull_request: true,
             subject: true,
         }
     }

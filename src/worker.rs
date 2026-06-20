@@ -18,8 +18,8 @@ use crate::git::{
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
-    pull_ff_only, pull_request, remove_worktree, resolve_base, stash_file_diff, stash_file_list, stash_files,
-    uncommitted_file_list, PullOutcome,
+    pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
+    stash_file_list, stash_files, uncommitted_file_list, PullOutcome,
 };
 
 /// Pull a single repository, updating `repo_state` as progress arrives.
@@ -554,7 +554,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
     let base_branch = default_base_branch(&path).await;
     let branches = list_local_branches(&path).await;
     let worktrees = list_worktrees(&path).await;
-    let stashes = list_stashes(&path).await;
+    let mut stashes = list_stashes(&path).await;
     let commits = list_commits(&path, 50).await;
     let head_dirty_count = dirty_count(&path).await;
     let mut dirty_worktrees = Vec::new();
@@ -578,8 +578,9 @@ pub async fn run_repo_page(repo: SharedRepoState) {
             base_branch: base_branch.clone(),
         });
     }
-    // Per-branch A/M/D stats fill in asynchronously (cells show `…` until they land).
+    // Per-branch + per-stash A/M/D stats fill in asynchronously (cells show `…` until they land).
     tokio::spawn(run_branch_stats(Arc::clone(&repo)));
+    tokio::spawn(run_stash_stats(Arc::clone(&repo)));
 
     let fetch = fetch_remote(&path).await;
     let mut branches = list_local_branches(&path).await;
@@ -593,6 +594,12 @@ pub async fn run_repo_page(repo: SharedRepoState) {
                     branch.merge_base_short = old.merge_base_short.clone();
                     branch.base = old.base.clone();
                     branch.base_is_override = old.base_is_override;
+                }
+            }
+            // Carry over stash stats so the post-fetch page rebuild doesn't reset them to `…`.
+            for stash in &mut stashes {
+                if let Some(old) = page.stashes.iter().find(|info| info.index == stash.index) {
+                    stash.stats = old.stats;
                 }
             }
         }
@@ -612,8 +619,49 @@ pub async fn run_repo_page(repo: SharedRepoState) {
         });
         state.page_loading = false;
     }
-    // Compute stats for any branch that still lacks them (new refs the fetch revealed).
+    // Compute stats for any branch / stash that still lacks them (new refs the fetch revealed).
+    tokio::spawn(run_stash_stats(Arc::clone(&repo)));
     run_branch_stats(repo).await;
+}
+
+/// Per-stash change stats (`git stash show --name-status`), filled in for any stash lacking them.
+/// Mirrors `run_branch_stats` but needs no base resolution. Never holds the `AppState` lock across
+/// the subprocess; each result is written back individually so cells fill in as they land.
+pub async fn run_stash_stats(repo: SharedRepoState) {
+    let (path, jobs) = {
+        let state = repo.lock().unwrap();
+        let Some(page) = state.page.as_ref() else {
+            return;
+        };
+        let jobs: Vec<usize> =
+            page.stashes.iter().filter(|stash| stash.stats.is_none()).map(|stash| stash.index).collect();
+        (state.path.clone(), jobs)
+    };
+    if jobs.is_empty() {
+        return;
+    }
+    let semaphore = Arc::new(Semaphore::new(4));
+    let mut handles = Vec::new();
+    for index in jobs {
+        let repo = Arc::clone(&repo);
+        let path = path.clone();
+        let semaphore = Arc::clone(&semaphore);
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
+            let Some(stats) = stash_diff_stats(&path, index).await else {
+                return;
+            };
+            let mut state = repo.lock().unwrap();
+            if let Some(page) = state.page.as_mut() {
+                if let Some(stash) = page.stashes.iter_mut().find(|stash| stash.index == index) {
+                    stash.stats = Some(stats);
+                }
+            }
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
 }
 
 /// Per-branch change stats vs each branch's own resolved base — its override if set, else the
