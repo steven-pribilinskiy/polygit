@@ -677,8 +677,8 @@ impl AppState {
             (20, 1) => self.repo_page_maximized = true,
             (21, 0) => self.branch_check = BranchCheck::Off,
             (21, 1) => self.branch_check = BranchCheck::Auto,
-            (22, 0) => self.tooltips.enabled = true,
-            (22, 1) => self.tooltips.enabled = false,
+            (22, 0) => self.tooltips.set_all(true),
+            (22, 1) => self.tooltips.set_all(false),
             (23, 0) => self.tooltips.footer = true,
             (23, 1) => self.tooltips.footer = false,
             (24, 0) => self.tooltips.headers = true,
@@ -753,7 +753,16 @@ impl AppState {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
             },
-            22 => usize::from(!self.tooltips.enabled),
+            // All tooltips: 0 = all on, 1 = all off, 2 = mixed (so neither radio renders active).
+            22 => {
+                if self.tooltips.all_on() {
+                    0
+                } else if self.tooltips.all_off() {
+                    1
+                } else {
+                    2
+                }
+            }
             23 => usize::from(!self.tooltips.footer),
             24 => usize::from(!self.tooltips.headers),
             25 => usize::from(!self.tooltips.counts),
@@ -798,6 +807,7 @@ impl AppState {
     /// Empty when everything is already at defaults.
     pub fn settings_reset_plan(&self) -> Vec<String> {
         (0..Self::SETTINGS_ROWS)
+            .filter(|&row| row != 22) // "All tooltips" is derived from the per-area rows below it.
             .filter_map(|row| {
                 let current = self.settings_active_option(row);
                 let default = Self::settings_default_option(row);

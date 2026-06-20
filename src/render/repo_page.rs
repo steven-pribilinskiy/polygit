@@ -703,10 +703,10 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     // its click columns are predictable.
     let footer_row = area.y + area.height.saturating_sub(1);
     let footer_line = build_hint_footer(footer_segments, area.x + 1, footer_row, &mut app.hint_click);
-    // Top-border window controls (Windows-style): a maximize/restore icon, then the `[esc back]`
-    // close button. The icon's glyph reflects the current state (restored → maximize; maximized →
-    // restore). Both are always-visible, clickable affordances.
-    let win_glyph = if app.repo_page_maximized { icons.win_restore } else { icons.win_maximize };
+    // Top-border window controls: a textual maximize/restore button (with its `m` key mnemonic),
+    // then the `[esc back]` close button. The label reflects the current state. Both are
+    // always-visible, clickable affordances.
+    let win_text = if app.repo_page_maximized { "[m restore]" } else { "[m maximize]" };
     let back_text = "[esc back]";
     let chip_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
     let cols_text = "[cols ▾]";
@@ -716,7 +716,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         Span::raw(" "),
         Span::styled(sort_text, chip_style),
         Span::raw("  "),
-        Span::styled(win_glyph, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(win_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         Span::styled(back_text, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
     ])
@@ -724,9 +724,9 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let back_end = area.x + area.width.saturating_sub(1);
     let back_start = back_end.saturating_sub(back_text.len() as u16);
     app.repo_page_back_click = Some((area.y, back_start, back_end));
-    // The single-cell icon sits one space to the left of `[esc back]`.
+    // The maximize/restore button sits one space to the left of `[esc back]`.
     let win_end = back_start.saturating_sub(1);
-    let win_start = win_end.saturating_sub(1);
+    let win_start = win_end.saturating_sub(win_text.len() as u16);
     app.repo_page_window_click = Some((area.y, win_start, win_end));
     // The `[cols ▾]` / `[sort ▾]` chips sit left of the window controls (two-space gap).
     let sort_end = win_start.saturating_sub(2);

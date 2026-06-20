@@ -1341,9 +1341,6 @@ pub struct IconSet {
     /// Favorited / not-favorited star (favorites column).
     pub fav_on: &'static str,
     pub fav_off: &'static str,
-    /// Window controls on the repo-page title bar: maximize (when restored) / restore (when maximized).
-    pub win_maximize: &'static str,
-    pub win_restore: &'static str,
 }
 
 // Status glyphs are drawn from Geometric Shapes (U+25xx), which terminal fonts like Cascadia Code
@@ -1375,8 +1372,6 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     fav_off: "☆",
     // Geometric Shapes (U+25xx), single-cell like the status glyphs above: hollow square = maximize,
     // square-in-square = restore. Distinct shapes, reliable width across terminal fonts.
-    win_maximize: "▢",
-    win_restore: "▣",
 };
 
 pub static EMOJI_ICONS: IconSet = IconSet {
@@ -1413,8 +1408,6 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     fav_on: "★",
     fav_off: "☆",
     // Window controls stay Unicode in both sets (like the arrows/stars) for a fixed single-cell width.
-    win_maximize: "▢",
-    win_restore: "▣",
 };
 
 /// A mouse-clickable command region in the status bar (rebuilt each render).
@@ -1462,9 +1455,6 @@ fn default_true() -> bool {
 /// All default on (tooltips still require `hover_effects`, which provides the cursor tracking).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TooltipPrefs {
-    /// Master switch — off hides every tooltip regardless of the per-area flags below.
-    #[serde(default = "default_true")]
-    pub enabled: bool,
     /// Footer / status-bar command tooltips (what each command does).
     #[serde(default = "default_true")]
     pub footer: bool,
@@ -1484,14 +1474,26 @@ pub struct TooltipPrefs {
 
 impl Default for TooltipPrefs {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            footer: true,
-            headers: true,
-            counts: true,
-            settings: true,
-            links: true,
-        }
+        Self { footer: true, headers: true, counts: true, settings: true, links: true }
+    }
+}
+
+impl TooltipPrefs {
+    /// Every area is on (the "All tooltips" master shows `on`).
+    pub fn all_on(self) -> bool {
+        self.footer && self.headers && self.counts && self.settings && self.links
+    }
+    /// Every area is off (the master shows `off`; mixed → neither radio is selected).
+    pub fn all_off(self) -> bool {
+        !self.footer && !self.headers && !self.counts && !self.settings && !self.links
+    }
+    /// Set every area on/off (the "All tooltips" bulk toggle).
+    pub fn set_all(&mut self, value: bool) {
+        self.footer = value;
+        self.headers = value;
+        self.counts = value;
+        self.settings = value;
+        self.links = value;
     }
 }
 

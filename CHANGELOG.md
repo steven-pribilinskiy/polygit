@@ -3,6 +3,20 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.66.0 — 2026-06-20
+tooltip/repo-page fixes: sticky [x], textual maximize, single-view maximize, row hover, tri-state All-tooltips
+- the column-header tooltip now stays alive while the cursor moves from the
+  header into the popup (keyed off the popup OR its anchor), so the `[x]`
+  hide-column button is reachable instead of vanishing mid-move.
+- the repo page's maximize/restore control is now a textual `[m maximize]` /
+  `[m restore]` button (its `m` key mnemonic), replacing the ▢/▣ icon.
+- when maximized the repo page is a single view — every section stacked under its
+  header, no tab bar (tabs apply only while restored).
+- repo-page rows (branches/worktrees/stashes) now hover-highlight like the list.
+- the Tooltips "All tooltips" control is now a bulk on/off over the per-area
+  flags: toggling it sets them all; changing an individual area makes it mixed
+  (neither radio selected). Replaces the old separate master gate.
+
 ## v2.65.0 — 2026-06-20
 diff modal: raw / unified / split views with syntax highlighting
 - `v` cycles the diff render style (persisted, shown in the footer): raw keeps

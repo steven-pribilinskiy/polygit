@@ -931,7 +931,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             vec![
                 (
                     "All tooltips",
-                    vec![("on", app.tooltips.enabled), ("off", !app.tooltips.enabled)],
+                    // Tri-state: on when every area is on, off when all off, neither when mixed.
+                    vec![("on", app.tooltips.all_on()), ("off", app.tooltips.all_off())],
                 ),
                 (
                     "Footer commands",

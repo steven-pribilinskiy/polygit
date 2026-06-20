@@ -411,9 +411,23 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             scrollbar_col_hit()
         {
             hits.push(scroll);
+        } else if let Some(&(_, sel_index)) =
+            app.repo_page_click.iter().find(|&&(row, _)| row == hrow)
+        {
+            // A selectable body row (branch / worktree / stash) — tint it like the main list: a
+            // soft wash, or the deeper selection tint when it's also the selected row.
+            let rect = Rect {
+                x: app.repo_page_inner.x,
+                y: hrow,
+                width: app.repo_page_inner.width,
+                height: 1,
+            };
+            if sel_index == app.repo_page_selected {
+                strong_hits.push(rect);
+            } else {
+                hits.push(rect);
+            }
         }
-        // No body-row hover tint on the repo page: a full-width row following the cursor reads as
-        // the whole page tinting. Only the controls above stay reactive.
     } else {
         // Main two-pane view. (Footer status-bar commands are handled by the top-level check above.)
         if let Some(column) = app.header_sort_at(hcol, hrow) {
