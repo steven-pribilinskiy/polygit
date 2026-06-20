@@ -120,55 +120,15 @@ pub(crate) fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str
 /// Contrast / Selection — Icons live in the Legend tab) reusing `settings_row_line`, plus a live
 /// swatch showcase of the palette's semantic colors (drawn in their semantic ANSI colors so
 /// `apply_palette` themes them, updating as the radios change).
-pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Option<String>)> {
-    let title_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-    let group_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
+/// A Design System section: its title + its content lines (each with an optional click sentinel).
+type DesignSection = (&'static str, Vec<(Line<'static>, Option<String>)>);
+
+/// The Design System tab as named sections — each `(title, items)`. The flat layout concatenates
+/// them under group headers; the tabbed layout shows the section titles as vertical tabs with the
+/// active section's items beside them. All content is semantic-ANSI so `apply_palette` themes it.
+pub(crate) fn design_sections(app: &AppState) -> Vec<DesignSection> {
     let dim = Style::default().fg(Color::DarkGray);
-    let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let mut throwaway: Vec<(u16, u16, u16, usize, Option<usize>)> = Vec::new();
-
-    items.push((Line::from(Span::styled("DESIGN SYSTEM".to_string(), title_style)), None));
-    items.push((Line::from(""), None));
-    items.push((Line::from(Span::styled("Theming".to_string(), group_style)), None));
-    for row_idx in [5usize, 6, 7, 8] {
-        let (label, options) = design_radio_data(app, row_idx);
-        // The Line is position-independent; real click regions are registered by render_help at the
-        // row's actual screen position via the sentinel. Discard the dummy-position clicks here.
-        let underline_idx = radio_underline_idx(app, row_idx);
-        let line = settings_row_line(
-            row_idx, false, label, &options, (0, 0), false, underline_idx, false, None, &mut throwaway,
-        );
-        items.push((line, Some(format!("{DESIGN_RADIO_PREFIX}{row_idx}"))));
-    }
-    items.push((Line::from(""), None));
-    items.push((Line::from(Span::styled("Palette — semantic colors (live)".to_string(), group_style)), None));
-    let swatch = |name: &str, color: Color, purpose: &str| {
-        (
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled("███ ".to_string(), Style::default().fg(color)),
-                Span::styled(
-                    format!("{name:<8}"),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!(" {purpose}"), dim),
-            ]),
-            None,
-        )
-    };
-    items.push(swatch("accent", Color::Cyan, "primary accent · links · active option"));
-    items.push(swatch("ok", Color::Green, "success · up-to-date · pulled / added"));
-    items.push(swatch("warn", Color::Yellow, "warning · running · dirty marker"));
-    items.push(swatch("error", Color::Red, "failure · deleted"));
-    items.push(swatch("info", Color::Magenta, "secondary accent · stashes · throttled"));
-    items.push(swatch("blue", Color::Blue, "tertiary accent"));
-    items.push(swatch("muted", Color::Gray, "secondary text"));
-    items.push(swatch("faint", Color::DarkGray, "tertiary text · dim zero counts"));
-    items.push(swatch("bright", Color::White, "strongest text"));
-
-    // Components showcase — the reusable tui-pick primitives drawn live in every interaction state
-    // (a storybook). Buttons under both hover effects, list rows under both selection effects, and
-    // the radio glyph. All semantic-ANSI so `apply_palette` themes them with the live theme.
     use tui_pick::components::{
         button, list_item, radio, ButtonStyle, HoverEffect, Interaction, ListItemStyle,
         SelectionEffect,
@@ -189,7 +149,6 @@ pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Op
         disabled: Color::DarkGray,
         selection,
     };
-    // The user's current choices, marked so the showcase doubles as a live preview of the settings.
     let active_hover = match app.button_hover_style {
         crate::app::ButtonHoverStyle::Inverted => HoverEffect::Inverted,
         crate::app::ButtonHoverStyle::Subtle => HoverEffect::Subtle,
@@ -200,26 +159,57 @@ pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Op
     };
     let mark = |on: bool| if on { " ◀ active" } else { "" };
 
-    items.push((Line::from(""), None));
-    items.push((
-        Line::from(Span::styled("Components — buttons (live)".to_string(), group_style)),
+    // Theming radios (Icons live in the Legend tab).
+    let mut theming: Vec<(Line<'static>, Option<String>)> = Vec::new();
+    for row_idx in [5usize, 6, 7, 8] {
+        let (label, options) = design_radio_data(app, row_idx);
+        let underline_idx = radio_underline_idx(app, row_idx);
+        let line = settings_row_line(
+            row_idx, false, label, &options, (0, 0), false, underline_idx, false, None, &mut throwaway,
+        );
+        theming.push((line, Some(format!("{DESIGN_RADIO_PREFIX}{row_idx}"))));
+    }
+
+    // Palette swatches.
+    let swatch = |name: &str, color: Color, purpose: &str| {
+        (
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("███ ".to_string(), Style::default().fg(color)),
+                Span::styled(
+                    format!("{name:<8}"),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!(" {purpose}"), dim),
+            ]),
+            None,
+        )
+    };
+    let palette = vec![
+        swatch("accent", Color::Cyan, "primary accent · links · active option"),
+        swatch("ok", Color::Green, "success · up-to-date · pulled / added"),
+        swatch("warn", Color::Yellow, "warning · running · dirty marker"),
+        swatch("error", Color::Red, "failure · deleted"),
+        swatch("info", Color::Magenta, "secondary accent · stashes · throttled"),
+        swatch("blue", Color::Blue, "tertiary accent"),
+        swatch("muted", Color::Gray, "secondary text"),
+        swatch("faint", Color::DarkGray, "tertiary text · dim zero counts"),
+        swatch("bright", Color::White, "strongest text"),
+    ];
+
+    // Buttons showcase.
+    let mut buttons: Vec<(Line<'static>, Option<String>)> = vec![(
+        Line::from(Span::styled(format!("  {:<11}{:<10}{:<10}", "state", "inverted", "subtle"), dim)),
         None,
-    ));
-    items.push((
-        Line::from(Span::styled(
-            format!("  {:<11}{:<10}{:<10}", "state", "inverted", "subtle"),
-            dim,
-        )),
-        None,
-    ));
+    )];
     for state in Interaction::ALL {
         let mut spans = vec![Span::styled(format!("  {:<11}", state.label()), dim)];
         spans.extend(button("Save", state, &button_style(HoverEffect::Inverted)).spans);
         spans.push(Span::raw("   "));
         spans.extend(button("Save", state, &button_style(HoverEffect::Subtle)).spans);
-        items.push((Line::from(spans), None));
+        buttons.push((Line::from(spans), None));
     }
-    items.push((
+    buttons.push((
         Line::from(Span::styled(
             format!(
                 "  hover effect: inverted{} · subtle{}",
@@ -231,15 +221,11 @@ pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Op
         None,
     ));
 
-    items.push((Line::from(""), None));
-    items.push((
-        Line::from(Span::styled("Components — list rows (live)".to_string(), group_style)),
-        None,
-    ));
-    items.push((
+    // List rows showcase.
+    let mut rows: Vec<(Line<'static>, Option<String>)> = vec![(
         Line::from(Span::styled(format!("  {:<11}{:<20}{}", "state", "blue", "subtle"), dim)),
         None,
-    ));
+    )];
     for state in [
         Interaction::Normal,
         Interaction::Hover,
@@ -251,9 +237,9 @@ pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Op
         spans.extend(list_item(None, "repo-name", None, state, &list_style(SelectionEffect::Accent), 18).spans);
         spans.push(Span::raw("  "));
         spans.extend(list_item(None, "repo-name", None, state, &list_style(SelectionEffect::Subtle), 18).spans);
-        items.push((Line::from(spans), None));
+        rows.push((Line::from(spans), None));
     }
-    items.push((
+    rows.push((
         Line::from(Span::styled(
             format!(
                 "  list selection: blue{} · subtle{}",
@@ -265,23 +251,36 @@ pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Op
         None,
     ));
 
-    items.push((Line::from(""), None));
-    items.push((Line::from(Span::styled("Components — radios".to_string(), group_style)), None));
+    // Radios showcase.
     let radio_style = button_style(active_hover);
     let mut radio_spans = vec![Span::styled("  ".to_string(), dim)];
     radio_spans.extend(radio("selected", true, &radio_style).spans);
     radio_spans.push(Span::raw("   "));
     radio_spans.extend(radio("option", false, &radio_style).spans);
-    items.push((Line::from(radio_spans), None));
+    let radios = vec![(Line::from(radio_spans), None)];
 
-    // Dialogs — a live preview button that opens the shared confirm dialog (the same ConfirmDialog
-    // every destructive action uses), so the dialog is discoverable + inspectable from here.
-    items.push((Line::from(""), None));
-    items.push((Line::from(Span::styled("Components — dialogs".to_string(), group_style)), None));
+    // Dialogs — a live preview button that opens the shared confirm dialog.
     let mut preview_spans = vec![Span::styled("  ".to_string(), dim)];
     preview_spans.extend(button(DESIGN_PREVIEW_LABEL, Interaction::Normal, &button_style(active_hover)).spans);
-    items.push((Line::from(preview_spans), Some(DESIGN_PREVIEW_CONFIRM.to_string())));
+    let dialogs = vec![(Line::from(preview_spans), Some(DESIGN_PREVIEW_CONFIRM.to_string()))];
 
+    crate::app::DESIGN_SECTIONS
+        .into_iter()
+        .zip([theming, palette, buttons, rows, radios, dialogs])
+        .collect()
+}
+
+/// The Design System tab in the **flat** layout: a title, then every section under a group header.
+pub(crate) fn help_items_design_system(app: &AppState) -> Vec<(Line<'static>, Option<String>)> {
+    let title_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let group_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
+    let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
+    items.push((Line::from(Span::styled("DESIGN SYSTEM".to_string(), title_style)), None));
+    for (name, section) in design_sections(app) {
+        items.push((Line::from(""), None));
+        items.push((Line::from(Span::styled(name.to_string(), group_style)), None));
+        items.extend(section);
+    }
     items
 }
 
@@ -822,8 +821,19 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     footer.push(("↑/↓".to_string(), key, None));
     footer.push((" scroll".to_string(), hint, None));
     footer.push(footer_sep());
-    footer.push(("click a link".to_string(), hint, None));
-    footer.push(footer_sep());
+    // On the Design System tab: `v` cycles flat/tabbed; in tabbed, `[`/`]` move between sections.
+    if app.help_tab == HelpTab::DesignSystem {
+        footer.extend(footer_chip("v", app.design_layout.next_label(), HintKey::Char('v')));
+        if app.design_layout == crate::app::DesignLayout::Tabbed {
+            footer.push(footer_sep());
+            footer.push(("[/]".to_string(), key, None));
+            footer.push((" section".to_string(), hint, None));
+        }
+        footer.push(footer_sep());
+    } else {
+        footer.push(("click a link".to_string(), hint, None));
+        footer.push(footer_sep());
+    }
     footer.extend(footer_chip("?/esc", " close", HintKey::Esc));
     let mut block = Block::default()
         .borders(Borders::ALL)
@@ -919,6 +929,46 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     tab_spans.push(Span::styled(esc.to_string(), Style::default().fg(Color::DarkGray)));
     let tab_bar = Line::from(tab_spans);
 
+    // Design System "tabbed" layout: a vertical tab column (the section names) on the left, the
+    // active section's items beside it. Built here (clicks captured); drawn after the block clear.
+    app.help_design_tab_click.clear();
+    let design_tabbed = app.help_tab == HelpTab::DesignSystem
+        && app.design_layout == crate::app::DesignLayout::Tabbed
+        && !filtering;
+    let mut content_area = content_area;
+    let mut design_tab_lines: Vec<Line> = Vec::new();
+    let mut design_tab_area = Rect::default();
+    let design_active: Vec<(Line<'static>, Option<String>)> = if design_tabbed {
+        let sections = design_sections(app);
+        let active = app.design_section.min(sections.len().saturating_sub(1));
+        app.design_section = active;
+        let tab_w = sections.iter().map(|(name, _)| UnicodeWidthStr::width(*name) as u16).max().unwrap_or(8) + 4;
+        for (idx, (name, _)) in sections.iter().enumerate() {
+            let row = content_area.y + idx as u16;
+            let is_active = idx == active;
+            let cursor = if is_active { "\u{25b8} " } else { "  " };
+            let style = if is_active {
+                Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            let label = format!(" {cursor}{name} ");
+            let width = UnicodeWidthStr::width(label.as_str()) as u16;
+            app.help_design_tab_click.push((row, content_area.x, content_area.x + width, idx));
+            design_tab_lines.push(Line::from(Span::styled(label, style)));
+        }
+        design_tab_area = Rect { width: tab_w, ..content_area };
+        content_area = Rect {
+            x: content_area.x + tab_w + 1,
+            width: content_area.width.saturating_sub(tab_w + 1),
+            ..content_area
+        };
+        sections.into_iter().nth(active).map(|(_, section)| section).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let items: &[(Line<'static>, Option<String>)] = if design_tabbed { &design_active } else { items };
+
     // Clamp scroll to the active tab's content, then window the visible slice.
     let content_height = content_area.height as usize;
     let max_scroll = items.len().saturating_sub(content_height);
@@ -984,6 +1034,9 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     frame.render_widget(block, modal_area);
     frame.render_widget(Paragraph::new(tab_bar), tab_bar_area);
     frame.render_widget(Paragraph::new(lines), content_area);
+    if design_tabbed {
+        frame.render_widget(Paragraph::new(design_tab_lines), design_tab_area);
+    }
     let track = scrollbar_track(modal_area, content_area);
     render_scrollbar(
         frame,

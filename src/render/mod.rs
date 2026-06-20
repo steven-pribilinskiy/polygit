@@ -257,6 +257,13 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.help_design_click.iter().find(|&&(r, s, e, ..)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, section)) =
+            app.help_design_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            // The active section tab keeps its solid highlight (no extra hover tint).
+            if section != app.design_section {
+                button_hits.push(row_rect(row, start, end));
+            }
         } else if let Some((row, start, end)) =
             app.help_preview_click.filter(|&(r, s, e)| contains(r, s, e))
         {

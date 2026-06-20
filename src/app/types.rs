@@ -931,6 +931,39 @@ impl SettingsLayout {
     }
 }
 
+/// The Design System tab's section names, in order — the single source for the vertical-tab labels
+/// (render) and the section count (key navigation). Keep in sync with `design_sections`.
+pub const DESIGN_SECTIONS: [&str; 6] =
+    ["Theming", "Palette", "Buttons", "List rows", "Radios", "Dialogs"];
+
+/// Layout of the help modal's Design System tab: `Flat` stacks every section in one scroll (the
+/// original), `Tabbed` shows the sections as a vertical tab column with the active one beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DesignLayout {
+    #[default]
+    Flat,
+    Tabbed,
+}
+
+impl DesignLayout {
+    /// Cycle Flat → Tabbed → Flat.
+    pub fn cycle(self) -> Self {
+        match self {
+            DesignLayout::Flat => DesignLayout::Tabbed,
+            DesignLayout::Tabbed => DesignLayout::Flat,
+        }
+    }
+
+    /// Short label for the *next* layout (footer hint).
+    pub fn next_label(self) -> &'static str {
+        match self {
+            DesignLayout::Flat => " tabbed view",
+            DesignLayout::Tabbed => " flat view",
+        }
+    }
+}
+
 /// A flag in the interactive CLI builder (the help modal's "CLI & Flags" tab).
 pub enum CliFlagKind {
     /// A boolean flag (present or absent), e.g. `--no-tui`.

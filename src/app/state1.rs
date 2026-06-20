@@ -342,6 +342,7 @@ impl AppState {
             changed_row_flash: self.changed_row_flash,
             changed_row_highlight: self.changed_row_highlight,
             tooltips: self.tooltips,
+            design_layout: self.design_layout,
         });
     }
 

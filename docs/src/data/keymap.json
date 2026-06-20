@@ -438,7 +438,8 @@
         "keys": [
           "?"
         ],
-        "action": "Open the help modal"
+        "action": "Open the help modal",
+        "note": "Tab switches tabs (Hotkeys · CLI · Legend · Design · About). On the Design tab, v toggles flat ⇄ tabbed (vertical section tabs) and [/] move between sections; the preview-confirm button opens the shared dialog."
       },
       {
         "keys": [

@@ -165,6 +165,12 @@ pub struct AppState {
     pub help_design_click: Vec<(u16, u16, u16, usize, Option<usize>)>,
     /// The Design System tab's "preview confirm dialog" button region: (row, col_start, col_end).
     pub help_preview_click: Option<(u16, u16, u16)>,
+    /// Design System tab layout (flat / tabbed-with-vertical-tabs). Persisted.
+    pub design_layout: DesignLayout,
+    /// Active Design System section (index) when the tab is in `Tabbed` layout.
+    pub design_section: usize,
+    /// Clickable vertical-tab regions on the Design System tab: (row, col_start, col_end, section).
+    pub help_design_tab_click: Vec<(u16, u16, u16, usize)>,
     // Keyboard viewer (a button on the Hotkeys help tab opens it):
     /// The interactive keyboard modal is open. While open it captures every keypress (Esc closes).
     pub show_keyboard: bool,
@@ -575,6 +581,9 @@ impl AppState {
             help_close_click: None,
             help_design_click: Vec::new(),
             help_preview_click: None,
+            design_layout: persisted.design_layout,
+            design_section: 0,
+            help_design_tab_click: Vec::new(),
             show_keyboard: false,
             keyboard_selected: None,
             keyboard_scroll: 0,

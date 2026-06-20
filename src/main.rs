@@ -2043,6 +2043,17 @@ async fn run_event_loop(
                                         app.toggle_selected_setting();
                                     }
                                 }
+                            } else if let Some(section) = app
+                                .help_design_tab_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., section)| section)
+                            {
+                                // Click a Design System vertical tab to switch sections.
+                                app.design_section = section;
+                                app.help_scroll = 0;
                             } else if region_hit(app.help_preview_click, mouse.column, mouse.row) {
                                 // Open the shared confirm dialog as a live preview (accepting is a
                                 // no-op — it just closes).
@@ -3086,6 +3097,27 @@ async fn run_event_loop(
                         }
                         // `m` maximizes/restores the modal (same as clicking the button).
                         KeyCode::Char('m') => app.help_maximized = !app.help_maximized,
+                        // Design System tab: `v` cycles flat/tabbed; in tabbed, `[`/`]` move sections.
+                        KeyCode::Char('v') if app.help_tab == app::HelpTab::DesignSystem => {
+                            app.design_layout = app.design_layout.cycle();
+                            app.help_scroll = 0;
+                            app.save_state();
+                        }
+                        KeyCode::Char(']')
+                            if app.help_tab == app::HelpTab::DesignSystem
+                                && app.design_layout == app::DesignLayout::Tabbed =>
+                        {
+                            app.design_section = (app.design_section + 1) % app::DESIGN_SECTIONS.len();
+                            app.help_scroll = 0;
+                        }
+                        KeyCode::Char('[')
+                            if app.help_tab == app::HelpTab::DesignSystem
+                                && app.design_layout == app::DesignLayout::Tabbed =>
+                        {
+                            app.design_section =
+                                (app.design_section + app::DESIGN_SECTIONS.len() - 1) % app::DESIGN_SECTIONS.len();
+                            app.help_scroll = 0;
+                        }
                         KeyCode::Char('j') | KeyCode::Down => {
                             app.help_scroll = app.help_scroll.saturating_add(1);
                         }
