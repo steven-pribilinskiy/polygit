@@ -139,6 +139,9 @@
         state.auto_pull_suppressed = false;
         // Tooltip prefs also persist — pin them to the all-on default for hermetic settings tests.
         state.tooltips = crate::app::TooltipPrefs::default();
+        // Design System tab layout persists too — pin it for hermetic help tests.
+        state.design_layout = crate::app::DesignLayout::Flat;
+        state.design_section = 0;
         state
     }
 
@@ -1567,6 +1570,16 @@
         // A reset restores every area to on.
         state.apply_settings_reset();
         assert_eq!(state.tooltips, crate::app::TooltipPrefs::default());
+    }
+
+    #[test]
+    fn design_layout_cycles_flat_tabbed() {
+        use crate::app::DesignLayout;
+        assert_eq!(DesignLayout::Flat.cycle(), DesignLayout::Tabbed);
+        assert_eq!(DesignLayout::Tabbed.cycle(), DesignLayout::Flat);
+        // The design-section names exist for both the vertical tabs and the key-nav modulo.
+        assert_eq!(crate::app::DESIGN_SECTIONS.len(), 6);
+        assert_eq!(crate::app::DESIGN_SECTIONS[0], "Theming");
     }
 
     #[test]

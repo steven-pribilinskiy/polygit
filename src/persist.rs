@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    Background, BranchCheck, ButtonHoverStyle, ColumnFlags, Contrast, HelpTab, IconStyle,
-    RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn, SortDir, Theme,
-    TooltipPrefs,
+    Background, BranchCheck, ButtonHoverStyle, ColumnFlags, Contrast, DesignLayout, HelpTab,
+    IconStyle, RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn, SortDir,
+    Theme, TooltipPrefs,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -137,6 +137,9 @@ pub struct PersistedState {
     /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). All default on.
     #[serde(default)]
     pub tooltips: TooltipPrefs,
+    /// Help Design System tab layout (flat / tabbed). Default flat.
+    #[serde(default)]
+    pub design_layout: DesignLayout,
 }
 
 impl PersistedState {
