@@ -166,7 +166,7 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
 
     let status = if app.update_available && !app.update_dismissed {
         Span::styled(
-            "● A new build is available — click [reload] to restart.",
+            "● A new build is available — press r (or click [reload]) to restart.",
             Style::default().fg(Color::Yellow),
         )
     } else if app.update_dismissed {
@@ -980,8 +980,8 @@ pub(crate) fn render_update_notice(frame: &mut Frame, app: &mut AppState, area: 
         return;
     }
     let message = " ↺ new build installed · ";
-    let reload = "[reload]";
-    let close = " [x] ";
+    let reload = "[^R reload]";
+    let close = " [^X] ";
     let content_width = (UnicodeWidthStr::width(message)
         + UnicodeWidthStr::width(reload)
         + UnicodeWidthStr::width(close)) as u16;
@@ -1004,8 +1004,9 @@ pub(crate) fn render_update_notice(frame: &mut Frame, app: &mut AppState, area: 
 
     let reload_start = inner.x + UnicodeWidthStr::width(message) as u16;
     let reload_end = reload_start + reload.len() as u16;
+    // `close` is " [^X] " — skip the leading space; the bracketed `[^X]` is 4 cells.
     let close_start = reload_end + 1;
-    let close_end = close_start + 3;
+    let close_end = close_start + 4;
     app.update_reload_click = Some((inner.y, reload_start, reload_end));
     app.update_close_click = Some((inner.y, close_start, close_end));
 

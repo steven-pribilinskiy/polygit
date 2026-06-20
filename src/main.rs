@@ -2197,6 +2197,24 @@ async fn run_event_loop(
             Event::Key(key) => {
                 let mut app = app_state.lock().unwrap();
 
+                // New-build notice: keyboard counterpart to the clickable `[reload]`/`[x]`. Handled
+                // first so it works over any view or modal, mirroring the always-on mouse handler.
+                // `Ctrl-R` reloads into the new build; `Ctrl-X` dismisses the notice.
+                if app.update_available && !app.update_dismissed {
+                    if key.code == KeyCode::Char('r')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(RELOAD_EXIT);
+                    }
+                    if key.code == KeyCode::Char('x')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        app.update_dismissed = true;
+                        continue;
+                    }
+                }
+
                 // Filter input mode
                 if app.filter_input_mode {
                     match key.code {
