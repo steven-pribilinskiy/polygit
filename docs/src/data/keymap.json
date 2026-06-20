@@ -175,17 +175,20 @@
       },
       {
         "keys": [
-          "Tab"
+          "Tab",
+          "Shift+Tab"
         ],
-        "action": "Toggle focus: list [1] ↔ preview [2]",
-        "note": "the active pane gets a bright rounded border"
+        "action": "Cycle focus across the visible panels: [1] list · [2] info · [3] result · [4] repo page",
+        "note": "the focused panel gets a bright rounded border; hidden panels are skipped"
       },
       {
         "keys": [
           "1",
-          "2"
+          "2",
+          "3",
+          "4"
         ],
-        "action": "Focus the list / preview pane directly",
+        "action": "Focus the list / info / result / repo-page panel directly",
         "keywords": [
           "panel",
           "pane",
@@ -197,8 +200,8 @@
           "PgUp",
           "PgDn"
         ],
-        "action": "Scroll the preview",
-        "note": "when focused"
+        "action": "Scroll the result/log panel",
+        "note": "when panel [3] is focused"
       },
       {
         "keys": [
@@ -261,13 +264,6 @@
           "U"
         ],
         "action": "Refresh all repos' local git facts (no pull)"
-      },
-      {
-        "keys": [
-          "b"
-        ],
-        "action": "Toggle the repo page between full-screen and a docked bottom panel",
-        "note": "persisted; also the 'b dock' footer hint and Settings → Layout → Dock repo page"
       },
       {
         "keys": [
@@ -542,7 +538,7 @@
   {
     "id": "page",
     "title": "Repo page",
-    "blurb": "Full-screen view of one repo: every local branch (with change stats vs the base branch), worktree, and stash, with fresh ahead/behind and a bottom info panel.",
+    "blurb": "Detail view of one repo (panel [4], restored by default — a docked bottom panel — or maximized full-screen with m): every local branch (with change stats vs the base branch), worktree, and stash, with fresh ahead/behind and a bottom info panel.",
     "bindings": [
       {
         "keys": [
@@ -673,6 +669,20 @@
           "l"
         ],
         "action": "Open lazygit in the row's path"
+      },
+      {
+        "keys": [
+          "m"
+        ],
+        "action": "Maximize / restore the repo page",
+        "note": "restored = docked panel [4]; maximized = full-screen. Also the ▢/▣ title-bar button (left of [esc back]) and Settings → Layout → Repo page; the state is sticky (persisted)",
+        "keywords": [
+          "maximize",
+          "restore",
+          "dock",
+          "full-screen",
+          "window"
+        ]
       },
       {
         "keys": [

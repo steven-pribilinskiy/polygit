@@ -67,22 +67,32 @@ polygit --timeout 60 ~/projects
 PULL_TIMEOUT=60 polygit ~/projects
 ```
 
-## The two panes
+## The panels
 
-- **Left `[1]`** — the repo list with a status glyph, name, and current branch. Optional
+polygit has up to four focusable panels, each with a stable number in its title:
+
+- **`[1]` list** — the repo list with a status glyph, name, and current branch. Optional
   [columns](../../guides/columns-and-glyphs/) add ahead/behind, dirty, last-commit,
   worktree, branch, and stash counts, and a clickable column header lets you sort. With
   `z`, the list renders as named [group sections](../../guides/groups/).
-- **Right `[2]`** — two independent panels: an **info panel** (`i`, top) and the
-  **result/log panel** (`I`, bottom — a live log of the pull output, or with `d` the
-  working-tree / last-pull diff). When both show, a **draggable boundary** splits them
-  (set by `preview_split_ratio`); hide the result panel and the info panel fills the whole
-  pane (so it reads like the repo list). Both toggles are persisted, with clickable
-  `i info` / `I log` footer hints.
+- **`[2]` info** — the **info panel** (`i`, top of the right pane): repo facts, clickable
+  branch/commit/remote/PR links, and a copy button.
+- **`[3]` result/log** — the **result/log panel** (`I`, bottom of the right pane): a live log
+  of the pull output, or with `d` the working-tree / last-pull diff. When both `[2]` and `[3]`
+  show, a **draggable boundary** splits them (set by `preview_split_ratio`); hide one and the
+  other fills the right pane. Both toggles are persisted, with clickable `i info` / `I log`
+  footer hints.
+- **`[4]` repo page** — the [repo page](#) for the selected repo (opened with `Enter`). By
+  default it's **restored**: a docked panel across the bottom, so the list above stays live
+  (selecting a repo retargets the panel — master-detail). Press `m` (or the `▢` title-bar
+  button, left of `[esc back]`) to **maximize** it full-screen; `▣`/`m` restores it. The
+  state is sticky (persisted) and also settable in Settings → Layout → **Repo page**.
 
-`Tab` (or `1`/`2`) switches focus; the active pane shows a bright rounded border. Drag the
-divider between the panes (it shows a grip and highlights while dragging) or use `[` / `]`;
-drag the info/result boundary inside the right pane to resize the two panels.
+`Tab` / `Shift-Tab` cycle focus across the **visible** panels (hidden ones are skipped, but
+numbers stay stable); `1`/`2`/`3`/`4` jump directly. The focused panel shows a bright rounded
+border. Drag the divider between the list and the right pane (it shows a grip and highlights
+while dragging) or use `[` / `]`; drag the info/result boundary to resize `[2]` and `[3]`, and
+the restored repo page's top border to resize `[4]`.
 
 <Aside type="tip">
 Press `?` at any time for the in-app help modal — five tabs (**Hotkeys**, **CLI**,
@@ -106,7 +116,7 @@ selection effects, with your current choice marked, so it doubles as a live prev
 a **Lists** section (grouping, tree view, hide folder-header lines), a **Theming** section (icons,
 theme, background, contrast, selection), a **Sync** section (auto-pull policy — see below), an
 **Interaction** section (hover effects), and a **Layout** section (panel padding, borders, splitter,
-repo-page tabs, dock, branch-check). By default it uses a **tabbed** layout (sections as
+repo-page tabs, repo page restored/maximized, branch-check). By default it uses a **tabbed** layout (sections as
 vertical tabs — `←`/`→` or `Tab` switch, `↑`/`↓` move within a tab); press `v` to cycle the layout
 **tabbed → accordion → flat**. A **search box** sits at the top of the modal: press `/` to focus
 it and type to filter the rows across every tab into a flat list with the matched characters
