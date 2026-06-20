@@ -748,12 +748,6 @@ impl HelpTab {
             HelpTab::About => HelpTab::DesignSystem,
         }
     }
-
-    /// The tab to persist. About (credits/links) is never remembered — reopening help should
-    /// land on a useful tab, so it collapses to Hotkeys.
-    pub fn persisted(self) -> Self {
-        if self == HelpTab::About { HelpTab::Hotkeys } else { self }
-    }
 }
 
 /// Filter the repo list by pull outcome. Applied on top of the `/` name filter.

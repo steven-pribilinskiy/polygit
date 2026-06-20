@@ -322,7 +322,7 @@ impl AppState {
             background: Some(self.background),
             sort_column: self.sort_column,
             sort_dir: self.sort_dir,
-            help_tab: self.help_tab.persisted(),
+            help_tab: self.help_tab_persist,
             grouping_enabled: self.grouping_enabled,
             collapsed_groups,
             tree_enabled: self.tree_enabled,

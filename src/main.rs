@@ -2051,7 +2051,7 @@ async fn run_event_loop(
                         MouseEventKind::Down(MouseButton::Left) => {
                             if let Some(tab) = app.help_tab_at(mouse.column, mouse.row) {
                                 app.help_filter = None;
-                                app.help_tab = tab;
+                                app.set_help_tab(tab);
                                 app.help_scroll = 0;
                                 app.save_state();
                             } else if region_hit(app.help_keyboard_click, mouse.column, mouse.row) {
@@ -3219,13 +3219,15 @@ async fn run_event_loop(
                         // Tab / Shift+Tab cycle help tabs; the choice is persisted so it reopens here.
                         KeyCode::Tab => {
                             app.help_filter = None;
-                            app.help_tab = app.help_tab.next();
+                            let next = app.help_tab.next();
+                            app.set_help_tab(next);
                             app.help_scroll = 0;
                             app.save_state();
                         }
                         KeyCode::BackTab => {
                             app.help_filter = None;
-                            app.help_tab = app.help_tab.prev();
+                            let prev = app.help_tab.prev();
+                            app.set_help_tab(prev);
                             app.help_scroll = 0;
                             app.save_state();
                         }

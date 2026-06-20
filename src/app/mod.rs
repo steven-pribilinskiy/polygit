@@ -133,6 +133,9 @@ pub struct AppState {
     pub show_help: bool,
     /// Which help tab is active (persisted so it reopens where you left it).
     pub help_tab: HelpTab,
+    /// The last non-About help tab — the value persisted (and reopened on). Switching to About
+    /// (credits/links) never changes it, so reopening lands back on the last useful tab.
+    pub help_tab_persist: HelpTab,
     /// Scroll offset within the help modal.
     pub help_scroll: usize,
     /// Clickable links in the help modal: (absolute screen row, url). Rebuilt each render.
@@ -601,6 +604,7 @@ impl AppState {
             info_expanded: HashSet::new(),
             show_help: false,
             help_tab: persisted.help_tab,
+            help_tab_persist: persisted.help_tab,
             help_scroll: 0,
             help_links: Vec::new(),
             help_filter: None,

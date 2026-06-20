@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.63.2 — 2026-06-20
+help modal: switching to About no longer forgets the last useful tab
+- the persisted/reopened help tab is now the last non-About tab; opening About
+  (credits/links) shows it but leaves the remembered tab untouched.
+
 ## v2.63.1 — 2026-06-20
 dim the j/k scroll hint when nothing overflows
 - the build-info and changelog modals' scroll hint now renders disabled (dim +
