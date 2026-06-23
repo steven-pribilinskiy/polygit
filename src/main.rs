@@ -39,9 +39,9 @@ use ratatui::{Frame, Terminal};
 use std::collections::HashMap;
 
 use app::{
-    point_in, region_hit, AppState, Column, Command as Cmd, ConfirmAction, ConfirmDialog,
-    DiffFocus, DiffSource, InfoAction, Leader, PageRow, PageRowKind, Pane, RepoPageColumn,
-    RepoStatus, RightView, SharedRepoState, SortColumn, StatusFilter,
+    point_in, region_hit, AppState, Command as Cmd, ConfirmAction, ConfirmDialog,
+    DiffFocus, DiffSource, InfoAction, Leader, PageRow, PageRowKind, Pane,
+    RepoStatus, RightView, SharedRepoState, StatusFilter,
 };
 use worker::{
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
@@ -458,18 +458,6 @@ fn dispatch_command(
         Cmd::ToggleResultPanel => app.toggle_result_panel(),
         Cmd::Help => app.open_help(),
         Cmd::OpenPage => app.open_repo_page(),
-        Cmd::ToggleLeader => {
-            app.pending_leader = if app.pending_leader == Some(Leader::Toggle) {
-                None
-            } else {
-                Some(Leader::Toggle)
-            };
-        }
-        Cmd::ToggleColumn(column) => {
-            // Stay in toggle mode (matches the sticky `t` keyboard behavior) so several
-            // columns can be clicked in a row; `t`/Esc or a non-toggle key exits.
-            app.toggle_column(column);
-        }
         Cmd::FilterLeader => {
             app.pending_leader = if app.pending_leader == Some(Leader::Filter) {
                 None
@@ -482,22 +470,7 @@ fn dispatch_command(
             app.set_status_filter(filter);
             app.pending_leader = None;
         }
-        Cmd::SortLeader => {
-            app.pending_leader = if app.pending_leader == Some(Leader::Sort) {
-                None
-            } else {
-                Some(Leader::Sort)
-            };
-        }
-        Cmd::SetSort(column) => {
-            app.set_sort(column);
-            app.pending_leader = None;
-        }
         Cmd::LeaderCancel => app.pending_leader = None,
-        Cmd::FlipSort => {
-            let column = app.sort_column;
-            app.set_sort(column); // re-applying the active column flips direction
-        }
         Cmd::NameFilter => {
             // Clicking the `/ filter` hint toggles: enter filter input, or exit it when already
             // filtering (dropping an empty filter so it leaves no dangling tag).
@@ -1963,29 +1936,24 @@ async fn run_event_loop(
                                 app.toggle_repo_page_maximized();
                             } else if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
                                 app.close_repo_page();
-                            } else if let Some((row, start, _)) =
+                            } else if let Some((row, _, end)) =
                                 app.page_cols_click.filter(|&(r, s, e)| {
                                     mouse.row == r && mouse.column >= s && mouse.column < e
                                 })
                             {
-                                app.open_dropdown(app::DropdownKind::PageColumns, start, row);
-                            } else if let Some((row, start, _)) =
+                                app.open_dropdown(app::DropdownKind::PageColumns, end, row);
+                            } else if let Some((row, _, end)) =
                                 app.page_sort_click.filter(|&(r, s, e)| {
                                     mouse.row == r && mouse.column >= s && mouse.column < e
                                 })
                             {
-                                app.open_dropdown(app::DropdownKind::PageSort, start, row);
+                                app.open_dropdown(app::DropdownKind::PageSort, end, row);
                             } else if let Some(url) = pr_url {
                                 drop(app);
                                 open_url(&url);
                                 continue;
                             } else if let Some(kind) = tab_click {
                                 app.repo_page_select_tab(kind);
-                            } else if let Some(column) =
-                                app.repo_page_toggle_at(mouse.column, mouse.row)
-                            {
-                                app.toggle_repo_page_column(column);
-                                app.save_state();
                             } else if let Some(selection) =
                                 app.base_cell_at(mouse.column, mouse.row)
                             {
@@ -2192,17 +2160,17 @@ async fn run_event_loop(
 
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        // The list header's `[cols ▾]` / `[sort ▾]` chips open their dropdowns.
-                        if let Some((row, start, _)) = app.list_cols_click.filter(|&(r, s, e)| {
+                        // The list header's `t cols ▾` / `s sort ▾` chips open their dropdowns.
+                        if let Some((row, _, end)) = app.list_cols_click.filter(|&(r, s, e)| {
                             mouse.row == r && mouse.column >= s && mouse.column < e
                         }) {
-                            app.open_dropdown(app::DropdownKind::ListColumns, start, row);
+                            app.open_dropdown(app::DropdownKind::ListColumns, end, row);
                             continue;
                         }
-                        if let Some((row, start, _)) = app.list_sort_click.filter(|&(r, s, e)| {
+                        if let Some((row, _, end)) = app.list_sort_click.filter(|&(r, s, e)| {
                             mouse.row == r && mouse.column >= s && mouse.column < e
                         }) {
-                            app.open_dropdown(app::DropdownKind::ListSort, start, row);
+                            app.open_dropdown(app::DropdownKind::ListSort, end, row);
                             continue;
                         }
                         // Click-to-focus: a click inside the panes focuses whichever panel it hit.
@@ -2540,16 +2508,32 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // Header dropdown (`[cols ▾]` / `[sort ▾]`): arrows move, space/enter activate
-                // (columns stay open, sort closes), esc/q close.
+                // Header dropdown (`[cols ▾]` / `[sort ▾]`): each item's mnemonic letter picks it,
+                // arrows move a selection, space/enter activate it (columns stay open, sort closes),
+                // esc/q close. Ctrl-C still quits.
                 if app.dropdown.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_dropdown(),
-                        KeyCode::Down | KeyCode::Char('j') => app.dropdown_move(1),
-                        KeyCode::Up | KeyCode::Char('k') => app.dropdown_move(-1),
+                        KeyCode::Down => app.dropdown_move(1),
+                        KeyCode::Up => app.dropdown_move(-1),
                         KeyCode::Char(' ') | KeyCode::Enter => {
-                            let index = app.dropdown.map_or(0, |dropdown| dropdown.selected);
-                            if app.dropdown_activate(index) {
+                            if let Some(index) = app.dropdown.and_then(|dropdown| dropdown.selected) {
+                                if app.dropdown_activate(index) {
+                                    app.close_dropdown();
+                                }
+                            }
+                        }
+                        // A mnemonic letter picks its item directly (no modifiers).
+                        KeyCode::Char(ch)
+                            if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            if app.dropdown_activate_key(ch) {
                                 app.close_dropdown();
                             }
                         }
@@ -2966,38 +2950,6 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(130);
                     }
-                    // Column-toggle menu: chip keys flip a column (stay in mode); esc/t close;
-                    // any other key exits and falls through to normal handling.
-                    if app.repo_page_toggle {
-                        let column = match key.code {
-                            KeyCode::Char('b') => Some(RepoPageColumn::AheadBehind),
-                            KeyCode::Char('y') => Some(RepoPageColumn::Dirty),
-                            KeyCode::Char('a') => Some(RepoPageColumn::Added),
-                            KeyCode::Char('m') => Some(RepoPageColumn::Modified),
-                            KeyCode::Char('d') => Some(RepoPageColumn::Deleted),
-                            KeyCode::Char('c') => Some(RepoPageColumn::Total),
-                            KeyCode::Char('u') => Some(RepoPageColumn::Upstream),
-                            KeyCode::Char('f') => Some(RepoPageColumn::Base),
-                            KeyCode::Char('g') => Some(RepoPageColumn::Age),
-                            KeyCode::Char('r') => Some(RepoPageColumn::PullRequest),
-                            KeyCode::Char('s') => Some(RepoPageColumn::Subject),
-                            _ => None,
-                        };
-                        if let Some(column) = column {
-                            if app.repo_page_column_available(column) {
-                                app.toggle_repo_page_column(column);
-                                app.save_state();
-                            } else {
-                                app.show_toast("that column is empty for this repo");
-                            }
-                            continue;
-                        }
-                        app.repo_page_toggle = false;
-                        if matches!(key.code, KeyCode::Char('t') | KeyCode::Esc) {
-                            continue;
-                        }
-                        // Fall through: arrows/other keys exit the menu and act normally.
-                    }
                     let len = app.repo_page_selectable_len();
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
@@ -3007,8 +2959,18 @@ async fn run_event_loop(
                         KeyCode::Char('?') => app.open_help(),
                         // `,` opens settings (handled by the early gate next iteration).
                         KeyCode::Char(',') => app.open_settings(),
-                        // `t` opens the column-toggle menu; `i` toggles the info panel.
-                        KeyCode::Char('t') => app.repo_page_toggle = true,
+                        // `t` / `s` open the columns / sort dropdown (anchored under their chip).
+                        KeyCode::Char('t') => {
+                            if let Some((row, _, end)) = app.page_cols_click {
+                                app.open_dropdown(app::DropdownKind::PageColumns, end, row);
+                            }
+                        }
+                        KeyCode::Char('s') => {
+                            if let Some((row, _, end)) = app.page_sort_click {
+                                app.open_dropdown(app::DropdownKind::PageSort, end, row);
+                            }
+                        }
+                        // `i` toggles the info panel.
                         KeyCode::Char('i') => {
                             app.repo_page_info = !app.repo_page_info;
                             app.save_state();
@@ -3344,48 +3306,6 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // `t` toggle mode: stays active so multiple columns can be toggled (a/d/l/w/b/s);
-                // `t` again or Esc exits. Navigation keys (up/down/home/end/enter) exit the mode
-                // and then run normally (fall through); any other key is swallowed.
-                if app.pending_leader == Some(Leader::Toggle) {
-                    // Toggle a column unless its data is trivially empty — then explain why.
-                    let toggle_or_warn = |app: &mut AppState, column: Column, noun: &str| {
-                        if app.column_available(column) {
-                            app.toggle_column(column);
-                        } else {
-                            app.show_toast(format!("no repo has any {noun} — nothing to show"));
-                        }
-                    };
-                    match key.code {
-                        KeyCode::Char('u') => app.toggle_column(Column::Status),
-                        KeyCode::Char('a') => app.toggle_column(Column::AheadBehind),
-                        KeyCode::Char('d') => app.toggle_column(Column::Dirty),
-                        KeyCode::Char('l') => app.toggle_column(Column::LastCommit),
-                        KeyCode::Char('w') => toggle_or_warn(&mut app, Column::Worktrees, "worktrees"),
-                        KeyCode::Char('b') => toggle_or_warn(&mut app, Column::Branches, "extra branches"),
-                        KeyCode::Char('s') => toggle_or_warn(&mut app, Column::Stashes, "stashes"),
-                        KeyCode::Char('p') => toggle_or_warn(&mut app, Column::PulledCommits, "pulled commits"),
-                        KeyCode::Char('c') => toggle_or_warn(&mut app, Column::PulledFiles, "changed files"),
-                        KeyCode::Char('r') => app.toggle_column(Column::PullRequest),
-                        KeyCode::Char('f') => app.toggle_column(Column::Favorite),
-                        KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::Enter => {
-                            // Exit toggle mode and let the key run normally below.
-                            app.pending_leader = None;
-                        }
-                        _ => {
-                            // `t` again, Esc, or any other key: exit (or stay) without acting.
-                            if matches!(key.code, KeyCode::Char('t') | KeyCode::Esc) {
-                                app.pending_leader = None;
-                            }
-                            continue;
-                        }
-                    }
-                    // Column toggles took their action above and stay in toggle mode.
-                    if app.pending_leader == Some(Leader::Toggle) {
-                        continue;
-                    }
-                }
-
                 // `f` filter mode: pick one status filter (a/u/c/s/f/i), then exit. Esc cancels;
                 // any other key just exits without changing the filter.
                 if app.pending_leader == Some(Leader::Filter) {
@@ -3400,31 +3320,6 @@ async fn run_event_loop(
                     };
                     if let Some(filter) = picked {
                         app.set_status_filter(filter);
-                    }
-                    app.pending_leader = None;
-                    continue;
-                }
-
-                // `s` sort mode: pick a sort column (re-pick flips direction), then exit. Esc
-                // cancels; any other key exits without changing the sort.
-                if app.pending_leader == Some(Leader::Sort) {
-                    let picked = match key.code {
-                        KeyCode::Char('n') => Some(SortColumn::Name),
-                        KeyCode::Char('c') => Some(SortColumn::Branch),
-                        KeyCode::Char('s') => Some(SortColumn::Status),
-                        KeyCode::Char('a') => Some(SortColumn::AheadBehind),
-                        KeyCode::Char('d') => Some(SortColumn::Dirty),
-                        KeyCode::Char('l') => Some(SortColumn::LastCommit),
-                        KeyCode::Char('w') => Some(SortColumn::Worktrees),
-                        KeyCode::Char('b') => Some(SortColumn::Branches),
-                        KeyCode::Char('k') => Some(SortColumn::Stashes),
-                        KeyCode::Char('p') => Some(SortColumn::PulledCommits),
-                        KeyCode::Char('g') => Some(SortColumn::PulledFiles),
-                        KeyCode::Char('r') => Some(SortColumn::PullRequest),
-                        _ => None,
-                    };
-                    if let Some(column) = picked {
-                        app.set_sort(column);
                     }
                     app.pending_leader = None;
                     continue;
@@ -3554,14 +3449,17 @@ async fn run_event_loop(
                     // Help modal
                     (KeyCode::Char('?'), _) => app.open_help(),
 
-                    // `t` leader: arm the column-toggle chord (next key picks the column).
+                    // `t` / `s` open the columns / sort dropdown, anchored under their header chip
+                    // (the same menu a click opens; per-item mnemonics pick from the keyboard).
                     (KeyCode::Char('t'), _) => {
-                        app.pending_leader = Some(Leader::Toggle);
+                        if let Some((row, _, end)) = app.list_cols_click {
+                            app.open_dropdown(app::DropdownKind::ListColumns, end, row);
+                        }
                     }
-
-                    // `s` leader: arm the sort chord (next key picks the sort column).
                     (KeyCode::Char('s'), _) => {
-                        app.pending_leader = Some(Leader::Sort);
+                        if let Some((row, _, end)) = app.list_sort_click {
+                            app.open_dropdown(app::DropdownKind::ListSort, end, row);
+                        }
                     }
 
                     // `f` leader: arm the status-filter chord (next key picks the filter).

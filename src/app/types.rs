@@ -532,6 +532,25 @@ pub enum RepoPageSort {
     Subject,
 }
 
+impl RepoPageSort {
+    /// Short label for the `[sort ▾]` trigger indicator.
+    pub fn label(self) -> &'static str {
+        match self {
+            RepoPageSort::Name => "name",
+            RepoPageSort::AheadBehind => "ahead/behind",
+            RepoPageSort::Dirty => "dirty",
+            RepoPageSort::Added => "added",
+            RepoPageSort::Modified => "modified",
+            RepoPageSort::Deleted => "deleted",
+            RepoPageSort::Total => "total",
+            RepoPageSort::Upstream => "upstream",
+            RepoPageSort::Base => "base",
+            RepoPageSort::Age => "age",
+            RepoPageSort::Subject => "subject",
+        }
+    }
+}
+
 /// Order two repo-page rows by `sort` (ascending); name is the stable tiebreak. The caller applies
 /// the direction. Worktree/stash rows missing a field sort as if zero/empty.
 pub fn repo_page_row_cmp(sort: RepoPageSort, first: &PageRow, second: &PageRow) -> std::cmp::Ordering {
@@ -649,6 +668,15 @@ pub enum DropdownKind {
     PageSort,
 }
 
+/// One row in an open dropdown: its label, whether it's currently on/active, its mnemonic key, and
+/// whether it's selectable (a column with no data anywhere renders dim + inert).
+pub struct DropdownItem {
+    pub label: String,
+    pub on: bool,
+    pub mnemonic: char,
+    pub enabled: bool,
+}
+
 /// One navigable position in the accordion settings layout: a section header or a setting row.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AccPos {
@@ -656,24 +684,23 @@ pub enum AccPos {
     Row(usize),
 }
 
-/// An open header dropdown overlay: anchored under the `[… ▾]` chip that opened it.
+/// An open header dropdown overlay: anchored so its right edge lines up under the `[… ▾]` chip
+/// that opened it (the overlay floats just below).
 #[derive(Debug, Clone, Copy)]
 pub struct Dropdown {
     pub kind: DropdownKind,
-    /// Screen column / row of the chip that opened it (the overlay floats just below).
-    pub anchor_col: u16,
+    /// Screen column of the chip's right edge — the overlay's right edge aligns to it.
+    pub anchor_right: u16,
     pub anchor_row: u16,
-    /// Highlighted item.
-    pub selected: usize,
+    /// Highlighted item, or `None` when nothing is highlighted yet (the state on open).
+    pub selected: Option<usize>,
 }
 
-/// A pending two-key chord: `t` then a column key toggles that column; `f` then a status key
-/// picks a status filter; `s` then a column key picks the sort order.
+/// A pending two-key chord: `f` then a status key picks a status filter; `v` then a key picks a
+/// view mode; `z` then a key folds. (Columns/sort are driven by the header dropdowns, not a chord.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Leader {
-    Toggle,
     Filter,
-    Sort,
     /// `v` then a key picks a view mode (`g` grouped, `t` tree).
     View,
     /// `z` then a key folds (`a` toggle, `o`/`c` open/close, `O`/`M`/`R` recursive/all).
@@ -1565,16 +1592,10 @@ pub enum Command {
     ToggleResultPanel,
     Help,
     OpenPage,
-    ToggleLeader,
-    ToggleColumn(Column),
     FilterLeader,
     SetFilter(StatusFilter),
-    SortLeader,
-    SetSort(SortColumn),
-    /// Close the active leader menu (the clickable `esc` in cols/filter/sort rows).
+    /// Close the active leader menu (the clickable `esc` in the filter/view/fold rows).
     LeaderCancel,
-    /// Flip the active sort direction (the clickable `⟪column ▲⟫` tag).
-    FlipSort,
     /// Enter the name-filter input mode (same as `/`).
     NameFilter,
     /// Clear the active name filter (the clickable `[needle]` tag).
@@ -1644,14 +1665,9 @@ impl Command {
             }
             Command::Help => "Open the help modal (keys, flags, glyphs, about)",
             Command::OpenPage => "Open the selected repo's page: branches, worktrees, stashes",
-            Command::ToggleLeader => "Choose which columns are shown",
-            Command::ToggleColumn(_) => "Toggle this column on or off",
             Command::FilterLeader => "Filter the list by status",
             Command::SetFilter(_) => "Filter by this status",
-            Command::SortLeader => "Sort the list by a column",
-            Command::SetSort(_) => "Sort by this column",
             Command::LeaderCancel => "Close this menu",
-            Command::FlipSort => "Flip the sort direction",
             Command::NameFilter => "Filter repos by name (type to match)",
             Command::ClearNameFilter => "Clear the name filter",
             Command::ResultOverlay => "Show the Result / Errors summary",

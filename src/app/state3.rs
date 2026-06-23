@@ -978,14 +978,6 @@ impl AppState {
         }
     }
 
-    /// The repo-page column-toggle chip at `(col,row)`, if any (mouse hit-test).
-    pub fn repo_page_toggle_at(&self, col: u16, row: u16) -> Option<RepoPageColumn> {
-        self.repo_page_toggle_click
-            .iter()
-            .find(|(chip_row, start, end, _)| *chip_row == row && col >= *start && col < *end)
-            .map(|(_, _, _, column)| *column)
-    }
-
     /// Build a `DiffSource` for the selected repo-page row if it's diff-able
     /// (a stash, or a dirty branch/worktree); otherwise None.
     pub fn diff_source_for_selected(&self) -> Option<DiffSource> {
@@ -1332,21 +1324,4 @@ impl AppState {
         }
     }
 
-    /// Whether a sort column's underlying value is currently visible on screen — drives which
-    /// entries the `s` (sort) leader menu offers. Name/branch/status-glyph/dirty-marker are
-    /// always shown; the rest track their optional column's effective visibility.
-    pub fn sort_column_visible(&self, column: SortColumn) -> bool {
-        let effective = self.effective_columns();
-        match column {
-            SortColumn::Name | SortColumn::Branch | SortColumn::Status | SortColumn::Dirty => true,
-            SortColumn::AheadBehind => effective.ahead_behind,
-            SortColumn::LastCommit => effective.last_commit,
-            SortColumn::Worktrees => effective.worktrees,
-            SortColumn::Branches => effective.branches,
-            SortColumn::Stashes => effective.stashes,
-            SortColumn::PulledCommits => effective.pulled_commits,
-            SortColumn::PulledFiles => effective.pulled_files,
-            SortColumn::PullRequest => effective.pull_request,
-        }
-    }
 }
