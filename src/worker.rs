@@ -193,15 +193,10 @@ async fn run_pull_attempt(
     path: &std::path::Path,
     timeout_secs: u64,
 ) -> Result<(PullOutcome, String)> {
-    let mut child = Command::new("timeout")
-        .args([
-            &timeout_secs.to_string(),
-            "git",
-            "-C",
-            path.to_str().unwrap_or("."),
-            "pull",
-            "--ff-only",
-        ])
+    // Spawn git directly and bound it with tokio's timer below — cross-platform, and avoids
+    // depending on the GNU `timeout` coreutil (absent / incompatible on Windows).
+    let mut child = Command::new("git")
+        .args(["-C", path.to_str().unwrap_or("."), "pull", "--ff-only"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -239,16 +234,28 @@ async fn run_pull_attempt(
         collected
     });
 
-    let status = child.wait().await?;
-    let exit_success = status.success();
+    // Bound the pull with tokio's timer; on elapse, kill git and reap it.
+    let mut timed_out = false;
+    let status =
+        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), child.wait())
+            .await
+        {
+            Ok(res) => res?,
+            Err(_) => {
+                timed_out = true;
+                let _ = child.start_kill();
+                child.wait().await?
+            }
+        };
+    let exit_success = status.success() && !timed_out;
 
     let stdout_output = stdout_task.await.unwrap_or_default();
     let stderr_output = stderr_task.await.unwrap_or_default();
     let mut combined = format!("{stdout_output}{stderr_output}");
 
-    // `timeout` kills git with exit code 124 and no explanation in the output — say so in the
-    // log (and in `combined`, so the failure classifies as a timeout).
-    if status.code() == Some(124) {
+    // A timed-out pull leaves no explanation in git's output — say so in the log (and in
+    // `combined`, so the failure classifies as a timeout).
+    if timed_out {
         let line = format!("pull timed out after {timeout_secs}s");
         repo_state.lock().unwrap().log.push(line.clone());
         combined.push_str(&line);

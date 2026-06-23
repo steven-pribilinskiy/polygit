@@ -62,7 +62,7 @@ Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / a click), then:
 | `d` | Delete branch / drop stash / remove worktree / discard changes — with a confirm |
 | `o` | Open the selected branch on the remote |
 | `y` | Copy the selected row's path |
-| `c` | Start claude code in the row's path |
+| `c` | Launch the AI coding agent in the row's path (set in Settings → Agent) |
 | `l` | Open [lazygit](https://github.com/jesseduffield/lazygit) in the row's path |
 | `m` | Maximize / restore the page (restored = docked panel `[4]`; maximized = full-screen) |
 | `Esc` / `q` | Return to the repo list |

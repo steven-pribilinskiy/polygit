@@ -888,6 +888,46 @@ impl Theme {
     }
 }
 
+/// Which AI coding-agent CLI the `c` hotkey launches in the selected repo. The binary is run in
+/// the repo dir; when "Skip permissions" is on, the agent's bypass-all-prompts flag is appended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeAgent {
+    #[default]
+    Claude,
+    Codex,
+    Gemini,
+}
+
+impl ClaudeAgent {
+    /// Cycle Claude → Codex → Gemini → Claude.
+    pub fn cycle(self) -> Self {
+        match self {
+            ClaudeAgent::Claude => ClaudeAgent::Codex,
+            ClaudeAgent::Codex => ClaudeAgent::Gemini,
+            ClaudeAgent::Gemini => ClaudeAgent::Claude,
+        }
+    }
+
+    /// The CLI binary name (must be on `PATH`).
+    pub fn binary(self) -> &'static str {
+        match self {
+            ClaudeAgent::Claude => "claude",
+            ClaudeAgent::Codex => "codex",
+            ClaudeAgent::Gemini => "gemini",
+        }
+    }
+
+    /// The agent's "bypass all approval prompts" flag, appended when Skip permissions is on.
+    pub fn danger_flag(self) -> &'static str {
+        match self {
+            ClaudeAgent::Claude => "--dangerously-skip-permissions",
+            ClaudeAgent::Codex => "--dangerously-bypass-approvals-and-sandbox",
+            ClaudeAgent::Gemini => "--yolo",
+        }
+    }
+}
+
 /// Contrast level for the active palette. `Soft` narrows the foreground/background distance
 /// and desaturates accents for a gentler look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1270,11 +1310,12 @@ pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Interaction", 3),
     ("Layout", 6),
     ("Tooltips", 6),
+    ("Agent", 2),
 ];
 
 /// Every settings row's label in global row order — the single list the search filter matches
 /// against (keep in sync with the inline `sections` in `render_settings`).
-pub const SETTINGS_LABELS: [&str; 28] = [
+pub const SETTINGS_LABELS: [&str; 30] = [
     "Grouping",            // 0
     "Tree view",           // 1
     "Hide folder lines",   // 2
@@ -1303,6 +1344,8 @@ pub const SETTINGS_LABELS: [&str; 28] = [
     "Group counts",        // 25
     "Settings rows",       // 26
     "Help links",          // 27
+    "AI agent",            // 28
+    "Skip permissions",    // 29
 ];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler

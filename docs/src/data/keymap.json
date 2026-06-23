@@ -378,8 +378,8 @@
         "keys": [
           "c"
         ],
-        "action": "Start claude code in the selected repo",
-        "note": "suspends the TUI; PULL_CLAUDE_CMD overrides"
+        "action": "Launch the AI coding agent in the selected repo",
+        "note": "suspends the TUI; agent (claude/codex/gemini) + skip-permissions set in Settings → Agent; PULL_CLAUDE_CMD overrides the command verbatim"
       },
       {
         "keys": [
@@ -699,7 +699,7 @@
         "keys": [
           "c"
         ],
-        "action": "Start claude code in the row's path"
+        "action": "Launch the AI coding agent in the row's path"
       },
       {
         "keys": [

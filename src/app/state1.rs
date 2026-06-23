@@ -296,6 +296,8 @@ impl AppState {
             icon_style: self.icon_style,
             hide_zero_counts: self.hide_zero_counts,
             hide_folder_lines: self.hide_folder_lines,
+            claude_agent: self.claude_agent,
+            claude_skip_permissions: self.claude_skip_permissions,
             roots: Vec::new(), // legacy field — workspaces own the folder sets now
             workspaces: {
                 // Persist every saved workspace; refresh the active one from the live root set so
@@ -689,6 +691,11 @@ impl AppState {
             (26, 1) => self.tooltips.settings = false,
             (27, 0) => self.tooltips.links = true,
             (27, 1) => self.tooltips.links = false,
+            (28, 0) => self.claude_agent = ClaudeAgent::Claude,
+            (28, 1) => self.claude_agent = ClaudeAgent::Codex,
+            (28, 2) => self.claude_agent = ClaudeAgent::Gemini,
+            (29, 0) => self.claude_skip_permissions = true,
+            (29, 1) => self.claude_skip_permissions = false,
             _ => return,
         }
         self.save_state();
@@ -768,6 +775,12 @@ impl AppState {
             25 => usize::from(!self.tooltips.counts),
             26 => usize::from(!self.tooltips.settings),
             27 => usize::from(!self.tooltips.links),
+            28 => match self.claude_agent {
+                ClaudeAgent::Claude => 0,
+                ClaudeAgent::Codex => 1,
+                ClaudeAgent::Gemini => 2,
+            },
+            29 => usize::from(!self.claude_skip_permissions),
             _ => 0,
         }
     }
@@ -786,6 +799,7 @@ impl AppState {
             19 => &["off", "auto"],
             20 => &["restored", "maximized"],
             21 => &["off", "auto"],
+            28 => &["claude", "codex", "gemini"],
             _ => &["on", "off"],
         }
     }
@@ -795,8 +809,8 @@ impl AppState {
     pub fn settings_default_option(row: usize) -> usize {
         match row {
             // Defaults whose active option is the first (on / auto / unicode / restored / …).
-            // The Tooltips group (22–27) all default on (index 0).
-            3 | 5 | 6 | 7 | 8 | 10 | 14 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 => 0,
+            // The Tooltips group (22–27) all default on (index 0). 28 (AI agent) defaults to claude.
+            3 | 5 | 6 | 7 | 8 | 10 | 14 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 => 0,
             // 9 button-hover defaults to `subtle` (index 1), 11 auto-pull-limit to `100` (index 1),
             // and every remaining boolean defaults off (index 1).
             _ => 1,
@@ -851,6 +865,8 @@ impl AppState {
         self.repo_page_maximized = false;
         self.branch_check = BranchCheck::Off;
         self.tooltips = TooltipPrefs::default();
+        self.claude_agent = ClaudeAgent::default();
+        self.claude_skip_permissions = false;
         self.recompute_group_assignments();
         self.rebuild_tree();
         self.save_state();

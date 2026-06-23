@@ -124,8 +124,8 @@ pub async fn run_plain(
             }
 
             // Run git pull
-            let mut child = match Command::new("timeout")
-                .args([&timeout.to_string(), "git", "-C", path.to_str().unwrap_or("."), "pull", "--ff-only"])
+            let mut child = match Command::new("git")
+                .args(["-C", path.to_str().unwrap_or("."), "pull", "--ff-only"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -172,12 +172,27 @@ pub async fn run_plain(
                 collected
             });
 
-            let status = child.wait().await.unwrap();
-            let exit_success = status.success();
+            // Bound the pull with tokio's timer (cross-platform; no external `timeout` coreutil).
+            let mut timed_out = false;
+            let status =
+                match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait())
+                    .await
+                {
+                    Ok(res) => res.unwrap(),
+                    Err(_) => {
+                        timed_out = true;
+                        let _ = child.start_kill();
+                        child.wait().await.unwrap()
+                    }
+                };
+            let exit_success = status.success() && !timed_out;
 
             let stdout_output = stdout_task.await.unwrap_or_default();
             let stderr_output = stderr_task.await.unwrap_or_default();
-            let combined = format!("{stdout_output}{stderr_output}");
+            let mut combined = format!("{stdout_output}{stderr_output}");
+            if timed_out {
+                combined.push_str(&format!("pull timed out after {timeout}s\n"));
+            }
 
             let outcome = classify_pull_output(&combined, exit_success);
 

@@ -15,7 +15,6 @@ mod treeview;
 mod worker;
 
 use std::io::{self, IsTerminal, Write};
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -226,6 +225,7 @@ fn open_url(url: &str) {
             candidates.push(browser);
         }
     }
+    #[cfg(not(windows))]
     candidates.extend(["wslview", "xdg-open", "open"].map(String::from));
 
     for opener in candidates {
@@ -238,6 +238,19 @@ fn open_url(url: &str) {
         if spawned.is_ok() {
             return;
         }
+    }
+
+    // Native Windows fallback (after any $BROWSER override above): `start` is a cmd builtin,
+    // and the empty "" is the required title arg — without it the URL is taken as the window
+    // title and nothing opens.
+    #[cfg(windows)]
+    {
+        let _ = Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
 }
 
@@ -277,25 +290,67 @@ fn copy_to_clipboard(text: &str) {
     }
 }
 
-/// Suspend the TUI, run claude code in `path` (the `cc` alias by default, overridable via
-/// `PULL_CLAUDE_CMD`), then restore the alternate screen and mouse capture.
+/// Replace this process with `exe args` to reload into a freshly-built binary.
+/// Unix: `execvp` — never returns on success. Windows has no execvp, so spawn the new
+/// process, wait for it, and exit with its code.
+#[cfg(unix)]
+fn reexec(exe: &std::path::Path, args: &[std::ffi::OsString]) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    Command::new(exe).args(args).exec()
+}
+
+#[cfg(windows)]
+fn reexec(exe: &std::path::Path, args: &[std::ffi::OsString]) -> std::io::Error {
+    match Command::new(exe).args(args).status() {
+        Ok(status) => std::process::exit(status.code().unwrap_or(0)),
+        Err(e) => e,
+    }
+}
+
+/// Suspend the TUI, run the selected AI agent (`agent`/`skip_permissions` from Settings) in
+/// `path`, then restore the alternate screen and mouse capture. `PULL_CLAUDE_CMD`, when set,
+/// overrides the built command verbatim (escape hatch for custom invocations).
 fn launch_claude(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     path: &std::path::Path,
+    agent: app::ClaudeAgent,
+    skip_permissions: bool,
 ) -> Result<()> {
-    let command = std::env::var("PULL_CLAUDE_CMD").unwrap_or_else(|_| "cc".to_string());
+    let command = match std::env::var("PULL_CLAUDE_CMD") {
+        Ok(override_cmd) if !override_cmd.is_empty() => override_cmd,
+        _ => {
+            let mut cmd = agent.binary().to_string();
+            if skip_permissions {
+                cmd.push(' ');
+                cmd.push_str(agent.danger_flag());
+            }
+            cmd
+        }
+    };
 
     pop_key_enhancement(terminal);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
-    // `-i` sources ~/.bashrc so the `cc` alias resolves; the path is passed as $1 to avoid quoting.
-    let script = format!("cd \"$1\" && {command}");
-    let _ = Command::new("bash")
-        .args(["-ic", &script, "polygit"])
-        .arg(path)
-        .status();
+    #[cfg(not(windows))]
+    {
+        // `-i` sources ~/.bashrc so a shell alias for the agent resolves; path is $1 to avoid quoting.
+        let script = format!("cd \"$1\" && {command}");
+        let _ = Command::new("bash")
+            .args(["-ic", &script, "polygit"])
+            .arg(path)
+            .status();
+    }
+    // Native Windows: no rc/alias to source — run `command` via pwsh with the child's working
+    // directory set to `path`, which avoids any `cd`/quoting.
+    #[cfg(windows)]
+    {
+        let _ = Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-Command", &command])
+            .current_dir(path)
+            .status();
+    }
 
     enable_raw_mode()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
@@ -969,7 +1024,7 @@ async fn run_tui(
         let exe_str = exe.to_string_lossy();
         let exe = PathBuf::from(exe_str.strip_suffix(" (deleted)").unwrap_or(&exe_str));
         let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-        let error = Command::new(&exe).args(&args).exec();
+        let error = reexec(&exe, &args);
         eprintln!("error: reload failed: {error}");
         return Ok(1);
     }
@@ -1075,7 +1130,11 @@ async fn run_event_loop(
     loop {
         // Suspend the TUI and run claude code when requested (set by a key/click last iteration).
         if let Some(path) = pending_claude.take() {
-            launch_claude(terminal, &path)?;
+            let (agent, skip) = {
+                let app = app_state.lock().unwrap();
+                (app.claude_agent, app.claude_skip_permissions)
+            };
+            launch_claude(terminal, &path, agent, skip)?;
         }
 
         // Suspend the TUI and run lazygit when requested, or note that it isn't installed.

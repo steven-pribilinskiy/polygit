@@ -2,7 +2,7 @@ name: Release
 
 # Build the polygit binary for each supported target on a version tag and attach them to the
 # GitHub Release, so the install script (and `releases/latest/download/...`) can fetch them.
-# polygit is UNIX-only (it uses std::os::unix), so there is no Windows target — use WSL there.
+# Targets cover Linux, macOS, and Windows (native x86_64-pc-windows-msvc — no WSL needed).
 
 on:
   push:
@@ -36,6 +36,7 @@ jobs:
           - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: macos-14,         target: x86_64-apple-darwin }
           - { os: macos-14,         target: aarch64-apple-darwin }
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v6
 
@@ -45,16 +46,24 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         run: |
           bin="target/${{ matrix.target }}/release/polygit"
           cp "$bin" "polygit-${{ matrix.target }}"
           tar -czf "polygit-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" polygit
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "target/${{ matrix.target }}/release/polygit.exe"
+          Copy-Item $bin "polygit-${{ matrix.target }}.exe"
+          Compress-Archive -Path $bin -DestinationPath "polygit-${{ matrix.target }}.zip"
 
       # The release already exists (create-release), so this only uploads assets — no create race.
       - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            polygit-${{ matrix.target }}
-            polygit-${{ matrix.target }}.tar.gz
+            polygit-${{ matrix.target }}*

@@ -43,7 +43,7 @@ Interactive polyrepo git dashboard. Discovers every git repo under a directory a
 
 ## Installing
 
-polygit is a single binary for **Linux and macOS** (on Windows, use WSL).
+polygit is a single binary for **Linux, macOS, and Windows** (native `x86_64-pc-windows-msvc` — WSL works too, but isn't required).
 
 ```bash
 # Install script — grabs the prebuilt binary for your platform
@@ -130,7 +130,7 @@ polygit --no-worktrees [DIR]
 | `o` | Open the selected repo's remote in the browser |
 | `y` | Copy the selected repo's **absolute path** to the clipboard (every copy confirms with a toast previewing the copied text) |
 | `Y` | Copy the selected repo's **remote (origin) URL** to the clipboard |
-| `c` | Start claude code in the selected repo (suspends the TUI, returns on exit) |
+| `c` | Launch the selected AI coding agent in the selected repo (suspends the TUI, returns on exit). Which agent — claude / codex / gemini — and whether to skip its approval prompts are set in Settings → **Agent** |
 | `l` | Open **lazygit** in the selected repo (suspends the TUI, returns on exit) |
 | `x` | Clear **this repo's log buffer** (empties the streamed pull output) |
 | `D` | Open the [documentation website](https://steven-pribilinskiy.github.io/polygit/) in the browser |
@@ -166,7 +166,7 @@ The panel is interactive (it's a web app in a terminal):
 - **Truncated values expand on click.** The path is truncated from the *left* (keeping the filename tail); a long commit subject from the right. Click the underlined value to expand it — the full text wraps starting at the value column, never under the label. Click again to collapse.
 - **Copy buttons**: a `⧉` next to **Path** copies the absolute path; a `⧉` on the log pane's top border copies the whole pull log.
 
-`c` starts claude code (`cc`, i.e. `claude --dangerously-skip-permissions`, in the repo dir; override with `PULL_CLAUDE_CMD`).
+`c` launches an AI coding agent in the repo dir. Pick the agent in Settings → **Agent**: `claude` (default), `codex`, or `gemini`; the optional **Skip permissions** toggle appends that agent's bypass-all-prompts flag (`--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox` / `--yolo`). On Unix the command runs via an interactive `bash` (so a shell alias resolves); on Windows via `pwsh` in the repo dir. `PULL_CLAUDE_CMD`, when set, overrides the whole command verbatim.
 
 ### Settings modal (`,`)
 

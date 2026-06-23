@@ -274,6 +274,10 @@ pub struct AppState {
     pub hide_zero_counts: bool,
     /// Hide the dash-fill leader lines in group / folder headers.
     pub hide_folder_lines: bool,
+    /// Which AI coding-agent CLI the `c` hotkey launches (claude / codex / gemini).
+    pub claude_agent: ClaudeAgent,
+    /// Append the agent's "bypass all approval prompts" flag when launching with `c`.
+    pub claude_skip_permissions: bool,
     /// Color theme (auto = detect terminal background; dark/light = forced).
     pub theme: Theme,
     /// Contrast level for the active palette (text + accent saturation).
@@ -678,6 +682,8 @@ impl AppState {
             icon_style: persisted.icon_style,
             hide_zero_counts: persisted.hide_zero_counts,
             hide_folder_lines: persisted.hide_folder_lines,
+            claude_agent: persisted.claude_agent,
+            claude_skip_permissions: persisted.claude_skip_permissions,
             theme: persisted.theme,
             contrast: persisted.contrast,
             selection_style: persisted.selection_style,

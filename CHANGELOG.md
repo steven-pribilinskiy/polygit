@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.68.0 — 2026-06-24
+native Windows support + a configurable AI coding agent
+- builds and runs natively on Windows (`x86_64-pc-windows-msvc`) — no WSL required; the release workflow now ships a Windows `.zip`
+- platform-split the Unix-only bits: process reload (`execvp` on Unix, spawn+wait on Windows), `open_url` (adds a `cmd /C start` fallback), and the `c` launcher (interactive `bash` on Unix, `pwsh` on Windows)
+- pulls are now bounded by tokio's timer instead of the GNU `timeout` coreutil — cross-platform, and one less external dependency on Linux too
+- new Settings → **Agent** section: pick which AI coding agent the `c` key launches — claude / codex / gemini — plus a "Skip permissions" toggle that appends the agent's bypass-all-prompts flag. `PULL_CLAUDE_CMD` still overrides the command verbatim
+
 ## v2.67.0 — 2026-06-23
 columns/sort: the header dropdowns are now the single picker UI
 - `t` / `s` now open the `t cols ▾` / `s sort ▾` header dropdown (the footer leader-menus for columns/sort are gone)

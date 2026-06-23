@@ -3,7 +3,8 @@ title: Installation
 description: Install polygit with the one-line script, with cargo, or build from source.
 ---
 
-`polygit` is a single Rust binary for **Linux and macOS** (on Windows, run it under WSL).
+`polygit` is a single Rust binary for **Linux, macOS, and Windows** (native
+`x86_64-pc-windows-msvc` — WSL works too, but isn't required).
 
 ## Install script
 
@@ -15,6 +16,11 @@ curl -fsSL https://steven-pribilinskiy.github.io/polygit/install.sh | bash
 
 It installs to `~/.local/bin/polygit` by default (override with `POLYGIT_INSTALL=/some/dir`) and
 tells you if that directory isn't on your `PATH`. Re-run it any time to update.
+
+The install script needs `bash`. On **native Windows** (no Git Bash / WSL), use `cargo install`
+below, or download the `polygit-x86_64-pc-windows-msvc.zip` asset from the
+[latest release](https://github.com/steven-pribilinskiy/polygit/releases/latest) and put
+`polygit.exe` on your `PATH`.
 
 ## With cargo
 
