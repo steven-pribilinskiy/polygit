@@ -29,12 +29,14 @@ appear in a banner pinned to the bottom row.
 
 ### Columns (`t`) and the info panel (`i`)
 
-Press `t` to open the column-toggle menu, then a chip key — `b` ahead/behind, `y` dirty,
-`a` added, `m` modified, `d` deleted, `c` total, `u` upstream, `g` age, `r` pr, `s` subject — or
-click a chip. The **pr** column shows the current branch's open pull request (a clickable `#N`, via
+Press `t` (or click the **`t cols ▾`** title-bar trigger) to open the columns dropdown, then
+pick with the mouse, the `↑↓` arrows + `Enter`, or a row's mnemonic key — `b` ahead/behind, `y` dirty,
+`a` added, `m` modified, `d` deleted, `c` total, `u` upstream, `f` base, `g` age, `r` pr, `s` subject.
+Sorting works the same way via `s` (or the **`s sort ▾`** trigger), or by clicking a column header.
+The **pr** column shows the current branch's open pull request (a clickable `#N`, via
 `gh`) on the HEAD row, blank on the others. The added/modified/deleted counts are each branch's changes vs the merge-base with the
 repo's default branch, computed in the background (cells show `…` until ready). A column every
-branch leaves empty auto-hides and its chip goes dim and inert. Choices persist across runs.
+branch leaves empty auto-hides and its dropdown row goes dim and inert. Choices persist across runs.
 The page distributes its width across the visible columns — hiding columns reclaims that space
 for the **branch** and **subject** text columns (they expand to fill it instead of truncating).
 
@@ -52,7 +54,8 @@ Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / a click), then:
 |-----|--------|
 | `Enter` / double-click | Open the **diff modal** (stash or dirty row) |
 | `Shift`+`Enter` | Check out the selected branch (clean, non-current) |
-| `t` | Column-toggle menu (then `b`/`y`/`a`/`m`/`d`/`c`/`u`/`g`/`s`) |
+| `t` | Open the columns dropdown (then `b`/`y`/`a`/`m`/`d`/`c`/`u`/`f`/`g`/`r`/`s`, or `↑↓`+`Enter`) |
+| `s` | Open the sort dropdown (then `n`/`b`/`y`/`a`/`m`/`d`/`c`/`u`/`f`/`g`/`s`, or click a header) |
 | `i` | Toggle the bottom info panel |
 | `p` | Fast-forward the selected branch / worktree |
 | `P` | Fast-forward every fast-forwardable branch |

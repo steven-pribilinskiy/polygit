@@ -3,6 +3,15 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.67.0 — 2026-06-23
+columns/sort: the header dropdowns are now the single picker UI
+- `t` / `s` now open the `t cols ▾` / `s sort ▾` header dropdown (the footer leader-menus for columns/sort are gone)
+- each dropdown row shows its mnemonic letter — pick by mouse-hover + click, `↑↓` + Enter, or pressing the letter; columns multi-toggle (stay open), sort closes on pick
+- dropdowns now hover-highlight, right-align under their trigger, and open with nothing pre-selected (no more stray highlight on the first row)
+- unavailable columns render dim + inert in the dropdown
+- the active sort + direction (`⟪col ▲⟫`) now rides on the `s sort` trigger; the redundant footer `s sort · t cols` hint is removed
+- the repo page gets the same treatment (`t`/`s` open its dropdowns; the old bottom column-toggle strip is gone)
+
 ## v2.66.0 — 2026-06-20
 tooltip/repo-page fixes: sticky [x], textual maximize, single-view maximize, row hover, tri-state All-tooltips
 - the column-header tooltip now stays alive while the cursor moves from the

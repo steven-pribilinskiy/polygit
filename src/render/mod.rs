@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{
     AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, DiffView,
     DropdownKind, HelpTab, HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow,
-    PageRowKind, Pane, RepoPageColumn, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit,
+    PageRowKind, Pane, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit,
     ScrollKind, SortColumn, SortDir, StatusFilter,
 };
 
@@ -154,10 +154,23 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let mut hits: Vec<Rect> = Vec::new();
     let mut strong_hits: Vec<Rect> = Vec::new();
     let mut button_hits: Vec<Rect> = Vec::new();
+    // An open header dropdown floats above every pane, so its rows win the hover first — the item
+    // under the cursor (and the `[x]` close button) get the standard soft button tint.
+    if app.dropdown.is_some() {
+        if let Some(&(row, start, end, _)) =
+            app.dropdown_item_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.dropdown_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        }
+    }
     // Footer status-bar commands stay clickable over any modal (only settings/help/quit keep a
     // region there). Check them first, everywhere — so the live footer reacts to hover even with a
     // modal on top, where the per-modal branches below only inspect that modal's own regions.
-    if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
+    else if let Some(region) = app.clickable.iter().find(|c| contains(c.row, c.col_start, c.col_end)) {
         for sibling in app.clickable.iter().filter(|c| c.command == region.command) {
             button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
         }
@@ -385,10 +398,6 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, _)) =
             app.repo_page_sort_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
-        {
-            button_hits.push(row_rect(row, start, end));
-        } else if let Some(&(row, start, end, _)) =
-            app.repo_page_toggle_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, _)) =

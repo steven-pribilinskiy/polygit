@@ -708,15 +708,23 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     // always-visible, clickable affordances.
     let win_text = if app.repo_page_maximized { "[m restore]" } else { "[m maximize]" };
     let back_text = "[esc back]";
-    let chip_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
-    let cols_text = "[cols ▾]";
-    let sort_text = "[sort ▾]";
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(Color::DarkGray);
+    let cols_text = "t cols ▾";
+    // `s sort ▾`, with the active sort + direction shown when a sort is set.
+    let sort_label = match app.repo_page_sort {
+        Some(sort) => format!(" sort ⟪{} {}⟫ ▾", sort.label(), app.repo_page_sort_dir.arrow()),
+        None => " sort ▾".to_string(),
+    };
+    let sort_text_len = 1 + sort_label.chars().count();
     let title_top = Line::from(vec![
-        Span::styled(cols_text, chip_style),
+        Span::styled("t", key_style),
+        Span::styled(" cols ▾", label_style),
         Span::raw(" "),
-        Span::styled(sort_text, chip_style),
+        Span::styled("s", key_style),
+        Span::styled(sort_label.clone(), label_style),
         Span::raw("  "),
-        Span::styled(win_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(win_text, key_style),
         Span::raw(" "),
         Span::styled(back_text, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
     ])
@@ -728,9 +736,9 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let win_end = back_start.saturating_sub(1);
     let win_start = win_end.saturating_sub(win_text.len() as u16);
     app.repo_page_window_click = Some((area.y, win_start, win_end));
-    // The `[cols ▾]` / `[sort ▾]` chips sit left of the window controls (two-space gap).
+    // The `t cols ▾` / `s sort ▾` triggers sit left of the window controls (two-space gap).
     let sort_end = win_start.saturating_sub(2);
-    let sort_start = sort_end.saturating_sub(sort_text.chars().count() as u16);
+    let sort_start = sort_end.saturating_sub(sort_text_len as u16);
     let cols_end = sort_start.saturating_sub(1);
     let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
     app.page_sort_click = Some((area.y, sort_start, sort_end));
@@ -1194,7 +1202,6 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         area
     };
     let banner_area = banner.as_ref().map(|_| take_bottom(1));
-    let toggle_area = app.repo_page_toggle.then(|| take_bottom(1));
     let info_area = info_lines.as_ref().map(|lines| take_bottom(lines.len() as u16 + 2));
     let inner = body;
     app.repo_page_inner = inner;
@@ -1293,64 +1300,6 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         frame.render_widget(Paragraph::new(info_lines), info_inner);
     }
 
-    // Column-toggle menu: a chip row (active ●, off ○, unavailable dim & inert), captured for clicks.
-    app.repo_page_toggle_click.clear();
-    if let Some(area) = toggle_area {
-        // Unavailable columns: pre-blend `faint` hard toward the resolved background so they
-        // clearly recede. The generic DIM materialization leaves them too close to the off
-        // columns (and doesn't always fire), so set the dim color explicitly here. On a terminal
-        // background the bg isn't an RGB value to blend, so keep the DIM attribute (native dim).
-        let palette = app.palette();
-        let unavailable_style = match palette.bg {
-            Color::Rgb(..) => {
-                Style::default().fg(crate::theme::blend_toward(palette.faint, palette.bg, 0.72))
-            }
-            _ => Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
-        };
-        let entries: [(RepoPageColumn, &str, &str, bool); 10] = [
-            (RepoPageColumn::AheadBehind, "b", "↑↓", columns.ahead_behind),
-            (RepoPageColumn::Dirty, "y", "dirty", columns.dirty),
-            (RepoPageColumn::Added, "a", "added", columns.added),
-            (RepoPageColumn::Modified, "m", "modified", columns.modified),
-            (RepoPageColumn::Deleted, "d", "deleted", columns.deleted),
-            (RepoPageColumn::Total, "c", "total", columns.total),
-            (RepoPageColumn::Upstream, "u", "upstream", columns.upstream),
-            (RepoPageColumn::Age, "g", "age", columns.age),
-            (RepoPageColumn::PullRequest, "r", "pr", columns.pull_request),
-            (RepoPageColumn::Subject, "s", "subject", columns.subject),
-        ];
-        let mut spans: Vec<Span> = vec![Span::styled(" cols: ", label)];
-        let mut col = area.x + 7;
-        for (column, letter, name, on) in entries {
-            let available = app.repo_page_column_available(column);
-            // Three distinct states: on `●` (green), off `○` (gray), unavailable `–` (faint,
-            // non-circular so it doesn't read as just another off column, and inert).
-            let mark = if !available {
-                "–"
-            } else if on {
-                "●"
-            } else {
-                "○"
-            };
-            let chip = format!("{mark} {letter} {name}");
-            let chip_width = UnicodeWidthStr::width(chip.as_str()) as u16;
-            let style = if !available {
-                unavailable_style
-            } else if on {
-                Style::default().fg(Color::Green)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-            if available {
-                app.repo_page_toggle_click.push((area.y, col, col + chip_width, column));
-            }
-            spans.push(Span::styled(chip, style));
-            spans.push(Span::raw("  "));
-            col += chip_width + 2;
-        }
-        spans.push(Span::styled("esc", Style::default().fg(Color::Cyan)));
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    }
 
     // The action banner / fetch error sits in its reserved bottom row.
     if let (Some((text, color)), Some(area)) = (banner, banner_area) {

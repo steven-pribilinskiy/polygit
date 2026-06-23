@@ -15,7 +15,11 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         DropdownKind::ListColumns | DropdownKind::PageColumns => " columns ",
         DropdownKind::ListSort | DropdownKind::PageSort => " sort ",
     };
-    let inner_w = items.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(6) + 4;
+    // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for sort (`● `) and
+    // 4 for columns (`[x] `), plus the mnemonic key and a space.
+    let marker_w = if is_sort { 2 } else { 4 };
+    let inner_w =
+        items.iter().map(|item| item.label.chars().count()).max().unwrap_or(6) + marker_w + 2;
     let width = (inner_w as u16 + 2).clamp(14, area.width.saturating_sub(2).max(14));
     let height = (items.len() as u16 + 2).min(area.height.saturating_sub(2).max(3));
     // Below the chip, flipping above when there's no room.
@@ -25,7 +29,8 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
     } else {
         dropdown.anchor_row.saturating_sub(height)
     };
-    let x = dropdown.anchor_col.min((area.x + area.width).saturating_sub(width));
+    // Right-aligned with the trigger: the overlay's right edge sits under the chip's right column.
+    let x = dropdown.anchor_right.saturating_sub(width).max(area.x);
     let modal = Rect { x, y, width, height };
     let (close_line, close_click) = modal_close_button(modal);
     let block = Block::default()
@@ -42,28 +47,48 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
     app.dropdown_close_click = close_click;
     app.dropdown_item_click.clear();
     let mut lines: Vec<Line> = Vec::new();
-    for (index, (label, on)) in items.iter().enumerate() {
+    for (index, item) in items.iter().enumerate() {
         if index as u16 >= body.height {
             break;
         }
         let marker = if is_sort {
-            if *on { "● " } else { "○ " }
-        } else if *on {
+            if item.on { "● " } else { "○ " }
+        } else if item.on {
             "[x] "
         } else {
             "[ ] "
         };
-        let selected = index == dropdown.selected;
-        let style = if selected {
-            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
-        } else if *on {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
+        let selected = dropdown.selected == Some(index);
         let row = body.y + index as u16;
-        app.dropdown_item_click.push((row, body.x, body.x + body.width, index));
-        lines.push(Line::from(Span::styled(format!("{marker}{label}"), style)));
+        // The selected row is one solid highlight (the mnemonic reads black-on-cyan, not cyan).
+        let line = if selected {
+            let highlight = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+            Line::from(Span::styled(format!("{marker}{} {}", item.mnemonic, item.label), highlight))
+        } else {
+            // Unavailable columns render dim + inert; otherwise on=green, off=gray, key=cyan bold.
+            let base = if !item.enabled {
+                Style::default().fg(Color::DarkGray)
+            } else if item.on {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            let key_style = if item.enabled {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            Line::from(vec![
+                Span::styled(marker.to_string(), base),
+                Span::styled(item.mnemonic.to_string(), key_style),
+                Span::styled(format!(" {}", item.label), base),
+            ])
+        };
+        // Only selectable rows are clickable + hoverable; a dim/inert row registers no region.
+        if item.enabled {
+            app.dropdown_item_click.push((row, body.x, body.x + body.width, index));
+        }
+        lines.push(line);
     }
     frame.render_widget(Paragraph::new(lines), body);
 }

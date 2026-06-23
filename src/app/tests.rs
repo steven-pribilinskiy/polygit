@@ -832,16 +832,65 @@
         // Columns dropdown: items reflect the flags; activating a column flips it and stays open.
         state.open_dropdown(DropdownKind::ListColumns, 0, 0);
         let items = state.dropdown_items();
-        let dirty_idx = items.iter().position(|(label, _)| label == "dirty").unwrap();
-        assert!(!items[dirty_idx].1);
+        let dirty_idx = items.iter().position(|item| item.label == "dirty").unwrap();
+        assert!(!items[dirty_idx].on);
         assert!(!state.dropdown_activate(dirty_idx), "columns stay open");
         assert!(state.columns.dirty);
         // Sort dropdown: activating picks the sort and closes.
         state.open_dropdown(DropdownKind::ListSort, 0, 0);
         let items = state.dropdown_items();
-        let branch_idx = items.iter().position(|(label, _)| label == "branch").unwrap();
+        let branch_idx = items.iter().position(|item| item.label == "branch").unwrap();
         assert!(state.dropdown_activate(branch_idx), "sort closes on pick");
         assert_eq!(state.sort_column, SortColumn::Branch);
+    }
+
+    #[test]
+    fn dropdown_opens_with_nothing_highlighted_and_arrows_wrap_from_none() {
+        let mut state = state_named(&["a"]);
+        state.open_dropdown(DropdownKind::ListSort, 0, 0);
+        assert_eq!(state.dropdown.unwrap().selected, None, "nothing pre-highlighted on open");
+        // From None, up lands on the last row; from None, down lands on the first.
+        state.dropdown_move(-1);
+        let last = state.dropdown_items().len() - 1;
+        assert_eq!(state.dropdown.unwrap().selected, Some(last));
+        state.open_dropdown(DropdownKind::ListSort, 0, 0);
+        state.dropdown_move(1);
+        assert_eq!(state.dropdown.unwrap().selected, Some(0));
+    }
+
+    #[test]
+    fn dropdown_mnemonic_keys_pick_items() {
+        let mut state = state_named(&["a"]);
+        state.columns.status = true;
+        // `u` is the status column's mnemonic — toggles it, stays open.
+        state.open_dropdown(DropdownKind::ListColumns, 0, 0);
+        assert!(!state.dropdown_activate_key('u'), "columns stay open");
+        assert!(!state.columns.status, "status toggled off via its mnemonic");
+        // `s` is the sort dropdown's status mnemonic — picks it and closes.
+        state.open_dropdown(DropdownKind::ListSort, 0, 0);
+        assert!(state.dropdown_activate_key('s'), "sort closes on pick");
+        assert_eq!(state.sort_column, SortColumn::Status);
+        // An unknown key is a no-op (stays open).
+        state.open_dropdown(DropdownKind::ListColumns, 0, 0);
+        assert!(!state.dropdown_activate_key('Q'));
+    }
+
+    #[test]
+    fn dropdown_disabled_column_mnemonic_is_inert() {
+        // Scan complete with no worktrees anywhere → the worktrees column is unavailable + inert.
+        let mut state = state_named(&["a"]);
+        state.discovery_done = true;
+        state.worktrees_done = true;
+        state.open_dropdown(DropdownKind::ListColumns, 0, 0);
+        let worktrees = state
+            .dropdown_items()
+            .into_iter()
+            .find(|item| item.label == "worktrees")
+            .unwrap();
+        assert!(!worktrees.enabled, "no repo has worktrees → disabled");
+        let before = state.columns.worktrees;
+        assert!(!state.dropdown_activate_key(worktrees.mnemonic), "disabled key does nothing");
+        assert_eq!(state.columns.worktrees, before);
     }
 
     #[test]

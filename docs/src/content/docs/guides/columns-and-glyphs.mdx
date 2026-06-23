@@ -12,10 +12,10 @@ The list always shows three things: a **status glyph**, the repo **name**, and i
 
 ## Toggling columns
 
-Press `t` to enter the column-toggle leader, then a column key. The mode stays active
-(so you can flip several) until you press `Esc`. Prefer the mouse? Click the **`[cols ▾]`**
-chip on the list header for a checkbox dropdown (and **`[sort ▾]`** for sorting) — the
-repo page has the same chips on its title bar.
+Press `t` (or click the **`t cols ▾`** trigger on the list header) to open the columns
+dropdown, then pick with the mouse, the `↑↓` arrows + `Enter`, or each row's mnemonic key.
+Toggling a column keeps the dropdown open so you can flip several; `Esc`/`q`/`[x]`/an outside
+click closes it. The repo page has the same `t cols ▾` / `s sort ▾` triggers on its title bar.
 
 | Key | Column | Glyph |
 |-----|--------|-------|
@@ -49,12 +49,14 @@ than a blank in the Unicode set, so the column stays recognizable; in **emoji** 
 is hidden instead (a colorful emoji beside `0` is clutter). The dirty marker is **amber**, not red —
 uncommitted changes are a "modified" state, not an error (red stays for genuine failures). A column every repo leaves empty (no
 worktrees, no stashes, or `≤1` branch everywhere) auto-hides once its data has loaded, and its
-`t`-menu chip goes dim and inert until some repo has a value.
+columns-dropdown row goes dim and inert until some repo has a value.
 
 ## Sorting
 
-Press `s` to enter the sort leader, then a column key — or click a column header (including
-the **branch** header). The 2-row header shows a `▲`/`▼` indicator on the active sort column.
+Press `s` (or click the **`s sort ⟪…⟫ ▾`** trigger, which shows the current sort + direction) to
+open the sort dropdown, then pick with the mouse, the `↑↓` arrows + `Enter`, or a row's mnemonic
+key — or click a column header (including the **branch** header). Re-picking the active sort (or
+re-clicking the header) flips the direction. The 2-row header shows a `▲`/`▼` indicator on the active sort column.
 With hover effects on, dwelling ~1s over a column title (`wt`, `st`, `pr`, …) shows a tooltip
 explaining it — for an optional column the tooltip also carries a clickable red `[x]` that hides
 that column on the spot (the tooltip stays put while you move the cursor onto it). Dwelling over a

@@ -29,19 +29,25 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     };
 
     let modal_open = app.any_modal_open();
-    // Mouse-friendly `[cols ▾]` / `[sort ▾]` chips on the top border (open the dropdown menus;
-    // the `t` / `s` leaders still work). Captured for click hit-testing.
-    let chip_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
-    let cols_text = "[cols ▾]";
-    let sort_text = "[sort ▾]";
+    // Footer-chip-styled `t cols ▾` / `s sort ⟪col ▲⟫ ▾` triggers on the top border: the mnemonic
+    // key (cyan/bold) + a dim label. Click (or press `t`/`s`) to open the dropdown; the current sort
+    // + direction rides on the sort trigger. Captured for click hit-testing + dropdown anchoring.
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(Color::DarkGray);
+    let cols_text = "t cols ▾";
+    let sort_tag = format!("⟪{} {}⟫", app.sort_column.label(), app.sort_dir.arrow());
+    let sort_label = format!(" sort {sort_tag} ▾");
+    let sort_text_len = 1 + sort_label.chars().count();
     let chips = Line::from(vec![
-        Span::styled(cols_text, chip_style),
+        Span::styled("t", key_style),
+        Span::styled(" cols ▾", label_style),
         Span::raw(" "),
-        Span::styled(sort_text, chip_style),
+        Span::styled("s", key_style),
+        Span::styled(sort_label.clone(), label_style),
     ])
     .right_aligned();
     let right_end = area.x + area.width.saturating_sub(1);
-    let sort_start = right_end.saturating_sub(sort_text.chars().count() as u16);
+    let sort_start = right_end.saturating_sub(sort_text_len as u16);
     let cols_end = sort_start.saturating_sub(1);
     let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
     app.list_sort_click = Some((area.y, sort_start, right_end));

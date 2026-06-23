@@ -93,51 +93,6 @@ pub(crate) fn footer_sep() -> (String, Style, Option<HintKey>) {
     (" · ".to_string(), Style::default().fg(Color::DarkGray), None)
 }
 
-/// Pack `chips` (each an indivisible segment group) into as many rows as needed so each fits
-/// `area.width`, separated by ` · `. Row 0 starts with `prefix`; later rows start flush left.
-/// Click regions are registered per row at `base_y + row`. Used by the column picker, which has
-/// more chips than fit on one status row.
-pub(crate) fn pack_chips_into_rows(
-    prefix: Vec<(String, Style, Option<Command>)>,
-    chips: Vec<Vec<(String, Style, Option<Command>)>>,
-    area: Rect,
-    base_y: u16,
-    clickable: &mut Vec<ClickRegion>,
-    hint: Style,
-) -> Vec<Line<'static>> {
-    let sep_w = UnicodeWidthStr::width(" · ") as u16;
-    let group_w = |group: &[(String, Style, Option<Command>)]| -> u16 {
-        group.iter().map(|(text, _, _)| UnicodeWidthStr::width(text.as_str()) as u16).sum()
-    };
-    let mut rows: Vec<Vec<(String, Style, Option<Command>)>> = Vec::new();
-    let mut current = prefix;
-    let mut current_w = group_w(&current);
-    // The prefix carries its own trailing space, so the first chip joins flush (no ` · `).
-    let mut first_in_row = true;
-    for chip in chips {
-        let chip_w = group_w(&chip);
-        if !first_in_row && current_w + sep_w + chip_w > area.width {
-            rows.push(std::mem::take(&mut current));
-            current_w = 0;
-            first_in_row = true;
-        }
-        if !first_in_row {
-            current.push((" · ".to_string(), hint, None));
-            current_w += sep_w;
-        }
-        current.extend(chip);
-        current_w += chip_w;
-        first_in_row = false;
-    }
-    if !current.is_empty() {
-        rows.push(current);
-    }
-    rows.into_iter()
-        .enumerate()
-        .map(|(index, segments)| build_status_row(segments, area.x, base_y + index as u16, clickable))
-        .collect()
-}
-
 /// Clip a string to at most `max` display cells (no ellipsis appended).
 pub(crate) fn clip_to_width(text: &str, max: usize) -> String {
     let mut out = String::new();
@@ -266,23 +221,9 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
     let leader_active = leader.is_some();
     let leader_trigger = match leader {
         Some(Leader::Filter) => Some(Command::FilterLeader),
-        Some(Leader::Sort) => Some(Command::SortLeader),
-        Some(Leader::Toggle) => Some(Command::ToggleLeader),
         _ => None,
     };
-    let columns = app.columns;
-    let avail = (
-        app.column_available(Column::Worktrees),
-        app.column_available(Column::Branches),
-        app.column_available(Column::Stashes),
-        app.column_available(Column::PulledCommits),
-        app.column_available(Column::PulledFiles),
-    );
-    // Which sort options the `s` menu offers — only columns currently visible on screen.
-    let sort_vis = |column: SortColumn| app.sort_column_visible(column);
     let status_filter = app.status_filter;
-    let sort_column = app.sort_column;
-    let sort_dir = app.sort_dir;
     let grouping_on = app.grouping_active();
     let tree_on = app.tree_active();
 
@@ -317,7 +258,6 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
     ];
 
     let mut clickable: Vec<ClickRegion> = Vec::new();
-    let mark = |on: bool| if on { "[x]" } else { "[ ]" };
     // A leader-menu item as three segments so its hotkey letter pops in the key color.
     let leader_item = |prefix: String,
                        letter: &str,
@@ -331,71 +271,9 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
         ]
     };
 
-    // The column picker (`t`) has more chips than fit one row, so pack it across as many status
-    // rows as needed; when it wraps it takes over the find row (row 2) while open.
-    let toggle_lines: Option<Vec<Line>> = if leader == Some(Leader::Toggle) {
-        let toggle_item = |on: bool, letter: &str, label: &str, column: Column| {
-            leader_item(
-                format!("{} ", mark(on)),
-                letter,
-                label.to_string(),
-                Command::ToggleColumn(column),
-            )
-        };
-        // An unavailable column (no repo has any) renders dim and inert — visible but disabled.
-        let disabled_item = |letter: &str, label: &str| {
-            [
-                ("[ ] ".to_string(), hint, None),
-                (letter.to_string(), hint, None),
-                (format!(" {label} (none)"), hint, None),
-            ]
-        };
-        let entries = [
-            toggle_item(columns.status, "u", "status", Column::Status),
-            toggle_item(columns.ahead_behind, "a", "ahead/behind", Column::AheadBehind),
-            toggle_item(columns.dirty, "d", "dirty", Column::Dirty),
-            toggle_item(columns.last_commit, "l", "last-commit", Column::LastCommit),
-            if avail.0 {
-                toggle_item(columns.worktrees, "w", "worktrees", Column::Worktrees)
-            } else {
-                disabled_item("w", "worktrees")
-            },
-            if avail.1 {
-                toggle_item(columns.branches, "b", "branches", Column::Branches)
-            } else {
-                disabled_item("b", "branches")
-            },
-            if avail.2 {
-                toggle_item(columns.stashes, "s", "stashes", Column::Stashes)
-            } else {
-                disabled_item("s", "stashes")
-            },
-            if avail.3 {
-                toggle_item(columns.pulled_commits, "p", "pulled", Column::PulledCommits)
-            } else {
-                disabled_item("p", "pulled")
-            },
-            if avail.4 {
-                toggle_item(columns.pulled_files, "c", "changed", Column::PulledFiles)
-            } else {
-                disabled_item("c", "changed")
-            },
-            toggle_item(columns.pull_request, "r", "pull request", Column::PullRequest),
-        ];
-        let mut chips: Vec<Vec<(String, Style, Option<Command>)>> =
-            entries.into_iter().map(|entry| entry.to_vec()).collect();
-        chips.push(vec![("esc".to_string(), key, Some(Command::LeaderCancel))]);
-        let prefix = vec![("cols: ".to_string(), hint, None)];
-        Some(pack_chips_into_rows(prefix, chips, area, area.y, &mut clickable, hint))
-    } else {
-        None
-    };
-
-    // Row 1: the column picker's first row, the filter prompt, an active leader menu (`f` status /
-    // `s` sort), or the normal navigation/filter/sort/layout hints.
-    let row1 = if let Some(lines) = toggle_lines.as_ref() {
-        lines.first().cloned().unwrap_or_default()
-    } else if filtering {
+    // Row 1: the filter prompt, an active leader menu (`f` status filter), or the normal
+    // navigation/view/layout hints. (Columns/sort live in the header dropdowns, not here.)
+    let row1 = if filtering {
         // `@` switches name-matching to status/attribute matching; hint at it inline.
         let in_status = filter_text.starts_with('@');
         let label = if in_status { "Filter by status: " } else { "Filter: " };
@@ -429,62 +307,6 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
             filter_item("f", "failed", StatusFilter::Failed),
             filter_item("i", "issues", StatusFilter::Issues),
         ];
-        for (index, entry) in entries.into_iter().enumerate() {
-            if index > 0 {
-                segments.push((" · ".to_string(), hint, None));
-            }
-            segments.extend(entry);
-        }
-        segments.push((" · ".to_string(), hint, None));
-        segments.push(("esc".to_string(), key, Some(Command::LeaderCancel)));
-        // No right fragment while a leader menu is up — the menu needs the full row width.
-        compose_status_row(segments, Vec::new(), area, area.y, &mut clickable, hint)
-    } else if leader == Some(Leader::Sort) {
-        let sort_item = |letter: &str, name: &str, column: SortColumn| {
-            let chosen = sort_column == column;
-            let dot = if chosen { "●" } else { "○" };
-            let arrow = if chosen { sort_dir.arrow() } else { "" };
-            leader_item(
-                format!("{dot} "),
-                letter,
-                format!("{name}{arrow}"),
-                Command::SetSort(column),
-            )
-        };
-        let mut segments: Vec<(String, Style, Option<Command>)> =
-            vec![("sort: ".to_string(), hint, None)];
-        // Only offer sorts whose column is actually on screen — name/branch/status/dirty are
-        // always visible; the rest follow their effective column.
-        let mut entries: Vec<[(String, Style, Option<Command>); 3]> = vec![
-            sort_item("n", "name", SortColumn::Name),
-            sort_item("c", "branch", SortColumn::Branch),
-            sort_item("s", "status", SortColumn::Status),
-            sort_item("d", "dirty", SortColumn::Dirty),
-        ];
-        if sort_vis(SortColumn::AheadBehind) {
-            entries.push(sort_item("a", "ahead/behind", SortColumn::AheadBehind));
-        }
-        if sort_vis(SortColumn::LastCommit) {
-            entries.push(sort_item("l", "last-commit", SortColumn::LastCommit));
-        }
-        if sort_vis(SortColumn::Worktrees) {
-            entries.push(sort_item("w", "worktrees", SortColumn::Worktrees));
-        }
-        if sort_vis(SortColumn::Branches) {
-            entries.push(sort_item("b", "branches", SortColumn::Branches));
-        }
-        if sort_vis(SortColumn::Stashes) {
-            entries.push(sort_item("k", "stashes", SortColumn::Stashes));
-        }
-        if sort_vis(SortColumn::PulledCommits) {
-            entries.push(sort_item("p", "pulled", SortColumn::PulledCommits));
-        }
-        if sort_vis(SortColumn::PulledFiles) {
-            entries.push(sort_item("g", "changed", SortColumn::PulledFiles));
-        }
-        if sort_vis(SortColumn::PullRequest) {
-            entries.push(sort_item("r", "pull request", SortColumn::PullRequest));
-        }
         for (index, entry) in entries.into_iter().enumerate() {
             if index > 0 {
                 segments.push((" · ".to_string(), hint, None));
@@ -621,20 +443,6 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
             Some(Command::SetFilter(StatusFilter::All)),
         ));
     }
-    row2_segments.push((" · ".to_string(), hint, None));
-    row2_segments.push(("s".to_string(), key, Some(Command::SortLeader)));
-    row2_segments.push((" sort".to_string(), hint, Some(Command::SortLeader)));
-    row2_segments.push((" ".to_string(), hint, None));
-    row2_segments.push((
-        format!("⟪{} {}⟫", sort_column.label(), sort_dir.arrow()),
-        active,
-        Some(Command::FlipSort),
-    ));
-    row2_segments.extend([
-        (" · ".to_string(), hint, None),
-        ("t".to_string(), key, Some(Command::ToggleLeader)),
-        (" cols".to_string(), hint, Some(Command::ToggleLeader)),
-    ]);
     // View toggles: `v g` grouped + `v t` tree, always shown — `style_footer` dims+inerts them when
     // not applicable (no groups.json / no nested folders). Each label brightens while its view is on.
     {
@@ -661,20 +469,14 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
         ("] ".to_string(), key, Some(Command::SplitWiden)),
         ("resize".to_string(), hint, Some(Command::SplitWiden)),
     ]);
-    // When the column picker wrapped to a second row, it owns row 2 — render its second line
-    // there instead of the find row (whose hidden clicks must not register).
-    let row2 = if let Some(second) = toggle_lines.as_ref().filter(|lines| lines.len() > 1) {
-        second[1].clone()
-    } else {
-        compose_status_row(
-            style_footer(app, row2_segments, modal_open, leader_active, leader_trigger, dim_style),
-            style_footer(app, right_built, modal_open, leader_active, leader_trigger, dim_style),
-            area,
-            area.y + 1,
-            &mut clickable,
-            hint,
-        )
-    };
+    let row2 = compose_status_row(
+        style_footer(app, row2_segments, modal_open, leader_active, leader_trigger, dim_style),
+        style_footer(app, right_built, modal_open, leader_active, leader_trigger, dim_style),
+        area,
+        area.y + 1,
+        &mut clickable,
+        hint,
+    );
 
     // Row 3 — actions. The keys + label words are all clickable; clicking "refetch"/"retry" runs
     // the all-repos (capital) variant. `style_footer` dims+inerts each command when it'd be a no-op
