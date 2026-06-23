@@ -38,8 +38,8 @@ found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level sc
 |----------|-------------|
 | `PULL_JOBS` | Same as `-j`/`--jobs`. |
 | `PULL_TIMEOUT` | Same as `--timeout`. |
-| `PULL_CLAUDE_CMD` | Command run by the `c` key (default `cc`, i.e. `claude --dangerously-skip-permissions`). |
-| `BROWSER` | Preferred opener for the `o` key (falls back to `wslview`, `xdg-open`, `open`). |
+| `PULL_CLAUDE_CMD` | Overrides the command run by the `c` key verbatim. Unset, `c` runs the agent chosen in Settings → Agent (claude / codex / gemini), plus its skip-permissions flag when that toggle is on. |
+| `BROWSER` | Preferred opener for the `o` key (falls back to `wslview`/`xdg-open`/`open` on Unix, `cmd /C start` on Windows). |
 
 ## Examples
 

@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    Background, BranchCheck, ButtonHoverStyle, ColumnFlags, Contrast, DesignLayout, HelpTab,
-    IconStyle, RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn, SortDir,
-    Theme, TooltipPrefs,
+    Background, BranchCheck, ButtonHoverStyle, ClaudeAgent, ColumnFlags, Contrast, DesignLayout,
+    HelpTab, IconStyle, RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn,
+    SortDir, Theme, TooltipPrefs,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -58,6 +58,12 @@ pub struct PersistedState {
     /// Hide the dash-fill leader lines in group / folder headers (default off).
     #[serde(default)]
     pub hide_folder_lines: bool,
+    /// Which AI coding-agent CLI the `c` hotkey launches (claude / codex / gemini).
+    #[serde(default)]
+    pub claude_agent: ClaudeAgent,
+    /// Append the agent's "bypass all approval prompts" flag when launching (default off).
+    #[serde(default)]
+    pub claude_skip_permissions: bool,
     /// Legacy single workspace (absolute paths). Kept for migration only — on load it folds into
     /// `workspaces["default"]` when `workspaces` is empty. No longer written.
     #[serde(default)]

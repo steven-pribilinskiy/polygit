@@ -815,7 +815,8 @@ pub(crate) fn settings_row_line(
 /// `↑↓` move, `←→`/`tab` switch tab, `space`/`enter` toggle, `esc` closes.
 pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     use crate::app::{
-        Background, ButtonHoverStyle, Contrast, SelectionStyle, SettingsLayout, Theme, SETTINGS_TABS,
+        Background, ButtonHoverStyle, ClaudeAgent, Contrast, SelectionStyle, SettingsLayout, Theme,
+        SETTINGS_TABS,
     };
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     let hide_zero = app.hide_zero_counts;
@@ -976,6 +977,26 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     vec![("on", app.tooltips.settings), ("off", !app.tooltips.settings)],
                 ),
                 ("Help links", vec![("on", app.tooltips.links), ("off", !app.tooltips.links)]),
+            ],
+        ),
+        (
+            "Agent",
+            vec![
+                (
+                    "AI agent",
+                    vec![
+                        ("claude", app.claude_agent == ClaudeAgent::Claude),
+                        ("codex", app.claude_agent == ClaudeAgent::Codex),
+                        ("gemini", app.claude_agent == ClaudeAgent::Gemini),
+                    ],
+                ),
+                (
+                    "Skip permissions",
+                    vec![
+                        ("on", app.claude_skip_permissions),
+                        ("off", !app.claude_skip_permissions),
+                    ],
+                ),
             ],
         ),
     ];
