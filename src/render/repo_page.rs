@@ -561,7 +561,10 @@ pub(crate) fn build_repo_page_info_lines(
             // The open PR (resolved for the repo's current branch) shows on the HEAD row only.
             if row.is_head {
                 if let Some(pr) = pr {
-                    lines.push(pair("pull request", format!("#{} {}", pr.number, pr.title)));
+                    lines.push(pair(
+                        "pull request",
+                        format!("#{} ({}) {}", pr.number, pr.state.label(), pr.title),
+                    ));
                 }
             }
             let base = match (base_branch, row.merge_base_short.as_deref()) {
@@ -633,8 +636,13 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             fetched,
             fetch_error,
             state.pull_loading,
-            // The current branch's open PR (for the `pr` column on the HEAD row).
-            state.pr.as_ref().map(|pr| (format!("#{}", pr.number), pr.url.clone())),
+            // The current branch's PR (for the `pr` column on the HEAD row). Merged/closed only
+            // when the "Merged PRs" setting is on.
+            state
+                .pr
+                .as_ref()
+                .filter(|pr| pr.shown(app.show_merged_prs))
+                .map(|pr| (format!("#{}", pr.number), pr.url.clone())),
         )
     };
     let head_branch = rows
@@ -1186,7 +1194,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             let (base, pr) = {
                 let state = app.repos[idx].lock().unwrap();
                 let base = state.page.as_ref().and_then(|page| page.base_branch.clone());
-                (base, state.pr.clone())
+                (base, state.pr.clone().filter(|pr| pr.shown(app.show_merged_prs)))
             };
             build_repo_page_info_lines(row, base.as_deref(), pr.as_ref())
         })

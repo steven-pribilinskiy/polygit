@@ -86,6 +86,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let columns = app.effective_columns();
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     let hide_zero = app.hide_zero_counts;
+    let show_merged_prs = app.show_merged_prs;
     let col_extra = usize::from(emoji);
     let dirty_w = 3 + col_extra; // glyph + up to 2 digits
     let count_w = 4 + col_extra; // glyph + count (worktrees / branches / stashes)
@@ -298,15 +299,20 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                 spans.push(count_span(icons.changed, pulled_count(|r| r.files), Color::Cyan, false));
             }
             if columns.pull_request {
-                // `#N` (a clickable link, region registered post-render) when an open PR exists;
-                // blank otherwise (unresolved or no PR).
-                let text = state.pr.as_ref().map(|pr| format!("#{}", pr.number)).unwrap_or_default();
-                let style = if state.pr.is_some() {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED)
-                } else {
-                    Style::default()
+                // `#N` (a clickable link, region registered post-render) when a shown PR exists,
+                // colored by lifecycle state (green=open, magenta=merged, gray=closed); blank
+                // otherwise. Merged/closed PRs only render when the "Merged PRs" setting is on.
+                let pr = state.pr.as_ref().filter(|pr| pr.shown(show_merged_prs));
+                let text = pr.map(|pr| format!("#{}", pr.number)).unwrap_or_default();
+                // The leading separator space stays unstyled so only `#N` is underlined.
+                spans.push(Span::raw(" "));
+                let style = match pr {
+                    Some(pr) => Style::default()
+                        .fg(crate::render::preview::pr_state_color(pr.state))
+                        .add_modifier(Modifier::UNDERLINED),
+                    None => Style::default(),
                 };
-                spans.push(Span::styled(format!(" {}", pad_display(&text, pr_w)), style));
+                spans.push(Span::styled(pad_display(&text, pr_w), style));
             }
             if columns.favorite {
                 // Already holding this repo's lock — read favorites by rel_path, don't re-lock.
@@ -496,7 +502,13 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
             let mut clicks = Vec::new();
             for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
                 if let ListRow::Repo { repo_idx, .. } = *row {
-                    let url = app.repos[repo_idx].lock().unwrap().pr.as_ref().map(|pr| pr.url.clone());
+                    let url = app.repos[repo_idx]
+                        .lock()
+                        .unwrap()
+                        .pr
+                        .as_ref()
+                        .filter(|pr| pr.shown(show_merged_prs))
+                        .map(|pr| pr.url.clone());
                     if let Some(url) = url {
                         clicks.push((rows_area.y + visible as u16, start, end, url));
                     }
@@ -812,7 +824,7 @@ pub(crate) fn column_header_tooltip(sort: SortColumn) -> &'static str {
         SortColumn::Stashes => "st — stash entries",
         SortColumn::PulledCommits => "pull — commits pulled in this session",
         SortColumn::PulledFiles => "chg — files changed by this session's pull",
-        SortColumn::PullRequest => "pr — open pull request for the current branch (click to open)",
+        SortColumn::PullRequest => "pr — pull request for the current branch (click to open)",
     }
 }
 

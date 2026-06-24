@@ -439,7 +439,15 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         }
     } else {
         // Main two-pane view. (Footer status-bar commands are handled by the top-level check above.)
-        if let Some(column) = app.header_sort_at(hcol, hrow) {
+        // The `t cols ▾` / `s sort ▾` header trigger chips get the button hover tint (mirrors their
+        // click regions in main.rs — start inclusive, end exclusive).
+        if let Some((row, start, end)) = app
+            .list_cols_click
+            .filter(|&(r, s, e)| contains(r, s, e))
+            .or_else(|| app.list_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(column) = app.header_sort_at(hcol, hrow) {
             // A sortable list column header cell — highlight it across the header's rows (a wide,
             // multi-row cell reads better tinted than reverse-video).
             if let Some(&(start, end, _)) =

@@ -33,8 +33,8 @@ Press `t` (or click the **`t cols ▾`** title-bar trigger) to open the columns 
 pick with the mouse, the `↑↓` arrows + `Enter`, or a row's mnemonic key — `b` ahead/behind, `y` dirty,
 `a` added, `m` modified, `d` deleted, `c` total, `u` upstream, `f` base, `g` age, `r` pr, `s` subject.
 Sorting works the same way via `s` (or the **`s sort ▾`** trigger), or by clicking a column header.
-The **pr** column shows the current branch's open pull request (a clickable `#N`, via
-`gh`) on the HEAD row, blank on the others. The added/modified/deleted counts are each branch's changes vs the merge-base with the
+The **pr** column shows the current branch's pull request — open, merged, or closed (a clickable
+`#N`, via `gh`) on the HEAD row, blank on the others. The added/modified/deleted counts are each branch's changes vs the merge-base with the
 repo's default branch, computed in the background (cells show `…` until ready). A column every
 branch leaves empty auto-hides and its dropdown row goes dim and inert. Choices persist across runs.
 The page distributes its width across the visible columns — hiding columns reclaims that space
@@ -42,8 +42,8 @@ for the **branch** and **subject** text columns (they expand to fill it instead 
 
 `i` toggles a bottom **info panel** detailing the selected row: branch, upstream, base branch
 plus merge-base sha, ahead/behind, change stats, and the tip commit (sha · author · date ·
-subject). On the HEAD row it also shows the open **pull request** (`#N title`) when the current
-branch has one (via `gh`). For a worktree it adds the path; for a stash, the stash ref and label.
+subject). On the HEAD row it also shows the **pull request** (`#N (state) title`) when the current
+branch has one (via `gh`) — open, merged, or closed. For a worktree it adds the path; for a stash, the stash ref and label.
 Persisted.
 
 ## Acting on a row

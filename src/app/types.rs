@@ -90,13 +90,58 @@ pub struct RepoDetails {
     pub commit_timestamp: i64,
 }
 
-/// An open pull request for a repo's current branch, detected via `gh`. Cached (with a TTL) in
-/// `pr-cache.json` so the column + info panel don't re-hit the network every frame/launch.
+/// Lifecycle state of a detected PR. Mirrors `gh`'s `state` field. `Open` is the serde default so
+/// pre-`state` cache entries (which only ever recorded open PRs) deserialize as open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum PrState {
+    #[default]
+    Open,
+    Merged,
+    Closed,
+}
+
+impl PrState {
+    /// Parse `gh`'s `state` value ("OPEN"/"MERGED"/"CLOSED"); unknown → `Closed` (inert).
+    pub fn from_gh(value: &str) -> PrState {
+        match value.to_ascii_uppercase().as_str() {
+            "OPEN" => PrState::Open,
+            "MERGED" => PrState::Merged,
+            _ => PrState::Closed,
+        }
+    }
+
+    /// Lowercase label for the info panel / repo page ("open", "merged", "closed").
+    pub fn label(self) -> &'static str {
+        match self {
+            PrState::Open => "open",
+            PrState::Merged => "merged",
+            PrState::Closed => "closed",
+        }
+    }
+}
+
+/// A pull request for a repo's current branch, detected via `gh` (most-recent, preferring an open
+/// one). Cached (with a TTL) in `pr-cache.json` so the column + info panel don't re-hit the network
+/// every frame/launch.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrInfo {
     pub number: u32,
     pub title: String,
     pub url: String,
+    /// Open / merged / closed — drives the state badge + column color. Defaults to `Open` for
+    /// cache entries written before this field existed.
+    #[serde(default)]
+    pub state: PrState,
+}
+
+impl PrInfo {
+    /// Whether to surface this PR given the "Merged PRs" setting. Open PRs always show; merged and
+    /// closed PRs show only when `show_merged` is on (the setting is off by default). Detection
+    /// always finds all states — this is a display-time gate, so toggling is instant (no re-query).
+    pub fn shown(&self, show_merged: bool) -> bool {
+        show_merged || self.state == PrState::Open
+    }
 }
 
 /// What the most recent pull delivered. `None` until a pull *updates* the repo; cleared at the
@@ -1311,11 +1356,12 @@ pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Layout", 6),
     ("Tooltips", 6),
     ("Agent", 2),
+    ("Pull requests", 1),
 ];
 
 /// Every settings row's label in global row order — the single list the search filter matches
 /// against (keep in sync with the inline `sections` in `render_settings`).
-pub const SETTINGS_LABELS: [&str; 30] = [
+pub const SETTINGS_LABELS: [&str; 31] = [
     "Grouping",            // 0
     "Tree view",           // 1
     "Hide folder lines",   // 2
@@ -1346,6 +1392,7 @@ pub const SETTINGS_LABELS: [&str; 30] = [
     "Help links",          // 27
     "AI agent",            // 28
     "Skip permissions",    // 29
+    "Merged PRs",          // 30
 ];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler

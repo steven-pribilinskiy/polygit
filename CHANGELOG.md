@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.69.0 — 2026-06-24
+smarter PR + branch links, a "Merged PRs" setting, and a pull-hang fix
+- **fix: a repo could pull indefinitely** (stuck "running", clock ticking past the timeout). A pull that needs credentials spawns a long-lived `git credential-cache--daemon` that inherits git's stdout/stderr, so the pipes never hit EOF and the output readers blocked forever — even after git itself exited or was killed on timeout. The readers now drain with a brief grace then abort, in both the TUI and `--no-tui` paths
+- the **Branch** field is only a link when the branch is actually on the remote — a no-upstream / "ref gone" branch (its PR merged and the remote branch deleted) renders as plain text instead of a link that 404s
+- **PR detection now finds merged & closed PRs**, not just open ones — the `gh` lookup queries all states (preferring an open one). The info panel + repo page show the PR's lifecycle state and the `pr` column is colored by it (green=open, magenta=merged, gray=closed)
+- new **Settings → Pull requests → Merged PRs** toggle (off by default): merged/closed PRs only show when it's on, so by default you still see open PRs only. Detection always finds every state — the toggle gates display, so flipping it is instant (no re-query)
+- the `t cols ▾` / `s sort ▾` header trigger chips now get a hover background, and the `pr` column's leading separator space is no longer underlined
+
 ## v2.68.0 — 2026-06-24
 native Windows support + a configurable AI coding agent
 - builds and runs natively on Windows (`x86_64-pc-windows-msvc`) — no WSL required; the release workflow now ships a Windows `.zip`

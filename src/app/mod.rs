@@ -247,6 +247,9 @@ pub struct AppState {
     pub diff_modal: Option<DiffModal>,
     /// Persisted diff-modal render style (raw / unified / split); new modals open in it.
     pub diff_view: DiffView,
+    /// Surface merged & closed PRs (not just open) in the PR column + info panel. Off by default;
+    /// detection always finds all states, so this gates display only (instant toggle, no re-query).
+    pub show_merged_prs: bool,
     /// Visible line count of the diff modal's diff panel, captured at render for PgUp/PgDn.
     pub diff_modal_viewport: usize,
     /// Visible row count of the diff modal's file-list panel (to keep the selection in view).
@@ -671,6 +674,7 @@ impl AppState {
             repo_page_click: Vec::new(),
             diff_modal: None,
             diff_view: persisted.diff_view,
+            show_merged_prs: persisted.show_merged_prs,
             diff_modal_viewport: 0,
             diff_files_viewport: 0,
             diff_files_area: Rect::default(),
