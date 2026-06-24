@@ -150,27 +150,25 @@ pub async fn run_plain(
             let stdout = child.stdout.take().unwrap();
             let stderr = child.stderr.take().unwrap();
 
-            let stdout_task = tokio::spawn(async move {
-                let reader = BufReader::new(stdout);
-                let mut lines = reader.lines();
-                let mut collected = String::new();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    collected.push_str(&line);
-                    collected.push('\n');
-                }
-                collected
-            });
-
-            let stderr_task = tokio::spawn(async move {
-                let reader = BufReader::new(stderr);
-                let mut lines = reader.lines();
-                let mut collected = String::new();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    collected.push_str(&line);
-                    collected.push('\n');
-                }
-                collected
-            });
+            // Stream each pipe into a shared buffer so we can recover git's output even if the
+            // reader must be aborted before EOF (see the drain note below).
+            let stdout_buf = Arc::new(Mutex::new(String::new()));
+            let stderr_buf = Arc::new(Mutex::new(String::new()));
+            fn spawn_reader<R>(reader: R, buf: Arc<Mutex<String>>) -> tokio::task::JoinHandle<()>
+            where
+                R: tokio::io::AsyncRead + Unpin + Send + 'static,
+            {
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(reader).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let mut buf = buf.lock().unwrap();
+                        buf.push_str(&line);
+                        buf.push('\n');
+                    }
+                })
+            }
+            let stdout_task = spawn_reader(stdout, Arc::clone(&stdout_buf));
+            let stderr_task = spawn_reader(stderr, Arc::clone(&stderr_buf));
 
             // Bound the pull with tokio's timer (cross-platform; no external `timeout` coreutil).
             let mut timed_out = false;
@@ -187,8 +185,18 @@ pub async fn run_plain(
                 };
             let exit_success = status.success() && !timed_out;
 
-            let stdout_output = stdout_task.await.unwrap_or_default();
-            let stderr_output = stderr_task.await.unwrap_or_default();
+            // `git` has exited, but the readers can hang forever when a pull that needed credentials
+            // spawned a long-lived `git credential-cache--daemon` (or HTTPS/SSH child) that inherited
+            // git's stdout/stderr — the pipes never reach EOF. Drain with a brief grace, then abort;
+            // the shared buffers keep whatever git actually wrote (flushed before it exited).
+            for task in [stdout_task, stderr_task] {
+                let aborter = task.abort_handle();
+                if tokio::time::timeout(std::time::Duration::from_secs(2), task).await.is_err() {
+                    aborter.abort();
+                }
+            }
+            let stdout_output = std::mem::take(&mut *stdout_buf.lock().unwrap());
+            let stderr_output = std::mem::take(&mut *stderr_buf.lock().unwrap());
             let mut combined = format!("{stdout_output}{stderr_output}");
             if timed_out {
                 combined.push_str(&format!("pull timed out after {timeout}s\n"));

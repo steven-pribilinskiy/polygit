@@ -208,38 +208,37 @@ async fn run_pull_attempt(
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    let repo_state_stdout = Arc::clone(repo_state);
-    let stdout_task = tokio::spawn(async move {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        let mut collected = String::new();
-        while let Ok(Some(line)) = lines.next_line().await {
-            collected.push_str(&line);
-            collected.push('\n');
-            repo_state_stdout.lock().unwrap().log.push(line);
-        }
-        collected
-    });
-
-    let repo_state_stderr = Arc::clone(repo_state);
-    let stderr_task = tokio::spawn(async move {
-        let reader = BufReader::new(stderr);
-        let mut lines = reader.lines();
-        let mut collected = String::new();
-        while let Ok(Some(line)) = lines.next_line().await {
-            collected.push_str(&line);
-            collected.push('\n');
-            repo_state_stderr.lock().unwrap().log.push(line);
-        }
-        collected
-    });
+    // Each reader streams lines into the repo log AND a shared buffer. The buffer lets us recover
+    // git's output even when we have to abort the reader before it sees EOF (see the drain note).
+    let stdout_buf = Arc::new(Mutex::new(String::new()));
+    let stderr_buf = Arc::new(Mutex::new(String::new()));
+    fn spawn_reader<R>(
+        reader: R,
+        log_state: SharedRepoState,
+        buf: Arc<Mutex<String>>,
+    ) -> tokio::task::JoinHandle<()>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(reader).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                {
+                    let mut buf = buf.lock().unwrap();
+                    buf.push_str(&line);
+                    buf.push('\n');
+                }
+                log_state.lock().unwrap().log.push(line);
+            }
+        })
+    }
+    let stdout_task = spawn_reader(stdout, Arc::clone(repo_state), Arc::clone(&stdout_buf));
+    let stderr_task = spawn_reader(stderr, Arc::clone(repo_state), Arc::clone(&stderr_buf));
 
     // Bound the pull with tokio's timer; on elapse, kill git and reap it.
     let mut timed_out = false;
     let status =
-        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), child.wait())
-            .await
-        {
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await {
             Ok(res) => res?,
             Err(_) => {
                 timed_out = true;
@@ -249,8 +248,20 @@ async fn run_pull_attempt(
         };
     let exit_success = status.success() && !timed_out;
 
-    let stdout_output = stdout_task.await.unwrap_or_default();
-    let stderr_output = stderr_task.await.unwrap_or_default();
+    // `git` has exited, but the readers can still hang forever: a pull that needs credentials spawns
+    // a long-lived `git credential-cache--daemon` (and HTTPS/SSH transport children) that inherit
+    // git's stdout/stderr, so those pipes never reach EOF. Awaiting the readers unconditionally
+    // would block the pull indefinitely — the repo stuck "running", its clock ticking past the
+    // timeout. Give them a brief grace to drain git's real output (already flushed before git
+    // exited), then abort; the shared buffers hold whatever was read.
+    for task in [stdout_task, stderr_task] {
+        let aborter = task.abort_handle();
+        if tokio::time::timeout(Duration::from_secs(2), task).await.is_err() {
+            aborter.abort();
+        }
+    }
+    let stdout_output = std::mem::take(&mut *stdout_buf.lock().unwrap());
+    let stderr_output = std::mem::take(&mut *stderr_buf.lock().unwrap());
     let mut combined = format!("{stdout_output}{stderr_output}");
 
     // A timed-out pull leaves no explanation in git's output — say so in the log (and in
@@ -456,7 +467,7 @@ pub async fn run_repo_details(repo: SharedRepoState) {
     // age) stays until an actual pull, so opening the info panel never fakes a fresh result.
 }
 
-/// Look up the open PR for one repo's current branch (via `gh`) and store it, stamping
+/// Look up the PR (open/merged/closed) for one repo's current branch (via `gh`) and store it, stamping
 /// `pr_checked_at = now` so the cache TTL + info-panel age track it. The caller sets `pr_loading`
 /// before spawning; this clears it. `now` is Unix seconds passed in by the event loop.
 pub async fn run_pull_request(repo: SharedRepoState, now: i64) {
@@ -486,7 +497,7 @@ pub async fn run_pull_request(repo: SharedRepoState, now: i64) {
     state.pr_loading = false;
 }
 
-/// Resolve open PRs for every repo whose cached entry is stale/missing, bounded by `max_jobs`
+/// Resolve PRs for every repo whose cached entry is stale/missing, bounded by `max_jobs`
 /// concurrent `gh` calls — the background fill behind the Pull Request column. Repos already fresh
 /// (in-memory `pr_checked_at` or a fresh entry in the `cache` snapshot) are skipped, so a warm
 /// cache never re-hits the network. `now` is Unix seconds.

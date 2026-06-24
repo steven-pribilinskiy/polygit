@@ -828,7 +828,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     // 12 auto-pull-in-tree (Sync), 13 hover · 14 changed-row flash · 15 changed-row highlight
     // (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-page tabs ·
     // 20 repo-page (restored/maximized) · 21 branch-check (Layout), 22 all-tooltips · 23 footer ·
-    // 24 headers · 25 counts · 26 settings · 27 links (Tooltips).
+    // 24 headers · 25 counts · 26 settings · 27 links (Tooltips), 28 AI-agent · 29 skip-permissions
+    // (Agent), 30 merged-PRs (Pull requests).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
@@ -998,6 +999,13 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     ],
                 ),
             ],
+        ),
+        (
+            "Pull requests",
+            vec![(
+                "Merged PRs",
+                vec![("on", app.show_merged_prs), ("off", !app.show_merged_prs)],
+            )],
         ),
     ];
 

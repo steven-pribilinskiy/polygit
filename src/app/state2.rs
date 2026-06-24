@@ -763,9 +763,15 @@ impl AppState {
                 key(&left).cmp(&key(&right))
             }
             SortColumn::PullRequest => {
-                // Repos with an open PR first (by number asc), PR-less repos last (in Asc).
+                // Repos with a shown PR first (by number asc), PR-less repos last (in Asc). A
+                // merged/closed PR counts as PR-less unless the "Merged PRs" setting is on.
+                let show_merged = self.show_merged_prs;
                 let key = |state: &RepoState| {
-                    let number = state.pr.as_ref().map(|pr| pr.number);
+                    let number = state
+                        .pr
+                        .as_ref()
+                        .filter(|pr| pr.shown(show_merged))
+                        .map(|pr| pr.number);
                     (number.is_none(), number.unwrap_or(0))
                 };
                 key(&left).cmp(&key(&right))
@@ -811,7 +817,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 30;
+    pub const SETTINGS_ROWS: usize = 31;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -1110,6 +1116,7 @@ impl AppState {
             27 => self.tooltips.links = !self.tooltips.links,
             28 => self.claude_agent = self.claude_agent.cycle(),
             29 => self.claude_skip_permissions = !self.claude_skip_permissions,
+            30 => self.show_merged_prs = !self.show_merged_prs,
             _ => {}
         }
         self.save_state();

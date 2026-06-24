@@ -348,6 +348,7 @@ impl AppState {
             last_seen_version: env!("CARGO_PKG_VERSION").to_string(),
             cli_help_mode: self.cli_builder.help_mode,
             diff_view: self.diff_view,
+            show_merged_prs: self.show_merged_prs,
         });
     }
 
@@ -696,6 +697,8 @@ impl AppState {
             (28, 2) => self.claude_agent = ClaudeAgent::Gemini,
             (29, 0) => self.claude_skip_permissions = true,
             (29, 1) => self.claude_skip_permissions = false,
+            (30, 0) => self.show_merged_prs = true,
+            (30, 1) => self.show_merged_prs = false,
             _ => return,
         }
         self.save_state();
@@ -781,6 +784,7 @@ impl AppState {
                 ClaudeAgent::Gemini => 2,
             },
             29 => usize::from(!self.claude_skip_permissions),
+            30 => usize::from(!self.show_merged_prs),
             _ => 0,
         }
     }
@@ -867,6 +871,7 @@ impl AppState {
         self.tooltips = TooltipPrefs::default();
         self.claude_agent = ClaudeAgent::default();
         self.claude_skip_permissions = false;
+        self.show_merged_prs = false;
         self.recompute_group_assignments();
         self.rebuild_tree();
         self.save_state();

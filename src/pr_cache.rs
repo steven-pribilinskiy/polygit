@@ -1,8 +1,8 @@
 //! Persisted PR cache (`~/.config/polygit/pr-cache.json`). Maps a repo+branch to its last-resolved
-//! open PR (via `gh`), with a per-entry timestamp and a 5-minute TTL, so the Pull Request column
-//! and the info panel don't re-hit the network every frame — or on every launch within the window.
-//! A cached `pr: None` is a valid result (no open PR) and is honored for the TTL, so a PR-less
-//! branch isn't re-queried each frame either.
+//! PR (via `gh`, open/merged/closed), with a per-entry timestamp and a 5-minute TTL, so the Pull
+//! Request column and the info panel don't re-hit the network every frame — or on every launch
+//! within the window. A cached `pr: None` is a valid result (no PR) and is honored for the TTL, so
+//! a PR-less branch isn't re-queried each frame either.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ pub const PR_TTL_SECS: i64 = 300;
 /// One repo+branch's cached PR lookup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrCacheEntry {
-    /// `None` = resolved, no open PR (a real, cacheable answer).
+    /// `None` = resolved, no PR (a real, cacheable answer).
     #[serde(default)]
     pub pr: Option<PrInfo>,
     /// Unix seconds when this entry was resolved — drives the TTL + the "… ago" age.
@@ -90,7 +90,12 @@ mod tests {
         cache.insert(
             key(Path::new("/repos/a"), "main"),
             PrCacheEntry {
-                pr: Some(PrInfo { number: 42, title: "fix".into(), url: "https://x/pull/42".into() }),
+                pr: Some(PrInfo {
+                    number: 42,
+                    title: "fix".into(),
+                    url: "https://x/pull/42".into(),
+                    state: crate::app::PrState::Open,
+                }),
                 checked_at: 123,
             },
         );

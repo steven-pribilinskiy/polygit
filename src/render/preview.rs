@@ -243,6 +243,15 @@ pub(crate) fn web_remote(remote: &str) -> Option<String> {
     base.starts_with("https://").then(|| base.to_string())
 }
 
+/// Semantic color for a PR's lifecycle state — green=open, magenta=merged, gray=closed.
+pub(crate) fn pr_state_color(state: crate::app::PrState) -> Color {
+    match state {
+        crate::app::PrState::Open => Color::Green,
+        crate::app::PrState::Merged => Color::Magenta,
+        crate::app::PrState::Closed => Color::DarkGray,
+    }
+}
+
 /// Split `text` into chunks of at most `width` display columns, on char boundaries.
 pub(crate) fn wrap_chars(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
@@ -371,9 +380,12 @@ pub(crate) fn build_info_lines(
     };
     lines.push(plain("Status", status_value));
 
-    // Branch — clickable to its page on the remote when the remote is browsable.
+    // Branch — clickable to its page on the remote, but ONLY when the branch is actually on the
+    // remote. A no-upstream / "ref gone" branch (e.g. its PR was merged and the remote branch
+    // deleted) has no `/tree/<branch>` page — linking it just 404s — so render it as plain text.
     let branch = state.branch.clone().unwrap_or_else(|| "—".to_string());
-    let branch_link = (branch != "—")
+    let on_remote = !matches!(state.status, RepoStatus::NoUpstream);
+    let branch_link = (branch != "—" && on_remote)
         .then(|| state.remote_url.as_deref())
         .flatten()
         .and_then(web_remote)
@@ -385,18 +397,21 @@ pub(crate) fn build_info_lines(
 
     // Pull Request — the open PR for the current branch (via `gh`), clickable to the PR on the
     // remote. Shown only when one exists; a dim "checking…" appears while the lookup is in flight.
-    if let Some(pr) = state.pr.as_ref() {
+    if let Some(pr) = state.pr.as_ref().filter(|pr| pr.shown(app.show_merged_prs)) {
         let text = format!("#{} {}", pr.number, pr.title);
         push_link(&mut lines, &mut clicks, "Pull Request", &text, &pr.url);
-        // A dim "checked … ago" sub-line (per-entry cache timestamp).
+        // Sub-line: a colored state badge (open/merged/closed) + a dim "checked … ago" (per-entry
+        // cache timestamp). The badge clarifies why a "ref gone" branch has no link — it merged.
+        let mut sub: Vec<Span> = vec![
+            Span::raw(format!("{:<13}", "")),
+            Span::styled(pr.state.label(), Style::default().fg(pr_state_color(pr.state))),
+        ];
         if let Some(checked_at) = state.pr_checked_at {
             let age = crate::app::format_cache_age(checked_at);
             let when = if age == "now" { "just now".to_string() } else { format!("{age} ago") };
-            lines.push(Line::from(vec![
-                Span::raw(format!("{:<13}", "")),
-                Span::styled(format!("checked {when}"), dim),
-            ]));
+            sub.push(Span::styled(format!(" · checked {when}"), dim));
         }
+        lines.push(Line::from(sub));
     } else if state.pr_loading {
         lines.push(Line::from(vec![
             Span::styled(format!("{:<13}", "Pull Request"), label),

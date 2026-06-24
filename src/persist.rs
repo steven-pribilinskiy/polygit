@@ -155,6 +155,10 @@ pub struct PersistedState {
     /// Diff modal render style (raw / unified / split). Default raw.
     #[serde(default)]
     pub diff_view: crate::app::DiffView,
+    /// Surface merged & closed PRs (not just open ones) in the PR column + info panel. Default off
+    /// — detection always finds all states, this only gates display.
+    #[serde(default)]
+    pub show_merged_prs: bool,
 }
 
 impl PersistedState {

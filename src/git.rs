@@ -6,8 +6,8 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::app::{
-    BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PullResult, RepoDetails, StashInfo,
-    WorktreeInfo,
+    BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PrState, PullResult, RepoDetails,
+    StashInfo, WorktreeInfo,
 };
 
 /// Branches excluded from the feature-branch count.
@@ -490,10 +490,12 @@ pub async fn pull_request(dir: &Path, branch: &str) -> Option<PrInfo> {
     if branch.is_empty() {
         return None;
     }
+    // Query ALL states (open/merged/closed), not just open — a merged PR is exactly why a branch's
+    // upstream goes away ("ref gone"), and surfacing it explains the deleted branch.
     let output = Command::new("gh")
         .args([
-            "pr", "list", "--head", branch, "--state", "open", "--json", "number,title,url",
-            "--limit", "1",
+            "pr", "list", "--head", branch, "--state", "all", "--json", "number,title,url,state",
+            "--limit", "10",
         ])
         .current_dir(dir)
         .output()
@@ -505,16 +507,29 @@ pub async fn pull_request(dir: &Path, branch: &str) -> Option<PrInfo> {
     parse_pr_list(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Parse `gh pr list --json number,title,url` output (a JSON array) into the first open PR.
-/// An empty array (`[]`) or any shape mismatch yields `None`.
+/// Parse `gh pr list --json number,title,url,state` output (a JSON array) into the most relevant
+/// PR: an open one if any, else the most-recent (gh returns newest-first). An empty array (`[]`)
+/// or any shape mismatch yields `None`.
 pub fn parse_pr_list(json: &str) -> Option<PrInfo> {
     let parsed: serde_json::Value = serde_json::from_str(json).ok()?;
-    let first = parsed.as_array()?.first()?;
-    Some(PrInfo {
-        number: first.get("number")?.as_u64()? as u32,
-        title: first.get("title")?.as_str()?.trim().to_string(),
-        url: first.get("url")?.as_str()?.to_string(),
-    })
+    let array = parsed.as_array()?;
+    let to_pr = |value: &serde_json::Value| -> Option<PrInfo> {
+        Some(PrInfo {
+            number: value.get("number")?.as_u64()? as u32,
+            title: value.get("title")?.as_str()?.trim().to_string(),
+            url: value.get("url")?.as_str()?.to_string(),
+            // Missing `state` (old `--json` shape) → Open, matching prior behavior.
+            state: value
+                .get("state")
+                .and_then(|state| state.as_str())
+                .map(PrState::from_gh)
+                .unwrap_or(PrState::Open),
+        })
+    };
+    array
+        .iter()
+        .find_map(|value| to_pr(value).filter(|pr| pr.state == PrState::Open))
+        .or_else(|| array.first().and_then(to_pr))
 }
 
 /// Parse the US (0x1f)-separated `git log -1 --format=%h%x1f%s%x1f%an%x1f%cr%x1f%ct` line
@@ -1984,16 +1999,46 @@ refs/heads/c\tc
 
     #[test]
     fn parse_pr_list_extracts_first_pr_and_handles_empty() {
-        let json = r#"[{"number":4242,"title":"  Fix the thing  ","url":"https://github.com/org/repo/pull/4242"}]"#;
+        let json = r#"[{"number":4242,"title":"  Fix the thing  ","url":"https://github.com/org/repo/pull/4242","state":"OPEN"}]"#;
         let pr = parse_pr_list(json).expect("one PR");
         assert_eq!(pr.number, 4242);
         assert_eq!(pr.title, "Fix the thing");
         assert_eq!(pr.url, "https://github.com/org/repo/pull/4242");
-        // No open PR → empty array → None.
+        assert_eq!(pr.state, PrState::Open);
+        // No PR → empty array → None.
         assert!(parse_pr_list("[]").is_none());
         // Garbage / non-array → None (never panics).
         assert!(parse_pr_list("not json").is_none());
         assert!(parse_pr_list("{}").is_none());
+    }
+
+    #[test]
+    fn parse_pr_list_reports_merged_state() {
+        // A merged PR for a now-deleted branch still resolves (explains the "ref gone").
+        let json = r#"[{"number":855,"title":"bootstrap LD flags","url":"https://x/pull/855","state":"MERGED"}]"#;
+        let pr = parse_pr_list(json).expect("merged PR");
+        assert_eq!(pr.number, 855);
+        assert_eq!(pr.state, PrState::Merged);
+    }
+
+    #[test]
+    fn parse_pr_list_prefers_open_over_newer_closed() {
+        // gh returns newest-first; an open PR is preferred even when a closed one is newer.
+        let json = r#"[
+            {"number":3,"title":"closed dup","url":"https://x/pull/3","state":"CLOSED"},
+            {"number":2,"title":"the real one","url":"https://x/pull/2","state":"OPEN"},
+            {"number":1,"title":"old","url":"https://x/pull/1","state":"MERGED"}
+        ]"#;
+        let pr = parse_pr_list(json).expect("open PR");
+        assert_eq!(pr.number, 2);
+        assert_eq!(pr.state, PrState::Open);
+    }
+
+    #[test]
+    fn parse_pr_list_defaults_missing_state_to_open() {
+        // Old `--json number,title,url` shape (no `state`) still parses as an open PR.
+        let json = r#"[{"number":7,"title":"x","url":"https://x/pull/7"}]"#;
+        assert_eq!(parse_pr_list(json).expect("pr").state, PrState::Open);
     }
 
     #[test]

@@ -900,12 +900,40 @@
         state.repo_page = Some(0);
         assert!(!state.repo_page_column_available(RepoPageColumn::PullRequest));
         state.repos[0].lock().unwrap().pr =
-            Some(PrInfo { number: 42, title: "x".into(), url: "http://e/42".into() });
+            Some(PrInfo { number: 42, title: "x".into(), url: "http://e/42".into(), state: PrState::Open });
         assert!(state.repo_page_column_available(RepoPageColumn::PullRequest));
         // Toggling flips the stored flag (default on).
         assert!(state.repo_page_columns.pull_request);
         state.toggle_repo_page_column(RepoPageColumn::PullRequest);
         assert!(!state.repo_page_columns.pull_request);
+    }
+
+    #[test]
+    fn pr_shown_gates_merged_and_closed_on_the_setting() {
+        let pr = |state| PrInfo { number: 1, title: "x".into(), url: "u".into(), state };
+        // Open PRs always show, regardless of the setting.
+        assert!(pr(PrState::Open).shown(false));
+        assert!(pr(PrState::Open).shown(true));
+        // Merged/closed only show when "Merged PRs" is on.
+        assert!(!pr(PrState::Merged).shown(false));
+        assert!(!pr(PrState::Closed).shown(false));
+        assert!(pr(PrState::Merged).shown(true));
+        assert!(pr(PrState::Closed).shown(true));
+    }
+
+    #[test]
+    fn merged_prs_setting_persists_and_resets() {
+        let mut state = state_named(&["a"]);
+        assert!(!state.show_merged_prs); // off by default
+        // The settings row (index 30) toggles + reports its active option.
+        assert_eq!(state.settings_active_option(30), 1); // "off"
+        state.settings_selected = 30;
+        state.toggle_selected_setting();
+        assert!(state.show_merged_prs);
+        assert_eq!(state.settings_active_option(30), 0); // "on"
+        // Reset restores the default (off).
+        state.apply_settings_reset();
+        assert!(!state.show_merged_prs);
     }
 
     #[test]
