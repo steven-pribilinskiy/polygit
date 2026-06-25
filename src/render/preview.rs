@@ -139,11 +139,11 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         };
         if !copy_text.is_empty() {
             let glyph = "⧉";
-            // The right-aligned title renders just inside the border corner (area.x+width-1), so the
-            // click region must end there too — sub(2) left it one cell left of the glyph, so every
-            // click missed and nothing copied.
+            // The right-aligned title renders the glyph just inside the border corner, at
+            // `area.x+width-2` (`col_end` is exclusive). The copy button is a 2-char target: the
+            // glyph cell plus the cell to its left.
             let col_end = area.x + area.width.saturating_sub(1);
-            let col_start = col_end.saturating_sub(UnicodeWidthStr::width(glyph) as u16);
+            let col_start = col_end.saturating_sub(2);
             block = block.title_top(
                 Line::from(Span::styled(
                     glyph,
@@ -333,6 +333,12 @@ pub(crate) fn build_info_lines(
     let dim = Style::default().fg(Color::DarkGray);
     let link = Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED);
     let value_width = content_width.saturating_sub(LABEL_W).max(1);
+    // Reserve 2 trailing cols for a ` ⧉` copy button on copyable rows.
+    let copy_avail = value_width.saturating_sub(2).max(1);
+    // The copy-button glyph: a standout magenta on whole-line-copy rows (Path/Worktrees/plain
+    // Branch); the existing `dim` style is reused on link rows, where the value's own click opens
+    // the link and copy is a separate, secondary button.
+    let copy_icon = Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD);
 
     let mut lines: Vec<Line> = Vec::new();
     let mut clicks: Vec<InfoClick> = Vec::new();
@@ -358,6 +364,50 @@ pub(crate) fn build_info_lines(
                 Span::raw(format!("{:<13}", ""))
             };
             lines.push(Line::from(vec![label_span, Span::styled(segment, link)]));
+        }
+    };
+
+    // A plain (non-link) field whose value + trailing `⧉` copy its content. The label is NOT part
+    // of the click/highlight region — the region spans the value through the 2-char copy button
+    // (` ⧉`), so hovering the value or the button highlights it and a click copies. `display` is the
+    // (already-truncated) text shown; `copy` is the full value copied.
+    let push_copyable = |lines: &mut Vec<Line<'static>>,
+                         clicks: &mut Vec<InfoClick>,
+                         name: &str,
+                         display: String,
+                         copy: String| {
+        let line_idx = lines.len();
+        let value_w = UnicodeWidthStr::width(display.as_str()) as u16;
+        let end = LABEL_W as u16 + value_w + 2; // value + the 2-char copy button (" " + "⧉")
+        clicks.push((line_idx, LABEL_W as u16, end, InfoAction::CopyText(copy)));
+        lines.push(Line::from(vec![
+            Span::styled(format!("{name:<13}"), label),
+            Span::styled(display, value),
+            Span::raw(" "),
+            Span::styled("⧉".to_string(), copy_icon),
+        ]));
+    };
+
+    // The Branch row when it links to its remote page: the name opens the link, and a SEPARATE,
+    // dim `⧉` copies it — copy isn't the line's primary action here, so the line isn't a whole-line
+    // copy target and the icon stays subdued. A branch long enough to wrap falls back to the plain
+    // link (no icon) so the button never lands on a wrapped continuation.
+    let push_branch_link = |lines: &mut Vec<Line<'static>>, clicks: &mut Vec<InfoClick>, branch: &str, url: &str| {
+        if UnicodeWidthStr::width(branch) <= copy_avail {
+            let line_idx = lines.len();
+            let width = UnicodeWidthStr::width(branch) as u16;
+            clicks.push((line_idx, LABEL_W as u16, LABEL_W as u16 + width, InfoAction::OpenUrl(url.to_string())));
+            // The copy button is a 2-char target: the space before the glyph plus the glyph itself.
+            let copy_start = LABEL_W as u16 + width;
+            clicks.push((line_idx, copy_start, copy_start + 2, InfoAction::CopyText(branch.to_string())));
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:<13}", "Branch"), label),
+                Span::styled(branch.to_string(), link),
+                Span::raw(" "),
+                Span::styled("⧉".to_string(), dim),
+            ]));
+        } else {
+            push_link(lines, clicks, "Branch", branch, url);
         }
     };
 
@@ -391,8 +441,15 @@ pub(crate) fn build_info_lines(
         .and_then(web_remote)
         .map(|base| format!("{base}/tree/{branch}"));
     match branch_link {
-        Some(url) => push_link(&mut lines, &mut clicks, "Branch", &branch, &url),
-        None => lines.push(plain("Branch", branch)),
+        Some(url) => push_branch_link(&mut lines, &mut clicks, &branch, &url),
+        None => {
+            let display = if UnicodeWidthStr::width(branch.as_str()) > copy_avail {
+                truncate_str(&branch, copy_avail)
+            } else {
+                branch.clone()
+            };
+            push_copyable(&mut lines, &mut clicks, "Branch", display, branch);
+        }
     }
 
     // Pull Request — the open PR for the current branch (via `gh`), clickable to the PR on the
@@ -572,56 +629,28 @@ pub(crate) fn build_info_lines(
         .filter(|entry| entry.repo == state.name)
         .map(|entry| entry.branch.clone())
         .collect();
-    if !worktrees.is_empty() {
-        lines.push(plain("Worktrees", worktrees.join(", ")));
+    // One line per worktree so each branch copies individually (not all concatenated). The first
+    // line carries the label; continuations indent to the value column. Each whole line copies its
+    // own branch.
+    for (index, branch) in worktrees.iter().enumerate() {
+        let display = if UnicodeWidthStr::width(branch.as_str()) > copy_avail {
+            truncate_str(branch, copy_avail)
+        } else {
+            branch.clone()
+        };
+        let name = if index == 0 { "Worktrees" } else { "" };
+        push_copyable(&mut lines, &mut clicks, name, display, branch.clone());
     }
 
-    // Path — value left-truncated (keeps the filename tail), click to expand + wrap. A trailing
-    // `⧉` copy button sits AFTER the value so the value column stays aligned with the other rows.
+    // Path — value left-truncated to keep the filename tail. The whole line copies the full path
+    // (hover highlights it); a trailing standout `⧉` marks it as copyable.
     let path = state.path.display().to_string();
-    let path_expanded = app.info_expanded.contains("Path");
-    let path_overflows = UnicodeWidthStr::width(path.as_str()) > value_width;
-    // Reserve 2 cols on lines that carry the copy button (` ⧉`).
-    let copy_avail = value_width.saturating_sub(2).max(1);
-    let push_path_line =
-        |lines: &mut Vec<Line<'static>>, clicks: &mut Vec<InfoClick>, first: bool, text: String, with_copy: bool| {
-            let line_idx = lines.len();
-            let value_w = UnicodeWidthStr::width(text.as_str()) as u16;
-            if path_overflows {
-                clicks.push((line_idx, LABEL_W as u16, LABEL_W as u16 + value_w, InfoAction::ToggleExpand("Path".into())));
-            }
-            let label_span = if first {
-                Span::styled(format!("{:<13}", "Path"), label)
-            } else {
-                Span::raw(format!("{:<13}", ""))
-            };
-            let value_style = if path_overflows && !path_expanded {
-                value.add_modifier(Modifier::UNDERLINED)
-            } else {
-                value
-            };
-            let mut spans = vec![label_span, Span::styled(text, value_style)];
-            if with_copy {
-                let copy_col = LABEL_W as u16 + value_w + 1;
-                clicks.push((line_idx, copy_col, copy_col + 1, InfoAction::CopyText(path.clone())));
-                spans.push(Span::raw(" "));
-                // A copy button, not a link — cyan + bold (matching the pane-title `⧉`), no underline.
-                spans.push(Span::styled(
-                    "⧉".to_string(),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ));
-            }
-            lines.push(Line::from(spans));
-        };
-    if !path_overflows {
-        push_path_line(&mut lines, &mut clicks, true, path.clone(), true);
-    } else if path_expanded {
-        for (index, chunk) in wrap_chars(&path, copy_avail).into_iter().enumerate() {
-            push_path_line(&mut lines, &mut clicks, index == 0, chunk, index == 0);
-        }
+    let display = if UnicodeWidthStr::width(path.as_str()) > copy_avail {
+        truncate_left(&path, copy_avail)
     } else {
-        push_path_line(&mut lines, &mut clicks, true, truncate_left(&path, copy_avail), true);
-    }
+        path.clone()
+    };
+    push_copyable(&mut lines, &mut clicks, "Path", display, path);
 
     (lines, clicks)
 }
