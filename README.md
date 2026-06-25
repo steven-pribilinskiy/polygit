@@ -163,8 +163,8 @@ The panel is interactive (it's a web app in a terminal):
 
 - **Bold field labels**; rows that would carry nothing are hidden — no `↑0 ↓0`, no all-zero Changes line, no empty Worktrees.
 - **Clickable links** (when the remote is a browsable https host): the **branch** opens `…/tree/<branch>`, the **commit hash** opens `…/commit/<sha>`, and **Remote** opens the repo — all in your browser.
-- **Truncated values expand on click.** The path is truncated from the *left* (keeping the filename tail); a long commit subject from the right. Click the underlined value to expand it — the full text wraps starting at the value column, never under the label. Click again to collapse.
-- **Copy buttons**: a `⧉` next to **Path** copies the absolute path; a `⧉` on the log pane's top border copies the whole pull log.
+- **Truncated values expand on click.** A long commit subject is truncated from the right; click the underlined value to expand it — the full text wraps starting at the value column, never under the label. Click again to collapse.
+- **Click-to-copy**: on the **Path** and a non-link **Branch** rows the value + a trailing standout `⧉` copy the value (hover highlights that region; the field label is *not* part of the click target). **Worktrees** lists one branch per line, each its own copyable line (so you copy a single worktree branch, not all of them concatenated). When the branch is a clickable link, clicking the name opens it and a separate, dim 2-char `⧉` copies it (copy is the secondary operation there). A `⧉` on the log pane's top border copies the whole pull log.
 
 `c` launches an AI coding agent in the repo dir. Pick the agent in Settings → **Agent**: `claude` (default), `codex`, or `gemini`; the optional **Skip permissions** toggle appends that agent's bypass-all-prompts flag (`--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox` / `--yolo`). On Unix the command runs via an interactive `bash` (so a shell alias resolves); on Windows via `pwsh` in the repo dir. `PULL_CLAUDE_CMD`, when set, overrides the whole command verbatim.
 

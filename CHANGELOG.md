@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.70.0 — 2026-06-24
+info panel whole-line copy, per-worktree copy, repo-page trigger hover, footer tidy
+- **The Path and (non-link) Branch rows' value copies on click** — the value plus a trailing 2-char `⧉` are one click/hover region (the field label is excluded), and the `⧉` is a standout magenta so the copy affordance reads at a glance.
+- **Worktrees lists one branch per line, each its own copyable line** — so you copy a single worktree branch, not all of them concatenated. The Branch name is also newly copyable; when it's a clickable remote link, clicking the name opens it and a separate, dim `⧉` copies the name (copy stays a distinct, secondary operation there).
+- The Path row no longer expands-on-click (it copies instead); a long path still left-truncates to keep the filename tail. Commit-subject expand is unchanged.
+- **The repo page's `t cols ▾` / `s sort ▾` triggers now get the same hover highlight** as the main list header's chips (shared hover machinery).
+- **Footer fold hint reads `-/+ all`** (was `[-/][+ all]`) — `-` collapses all, `+ all` expands all, each its own click target.
+
 ## v2.69.0 — 2026-06-24
 smarter PR + branch links, a "Merged PRs" setting, and a pull-hang fix
 - **fix: a repo could pull indefinitely** (stuck "running", clock ticking past the timeout). A pull that needs credentials spawns a long-lived `git credential-cache--daemon` that inherits git's stdout/stderr, so the pipes never hit EOF and the output readers blocked forever — even after git itself exited or was killed on timeout. The readers now drain with a brief grace then abort, in both the TUI and `--no-tui` paths

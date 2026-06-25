@@ -396,14 +396,11 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
             ("→".to_string(), key, Some(Command::NavRight)),
             (" fold".to_string(), hint, Some(Command::NavRight)),
             (" · ".to_string(), hint, None),
-            // Two bracketed hotspots so each click target is unambiguous: `[-/]` collapse all,
-            // `[+ all]` expand all.
-            ("[".to_string(), hint, Some(Command::FoldCollapseAll)),
+            // `-/+ all`: `-` collapses all, `+ all` expands all. Each key is its own click target.
             ("-".to_string(), key, Some(Command::FoldCollapseAll)),
-            ("/]".to_string(), hint, Some(Command::FoldCollapseAll)),
-            ("[".to_string(), hint, Some(Command::FoldExpandAll)),
+            ("/".to_string(), hint, None),
             ("+".to_string(), key, Some(Command::FoldExpandAll)),
-            (" all]".to_string(), hint, Some(Command::FoldExpandAll)),
+            (" all".to_string(), hint, Some(Command::FoldExpandAll)),
             (" · ".to_string(), hint, None),
             ("*".to_string(), key, Some(Command::FoldExpandSubtree)),
             (" subtree".to_string(), hint, Some(Command::FoldExpandSubtree)),

@@ -392,7 +392,15 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             }
         }
     } else if app.repo_page.is_some() {
-        if let Some(&(row, start, end, _)) =
+        // The `t cols ▾` / `s sort ▾` top-border triggers get the button hover tint, mirroring the
+        // main list header's chips (same machinery, same look).
+        if let Some((row, start, end)) = app
+            .page_cols_click
+            .filter(|&(r, s, e)| contains(r, s, e))
+            .or_else(|| app.page_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
             app.repo_page_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
