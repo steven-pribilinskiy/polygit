@@ -412,7 +412,8 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     }
     enum Item {
         Header(usize),
-        Note(String),
+        Note { line: String, bullet: bool },
+        Blank,
     }
     let releases = crate::changelog::releases();
     let whats_new = app.changelog_whats_new;
@@ -427,6 +428,14 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         .map(|(idx, _)| idx)
         .collect();
 
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = area.width.saturating_sub(8).clamp(40, 96);
+    let height = area.height.saturating_sub(4).clamp(10, 40);
+    // Note text wraps to the inner content width (borders + padding removed) so long bullets don't
+    // clip; wrap to the deeper continuation indent so every wrapped row fits.
+    let inner_width = width.saturating_sub(2 + pad) as usize;
+    let wrap_avail = inner_width.saturating_sub(6).max(8);
+
     let mut items: Vec<Item> = Vec::new();
     for &idx in &visible {
         let release = &releases[idx];
@@ -434,15 +443,16 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         items.push(Item::Header(idx));
         if expanded {
             for note in &release.notes {
-                items.push(Item::Note((*note).to_string()));
+                let bullet = note.trim_start().starts_with('-');
+                for (row, sub) in super::preview::wrap_words(note, wrap_avail).into_iter().enumerate() {
+                    let indent = if row > 0 && bullet { "      " } else { "    " };
+                    items.push(Item::Note { line: format!("{indent}{sub}"), bullet });
+                }
             }
-            items.push(Item::Note(String::new()));
+            items.push(Item::Blank);
         }
     }
 
-    let pad = if app.panel_padding { 2 } else { 0 };
-    let width = area.width.saturating_sub(8).clamp(40, 96);
-    let height = area.height.saturating_sub(4).clamp(10, 40);
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
     let title = if whats_new {
@@ -526,10 +536,10 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
                 }
                 lines.push(Line::from(Span::styled(label, style)));
             }
-            Item::Note(text) if text.is_empty() => lines.push(Line::from(String::new())),
-            Item::Note(text) => {
-                let style = if text.starts_with('-') || text.starts_with("- ") { note_style } else { dim };
-                lines.push(Line::from(Span::styled(format!("    {text}"), style)));
+            Item::Blank => lines.push(Line::from(String::new())),
+            Item::Note { line, bullet } => {
+                let style = if *bullet { note_style } else { dim };
+                lines.push(Line::from(Span::styled(line.clone(), style)));
             }
         }
     }
@@ -555,29 +565,37 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
 fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     enum Item {
         Header { vis_pos: usize, rel_idx: usize },
-        Note(String),
+        Note { line: String, bullet: bool },
+        Blank,
     }
     let visible = app.pin_visible_indices();
     let sel = app.pin_selected.min(visible.len().saturating_sub(1));
     app.pin_selected = sel;
+
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = area.width.saturating_sub(8).clamp(44, 96);
+    // Wrap note text to the inner content width so long bullets wrap instead of clipping.
+    let inner_width = width.saturating_sub(2 + pad) as usize;
+    let wrap_avail = inner_width.saturating_sub(6).max(8);
 
     // Build the row model: every visible release header, with the selected one's notes expanded.
     let mut items: Vec<Item> = Vec::new();
     for (vis_pos, &rel_idx) in visible.iter().enumerate() {
         items.push(Item::Header { vis_pos, rel_idx });
         if vis_pos == sel {
-            let notes = &app.pin_releases[rel_idx].notes;
-            for note in notes {
-                items.push(Item::Note(note.clone()));
+            let notes = app.pin_releases[rel_idx].notes.clone();
+            for note in &notes {
+                let bullet = note.trim_start().starts_with('-');
+                for (row, sub) in super::preview::wrap_words(note, wrap_avail).into_iter().enumerate() {
+                    let indent = if row > 0 && bullet { "      " } else { "    " };
+                    items.push(Item::Note { line: format!("{indent}{sub}"), bullet });
+                }
             }
             if !notes.is_empty() {
-                items.push(Item::Note(String::new()));
+                items.push(Item::Blank);
             }
         }
     }
-
-    let pad = if app.panel_padding { 2 } else { 0 };
-    let width = area.width.saturating_sub(8).clamp(44, 96);
     let height = area.height.saturating_sub(4).clamp(10, 40);
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
@@ -714,10 +732,10 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 }
                 lines.push(Line::from(spans));
             }
-            Item::Note(text) if text.is_empty() => lines.push(Line::from(String::new())),
-            Item::Note(text) => {
-                let style = if text.starts_with('-') { note_style } else { dim };
-                lines.push(Line::from(Span::styled(format!("    {text}"), style)));
+            Item::Blank => lines.push(Line::from(String::new())),
+            Item::Note { line, bullet } => {
+                let style = if *bullet { note_style } else { dim };
+                lines.push(Line::from(Span::styled(line.clone(), style)));
             }
         }
     }
