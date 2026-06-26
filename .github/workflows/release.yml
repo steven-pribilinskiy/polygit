@@ -1,29 +1,63 @@
 name: Release
 
-# Build the polygit binary for each supported target on a version tag and attach them to the
-# GitHub Release, so the install script (and `releases/latest/download/...`) can fetch them.
+# On every push to main that changes Cargo.toml, read the crate version and — if no matching
+# vX.Y.Z release exists yet — create the tag and publish prebuilt binaries for each supported
+# target, so the install script (and `releases/latest/download/...`) can fetch the newest build.
+# Self-tagging lives here (not a separate workflow) on purpose: a tag pushed by the default
+# GITHUB_TOKEN does NOT trigger other workflows, so a standalone tagger could never fire this.
+# Doing the tag + build in one push-triggered run sidesteps that entirely — no PAT secret needed.
 # Targets cover Linux, macOS, and Windows (native x86_64-pc-windows-msvc — no WSL needed).
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths: ['Cargo.toml']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  # Create the release once, up front. If the matrix jobs each created it, they'd race and one
-  # would fail with "tag_name already_exists", dropping that target's binary from the release.
+  # Decide whether this commit's Cargo.toml version needs a release (no tag for it yet).
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        run: |
+          version=$(grep '^version' Cargo.toml | head -1 | sed -E 's/.*"(.*)".*/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "v$version already released — skipping"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version is new — will release"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Create the release (and its tag) once, up front. If the matrix jobs each created it, they'd
+  # race and one would fail with "tag_name already_exists", dropping that target's binary.
+  # softprops creates tag vX.Y.Z at this commit when it doesn't exist yet.
   create-release:
     name: Create release
-    runs-on: ubuntu-22.04
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
+    runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
       - name: Create release
         uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.gate.outputs.version }}
 
   build:
     name: ${{ matrix.target }}
-    needs: create-release
+    needs: [gate, create-release]
+    if: needs.gate.outputs.release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -38,7 +72,7 @@ jobs:
           - { os: macos-14,         target: aarch64-apple-darwin }
           - { os: windows-latest,   target: x86_64-pc-windows-msvc }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Add Rust target
         run: rustup update stable && rustup target add ${{ matrix.target }}
@@ -65,5 +99,6 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: v${{ needs.gate.outputs.version }}
           files: |
             polygit-${{ matrix.target }}*
