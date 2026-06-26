@@ -1798,8 +1798,25 @@ pub enum ConfirmAction {
     DiscardChanges { repo_idx: usize, path: PathBuf },
     /// Reset every settings-modal preference to its default.
     ResetSettings,
+    /// Download + install a specific released version over the running binary, then auto-reload.
+    /// The dialog itself (danger flag + copyable return-to-latest line) carries the below-floor
+    /// warning, so the action only needs the target version.
+    PinVersion { version: String },
     /// A no-op accept — used by the design-system preview so "yes" just closes the dialog.
     Preview,
+}
+
+/// One row in the version picker: a published release merged with the embedded changelog notes
+/// (present only for versions this build knows about, i.e. ≤ current).
+#[derive(Debug, Clone)]
+pub struct PinRelease {
+    pub version: String,
+    pub date: String,
+    pub notes: Vec<String>,
+    /// The running version — rendered `(current)` and inert.
+    pub is_current: bool,
+    /// Ships the in-app picker (≥ floor) — pinnable without the below-floor warning.
+    pub is_supported: bool,
 }
 
 /// A yes/no confirmation modal.
@@ -1817,6 +1834,9 @@ pub struct ConfirmDialog {
     /// under the message below an optional `detail_title` header.
     pub detail_lines: Vec<String>,
     pub detail_title: Option<String>,
+    /// A single click-to-copy line (e.g. the return-to-latest shell command for a below-floor pin),
+    /// rendered highlighted with a copy glyph below the body. `None` = no copyable line.
+    pub copy_line: Option<String>,
 }
 
 impl ConfirmDialog {
@@ -1830,6 +1850,7 @@ impl ConfirmDialog {
             delete_files: Vec::new(),
             detail_lines: Vec::new(),
             detail_title: None,
+            copy_line: None,
         }
     }
 }

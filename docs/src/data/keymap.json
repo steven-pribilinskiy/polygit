@@ -443,6 +443,57 @@
       },
       {
         "keys": [
+          "click built … ago"
+        ],
+        "action": "Open Build info — binary age/size, build duration, settings preview, and pin a version",
+        "keywords": [
+          "build",
+          "version",
+          "update",
+          "pin"
+        ]
+      },
+      {
+        "keys": [
+          "p"
+        ],
+        "action": "Pin a released version — opens the picker (from Build info / its footer chip)",
+        "note": "downloads + installs that version and reloads into it; defaults to versions that also have the picker (v2.72.0+) so you can switch again",
+        "keywords": [
+          "pin",
+          "downgrade",
+          "rollback",
+          "version",
+          "install",
+          "update",
+          "switch"
+        ]
+      },
+      {
+        "keys": [
+          "a"
+        ],
+        "action": "Version picker: show older versions (pre-picker builds, tagged “no in-app switch”)",
+        "keywords": [
+          "pin",
+          "older",
+          "downgrade"
+        ]
+      },
+      {
+        "keys": [
+          "Enter",
+          "p"
+        ],
+        "action": "Version picker: pin the selected version (a warning + copyable reinstall command for pre-picker versions)",
+        "keywords": [
+          "pin",
+          "confirm",
+          "install"
+        ]
+      },
+      {
+        "keys": [
           "?"
         ],
         "action": "Open the help modal",

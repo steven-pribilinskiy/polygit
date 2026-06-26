@@ -235,6 +235,22 @@ a node folds it. The plain mouse wheel scrolls the tree (selection untouched, we
 `Alt`+wheel moves the selection — the same model as the main list. `r` (a clickable hint in the bottom border, next to `esc close`) exec-restarts into
 the latest build; `esc`, the `[x]`, or a click **outside** closes it (clicking inside is inert).
 
+### Pin a version
+
+Build info also carries a **`p pin version`** action (the key, or the clickable footer chip). It
+opens a **version picker** — every published release, fetched live from GitHub. Selecting a release
+expands its changelog notes inline; pressing `Enter`/`p` (or clicking its `[pin]`) downloads that
+release's binary for your platform, installs it over the running binary, and reloads into it.
+
+By default the picker only offers versions **at or above the one that introduced the picker**
+(`v2.72.0`) — those are the versions you can switch *out of* again from inside the app, so you can
+never strand yourself on a build with no switcher. Press **`a`** to also **show older versions**;
+they render dimmed and tagged `no in-app switch`. Pinning one pops a warning confirm explaining you
+won't be able to switch versions in-app afterward, with a **click-to-copy command** that reinstalls
+the latest build (the only way back from a pre-picker version). The picker keys: `↑↓`/`j`/`k` select,
+`a` toggle older, `Enter`/`p` pin, `esc` close. Self-install covers Linux and macOS; the action is
+hidden on native Windows (use the WSL/linux build).
+
 Clicking the `vX.Y.Z` tag opens the **Changelog**: every release as a collapsible accordion whose
 header is the version + a time-ago (`▸ v2.60.0 · 2d ago`), with the latest two expanded. `j`/`k`
 select a release, `space`/`enter` (or a header click) fold it, `g`/`G` jump. After you reload into a

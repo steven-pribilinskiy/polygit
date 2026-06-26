@@ -75,7 +75,12 @@ pub fn released_ago(date: &str) -> String {
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or(unix);
     let secs = (now - unix).max(0) as u64;
-    if secs < 86_400 {
+    // Guard absurd ages from a bogus upstream publish date (e.g. a release stamped near epoch):
+    // fall back to the raw date rather than render "739792d ago".
+    const HUNDRED_YEARS: u64 = 100 * 365 * 86_400;
+    if secs > HUNDRED_YEARS {
+        date.to_string()
+    } else if secs < 86_400 {
         "today".to_string()
     } else {
         crate::app::format_ago(secs)
