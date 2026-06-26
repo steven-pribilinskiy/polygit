@@ -532,9 +532,10 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     let viewport = inner.height as usize;
     let total = items.len();
     let max_scroll = total.saturating_sub(viewport);
-    // Full changelog: keep the keyboard-selected release's header in view (what's-new is pure scroll).
+    // Wheel scrolls freely; only a selection move / expand-collapse (the one-shot flag) snaps the
+    // selected release back into view — so you can scroll up past the selection like the main list.
     let mut scroll = app.changelog_scroll.min(max_scroll);
-    if !whats_new {
+    if !whats_new && std::mem::take(&mut app.changelog_ensure_visible) {
         if let Some(sel_line) = items
             .iter()
             .position(|item| matches!(item, Item::Header(idx) if *idx == app.changelog_selected))
@@ -718,11 +719,15 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .position(|item| matches!(item, Item::Header { vis_pos, .. } if *vis_pos == sel))
         .unwrap_or(0);
     let max_scroll = total.saturating_sub(viewport);
+    // Wheel scrolls freely; only a selection move / expand (the one-shot flag) snaps the selected
+    // release back into view.
     let mut scroll = app.changelog_scroll.min(max_scroll);
-    if sel_line < scroll {
-        scroll = sel_line;
-    } else if viewport > 0 && sel_line >= scroll + viewport {
-        scroll = sel_line + 1 - viewport;
+    if std::mem::take(&mut app.changelog_ensure_visible) {
+        if sel_line < scroll {
+            scroll = sel_line;
+        } else if viewport > 0 && sel_line >= scroll + viewport {
+            scroll = sel_line + 1 - viewport;
+        }
     }
     app.changelog_scroll = scroll;
 

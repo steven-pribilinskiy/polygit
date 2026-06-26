@@ -1776,6 +1776,7 @@ async fn run_event_loop(
                             } else if let Some(vis) = clicked_header {
                                 // Click a release header to select + expand it (accordion).
                                 app.pin_selected = vis;
+                                app.changelog_ensure_visible = true;
                             } else if region_hit(app.pin_toggle_click, mouse.column, mouse.row) {
                                 app.pin_show_all = !app.pin_show_all;
                                 let visible = app.pin_visible_indices();
@@ -1815,6 +1816,7 @@ async fn run_event_loop(
                                 .map(|&(.., idx)| idx)
                             {
                                 app.changelog_selected = idx;
+                                app.changelog_ensure_visible = true;
                                 if let Some(release) = changelog::releases().get(idx) {
                                     let version = release.version.to_string();
                                     app.toggle_changelog_release(&version);
@@ -2637,6 +2639,15 @@ async fn run_event_loop(
                     }
                     let visible = app.pin_visible_indices();
                     let last = visible.len().saturating_sub(1);
+                    // Selection keys snap the selection into view next render; the wheel scrolls free.
+                    if matches!(
+                        key.code,
+                        KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('g')
+                            | KeyCode::Char('G') | KeyCode::Up | KeyCode::Down | KeyCode::Home
+                            | KeyCode::End | KeyCode::Char('a')
+                    ) {
+                        app.changelog_ensure_visible = true;
+                    }
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => {
                             app.show_changelog = false;
@@ -2688,6 +2699,16 @@ async fn run_event_loop(
                     let releases = changelog::releases();
                     let last = releases.len().saturating_sub(1);
                     let whats_new = app.changelog_whats_new;
+                    // Selection/fold keys snap the selection into view next render; PageUp/Down and
+                    // the wheel scroll freely (no snap-back).
+                    if matches!(
+                        key.code,
+                        KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('g')
+                            | KeyCode::Char('G') | KeyCode::Up | KeyCode::Down | KeyCode::Home
+                            | KeyCode::End | KeyCode::Char(' ') | KeyCode::Enter
+                    ) {
+                        app.changelog_ensure_visible = true;
+                    }
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.show_changelog = false,
                         KeyCode::Char('j') | KeyCode::Down => {

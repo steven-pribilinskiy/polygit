@@ -235,6 +235,7 @@ impl AppState {
         self.changelog_whats_new = whats_new;
         self.changelog_scroll = 0;
         self.changelog_selected = 0;
+        self.changelog_ensure_visible = true;
         if !whats_new {
             self.changelog_collapsed = crate::changelog::releases()
                 .iter()
@@ -254,6 +255,7 @@ impl AppState {
         self.pin_show_all = false;
         self.pin_selected = 0;
         self.changelog_scroll = 0;
+        self.changelog_ensure_visible = true;
         self.pin_error = None;
         self.pin_status = None;
         self.pin_releases_loading = true;

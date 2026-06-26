@@ -467,6 +467,10 @@ pub struct AppState {
     pub changelog_close_click: Option<(u16, u16, u16)>,
     /// Clickable accordion-header regions: (row, col_start, col_end, release index).
     pub changelog_header_click: Vec<(u16, u16, u16, usize)>,
+    /// One-shot: scroll to keep the selected release in view on the next render. Set by selection
+    /// moves (j/k/g/G), expand/collapse, and header clicks — NOT by the wheel — so wheel scrolling
+    /// is free (web-app style, like the main list) instead of snapping back to the selection.
+    pub changelog_ensure_visible: bool,
     /// Maximize ⇄ restore the changelog / What's New / version-picker modal (runtime-only, like the
     /// help modal): `true` fills ~90% of the viewport. `m` or its title-bar button toggles it.
     pub changelog_maximized: bool,
@@ -835,6 +839,7 @@ impl AppState {
             changelog_area: Rect::default(),
             changelog_close_click: None,
             changelog_header_click: Vec::new(),
+            changelog_ensure_visible: true,
             changelog_maximized: false,
             changelog_maximize_click: None,
             changelog_pin_mode: false,
