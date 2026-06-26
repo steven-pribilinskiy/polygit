@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.71.0 — 2026-06-26
+releases auto-publish on version bump
+- **prebuilt binaries now publish automatically.** The release workflow triggers on any push to `main` that changes `Cargo.toml`: it reads the version, and if `vX.Y.Z` isn't released yet, creates the tag and builds + attaches binaries for all five targets. No more manual `git tag` step — so `curl … | install.sh` (which fetches `releases/latest`) always tracks the newest version instead of going stale.
+
 ## v2.70.0 — 2026-06-24
 info panel whole-line copy, per-worktree copy, repo-page trigger hover, footer tidy
 - **The Path and (non-link) Branch rows' value copies on click** — the value plus a trailing 2-char `⧉` are one click/hover region (the field label is excluded), and the `⧉` is a standout magenta so the copy affordance reads at a glance.
