@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.73.1 — 2026-06-26
+Changelog / version-picker: the wheel scrolls freely again
+- **fix: you couldn't scroll up past the selected release** in the Changelog / What's New / version-picker modal — every render snapped the selected (or just-expanded) release back into view, fighting the wheel. Scroll is now decoupled from selection (web-app style, like the main list): the wheel and PageUp/Down scroll freely, and only a keyboard selection move or an expand/collapse snaps the selection into view (once).
+
 ## v2.73.0 — 2026-06-26
 Changelog / What's New / version-picker: markdown, maximize, hover, accordion
 - **release notes render markdown** — `**bold**` and `` `code` `` show styled (markers gone) instead of literally, via one shared renderer used by the Changelog, What's New, and version-picker modals so they look identical.
