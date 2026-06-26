@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.72.0 — 2026-06-26
+pin any released version from the build-info dialog
+- **new version picker.** Build info (click `built … ago`) now has a `p pin version` action (key + clickable footer chip) that opens a picker of every published release, fetched live from GitHub. Select one and polygit downloads that release's binary for your platform, installs it over itself, and reloads into it.
+- **by default it only offers versions that themselves have the picker** (v2.72.0 and up) — the floor — so you can always switch again from inside the app and never strand yourself on a build with no switcher. The selected release expands its changelog notes inline.
+- press `a` to **show older versions** too; they're dimmed and tagged `no in-app switch`. Pinning one pops a warning confirm explaining you won't be able to switch versions in-app afterward, with a **click-to-copy command** to reinstall the latest build (the only way back).
+- self-install covers Linux and macOS (the picker is hidden on native Windows; use WSL).
+
 ## v2.71.1 — 2026-06-26
 Build-info modal: scroll the settings tree with the mouse wheel
 - **the Build-info settings-tree scrollbar no longer gets stuck.** Its scroll was slaved to the selected row, so the mouse wheel could never move past the selection — it stalled mid-list while the rest of the tree was unreachable. Scroll is now decoupled from selection, matching the main list: plain wheel scrolls the preview freely (web-app style), Alt+wheel and `j`/`k`/PageUp/Down/`g`/`G` move the selection and keep it in view. The thumb now tracks real scroll position.

@@ -223,6 +223,8 @@ impl AppState {
         self.finder = None;
         self.picker = None;
         self.show_changelog = false;
+        self.changelog_pin_mode = false;
+        self.pin_show_all = false;
     }
 
     /// Open the changelog modal. `whats_new` filters to releases newer than the last-seen version
@@ -240,6 +242,68 @@ impl AppState {
                 .map(|release| release.version.to_string())
                 .collect();
         }
+    }
+
+    /// Open the version picker — the changelog modal in "pin" sub-mode. Lists live releases
+    /// (fetched by the caller) and installs the chosen one over the running binary. Defaults to
+    /// showing only floor-and-up versions (those with the in-app picker); `a` reveals older ones.
+    pub fn open_pin_picker(&mut self) {
+        self.close_all_modals();
+        self.show_changelog = true;
+        self.changelog_pin_mode = true;
+        self.pin_show_all = false;
+        self.pin_selected = 0;
+        self.changelog_scroll = 0;
+        self.pin_error = None;
+        self.pin_status = None;
+        self.pin_releases_loading = true;
+    }
+
+    /// The picker rows currently visible (all releases unless `pin_show_all` is off, which hides
+    /// pre-floor versions). Returns indices into `pin_releases`.
+    pub fn pin_visible_indices(&self) -> Vec<usize> {
+        self.pin_releases
+            .iter()
+            .enumerate()
+            .filter(|(_, release)| self.pin_show_all || release.is_supported)
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    /// Build the confirm dialog for the currently-selected picker row, or `None` when the selection
+    /// is the running version (inert) or the list is empty. Below-floor versions (no in-app picker)
+    /// get a danger warning plus the copyable return-to-latest command — the only way back.
+    pub fn pin_confirm_for_selected(&self) -> Option<ConfirmDialog> {
+        let visible = self.pin_visible_indices();
+        let release = visible.get(self.pin_selected).and_then(|&idx| self.pin_releases.get(idx))?;
+        if release.is_current {
+            return None;
+        }
+        let version = release.version.clone();
+        if release.is_supported {
+            return Some(ConfirmDialog::simple(
+                format!("Pin v{version} — download & replace the running binary, then reload?"),
+                ConfirmAction::PinVersion { version },
+                false,
+            ));
+        }
+        let live = self.exe_path.strip_suffix(" (deleted)").unwrap_or(&self.exe_path);
+        let exe_dir = std::path::Path::new(live)
+            .parent()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|| ".".to_string());
+        Some(ConfirmDialog {
+            message: format!(
+                "v{version} predates in-app version selection — you won't be able to switch versions from inside the app."
+            ),
+            action: ConfirmAction::PinVersion { version },
+            danger: true,
+            restore_files: Vec::new(),
+            delete_files: Vec::new(),
+            detail_lines: Vec::new(),
+            detail_title: Some("To return to the latest build later, run:".to_string()),
+            copy_line: Some(crate::update::return_to_latest_cmd(&exe_dir)),
+        })
     }
 
     /// Toggle a release's collapsed state in the full changelog accordion.

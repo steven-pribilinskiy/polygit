@@ -943,6 +943,7 @@ pub async fn run_prepare_discard(
                 delete_files: delete,
                 detail_lines: Vec::new(),
                 detail_title: None,
+                copy_line: None,
             });
         }
         Err(err) => {
@@ -974,6 +975,7 @@ pub async fn run_prepare_drop_stash(
         delete_files: files,
         detail_lines: Vec::new(),
         detail_title: None,
+        copy_line: None,
     });
 }
 
@@ -1206,6 +1208,72 @@ pub async fn run_all_details(repos: Vec<SharedRepoState>, max_jobs: usize) {
     }
     for handle in handles {
         let _ = handle.await;
+    }
+}
+
+/// Fetch the live release list for the version picker, merge in the embedded changelog notes, mark
+/// the current/supported flags, and write it into `AppState` (clearing the loading flag). On
+/// failure, surface the error inline. Drops the lock across the network `.await`.
+pub async fn run_fetch_releases(app_state: Arc<Mutex<AppState>>) {
+    let result = crate::update::fetch_releases().await;
+    let mut app = app_state.lock().unwrap();
+    // Stale if the user closed the picker meanwhile.
+    if !app.changelog_pin_mode {
+        return;
+    }
+    match result {
+        Ok(list) => {
+            let current = env!("CARGO_PKG_VERSION");
+            let notes_for = |version: &str| -> Vec<String> {
+                crate::changelog::releases()
+                    .iter()
+                    .find(|release| release.version == version)
+                    .map(|release| release.notes.iter().map(|note| note.to_string()).collect())
+                    .unwrap_or_default()
+            };
+            app.pin_releases = list
+                .into_iter()
+                .map(|(version, date)| {
+                    let notes = notes_for(&version);
+                    let is_current = crate::changelog::version_cmp(&version, current)
+                        == std::cmp::Ordering::Equal;
+                    let is_supported = crate::update::supports_in_app_switch(&version);
+                    crate::app::PinRelease { version, date, notes, is_current, is_supported }
+                })
+                .collect();
+            app.pin_error = None;
+        }
+        Err(err) => app.pin_error = Some(format!("{err}")),
+    }
+    app.pin_releases_loading = false;
+    app.pin_selected = 0;
+}
+
+/// Download + install `version` over the running binary, then signal the event loop to re-exec into
+/// it. Reads `exe_path` from state; surfaces a download/install error inline (no reload on failure).
+pub async fn run_pin_version(app_state: Arc<Mutex<AppState>>, version: String) {
+    let Some(target) = crate::update::current_target() else {
+        let mut app = app_state.lock().unwrap();
+        app.pin_error = Some("no prebuilt binary for this platform".to_string());
+        return;
+    };
+    let exe_path = {
+        let mut app = app_state.lock().unwrap();
+        app.pin_error = None;
+        app.pin_status = Some(format!("downloading v{version}…"));
+        app.exe_path.clone()
+    };
+    let result = crate::update::download_and_install(&version, target, &exe_path).await;
+    let mut app = app_state.lock().unwrap();
+    match result {
+        Ok(()) => {
+            app.pin_status = Some(format!("installed v{version} — reloading…"));
+            app.pin_auto_reload = true;
+        }
+        Err(err) => {
+            app.pin_status = None;
+            app.pin_error = Some(format!("{err}"));
+        }
     }
 }
 

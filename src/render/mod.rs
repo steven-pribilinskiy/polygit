@@ -726,9 +726,6 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         app.dock_rect = Rect::default();
         render_repo_page(frame, app, area, tick);
         render_throttle_banner(frame, app, area);
-        if app.confirm.is_some() {
-            render_confirm(frame, app, area);
-        }
         if app.diff_modal.is_some() {
             render_diff_modal(frame, app, area);
         }
@@ -740,6 +737,11 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         }
         if app.show_changelog {
             render_changelog(frame, app, area);
+        }
+        // Confirm renders after the modal it may overlay (settings reset, pin-version picker), so
+        // it always sits on top.
+        if app.confirm.is_some() {
+            render_confirm(frame, app, area);
         }
         if app.copy_menu.is_some() {
             render_copy_menu(frame, app, area);
@@ -840,10 +842,6 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     if app.show_help {
         render_help(frame, app, area);
     }
-    // Confirmation dialog overlays all.
-    if app.confirm.is_some() {
-        render_confirm(frame, app, area);
-    }
     // Settings modal overlays everything.
     if app.show_settings {
         render_settings(frame, app, area);
@@ -853,6 +851,11 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.show_changelog {
         render_changelog(frame, app, area);
+    }
+    // Confirmation dialog overlays all — rendered after the modal it may sit over (settings reset,
+    // the pin-version picker) so it's always on top.
+    if app.confirm.is_some() {
+        render_confirm(frame, app, area);
     }
     if app.finder.is_some() {
         render_finder_overlay(frame, app, area);

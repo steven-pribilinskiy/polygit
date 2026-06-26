@@ -12,6 +12,7 @@ mod profile;
 mod render;
 mod theme;
 mod treeview;
+mod update;
 mod worker;
 
 use std::io::{self, IsTerminal, Write};
@@ -44,7 +45,8 @@ use app::{
 };
 use worker::{
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
-    run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_prepare_discard,
+    run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
+    run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
     run_all_prs, run_pull_request, run_remove_worktree, run_repo_details, run_repo_diff,
     run_repo_page,
@@ -163,6 +165,9 @@ fn spawn_confirm_action(app_state: &Arc<Mutex<AppState>>, action: ConfirmAction)
             let mut app = app_state.lock().unwrap();
             app.apply_settings_reset();
             app.show_toast("settings reset to defaults".to_string());
+        }
+        ConfirmAction::PinVersion { version } => {
+            tokio::spawn(run_pin_version(app_state, version));
         }
         // The design-system preview: accepting just closes the dialog (already taken by the caller).
         ConfirmAction::Preview => {}
@@ -1155,6 +1160,12 @@ async fn run_event_loop(
             }
         }
 
+        // A pinned version finished installing over the running binary — re-exec into it (the
+        // reload path strips the post-rename `(deleted)` suffix, like the Ctrl-R reload).
+        if app_state.lock().unwrap().pin_auto_reload {
+            return Ok(RELOAD_EXIT);
+        }
+
         // Update the "all done" edge. Selection is never moved automatically — it stays wherever
         // the user put it (no follow-the-running-repo, no jump-to-Result-when-complete).
         {
@@ -1725,6 +1736,53 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Version picker (pin sub-mode): click a `[pin]` button to select+confirm that
+                // version, the `show older` toggle to reveal pre-floor versions, `[x]`/outside to
+                // close. Handled before the normal changelog mouse so the buttons win.
+                if app.show_changelog && app.changelog_pin_mode {
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            app.changelog_scroll = app.changelog_scroll.saturating_add(3);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.changelog_scroll = app.changelog_scroll.saturating_sub(3);
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            let clicked_version = app
+                                .pin_row_click
+                                .iter()
+                                .find(|(row, start, end, _)| {
+                                    mouse.row == *row && mouse.column >= *start && mouse.column < *end
+                                })
+                                .map(|(.., version)| version.clone());
+                            if let Some(version) = clicked_version {
+                                let visible = app.pin_visible_indices();
+                                if let Some(pos) = visible
+                                    .iter()
+                                    .position(|&idx| app.pin_releases[idx].version == version)
+                                {
+                                    app.pin_selected = pos;
+                                }
+                                if let Some(dialog) = app.pin_confirm_for_selected() {
+                                    app.confirm = Some(dialog);
+                                }
+                            } else if region_hit(app.pin_toggle_click, mouse.column, mouse.row) {
+                                app.pin_show_all = !app.pin_show_all;
+                                let visible = app.pin_visible_indices();
+                                app.pin_selected =
+                                    app.pin_selected.min(visible.len().saturating_sub(1));
+                            } else if region_hit(app.changelog_close_click, mouse.column, mouse.row)
+                                || !point_in(app.changelog_area, mouse.column, mouse.row)
+                            {
+                                app.show_changelog = false;
+                                app.changelog_pin_mode = false;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Changelog modal: click an accordion header to select + fold it, `[x]`/outside to
                 // close, wheel scrolls (the scrollbar grab is handled by the generic handler above).
                 if app.show_changelog {
@@ -1848,6 +1906,17 @@ async fn run_event_loop(
                 // keys); the [x] button or a click outside cancels.
                 if app.confirm.is_some() {
                     if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        // Click the copyable command line (e.g. return-to-latest) to copy it —
+                        // without accepting or closing the dialog.
+                        let copy_text = region_hit(app.confirm_copy_click, mouse.column, mouse.row)
+                            .then(|| app.confirm.as_ref().and_then(|dialog| dialog.copy_line.clone()))
+                            .flatten();
+                        if let Some(text) = copy_text {
+                            app.show_copy_toast(&text);
+                            drop(app);
+                            copy_to_clipboard(&text);
+                            continue;
+                        }
                         if let Some(hint) = app.hint_at(mouse.column, mouse.row) {
                             synthetic_keys.push_back(hint_key_event(hint));
                         } else if region_hit(app.confirm_close_click, mouse.column, mouse.row)
@@ -2218,6 +2287,7 @@ async fn run_event_loop(
                                         "hover-highlighted, click or press y / n.".to_string(),
                                     ],
                                     detail_title: Some("Design system preview".to_string()),
+                                    copy_line: None,
                                 });
                             } else if let Some(url) = app.help_link_at(mouse.row) {
                                 drop(app);
@@ -2487,6 +2557,17 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(RELOAD_EXIT);
                     }
+                    // `p` opens the version picker (changelog modal in pin sub-mode) and kicks off
+                    // the live release fetch. Disabled where self-install isn't supported.
+                    if key.code == KeyCode::Char('p')
+                        && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && update::current_target().is_some()
+                    {
+                        app.open_pin_picker();
+                        drop(app);
+                        tokio::spawn(run_fetch_releases(Arc::clone(&app_state)));
+                        continue;
+                    }
                     let tree = app.build_info_tree.is_some();
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.show_build_info = false,
@@ -2526,6 +2607,46 @@ async fn run_event_loop(
                     if tree {
                         let vp = app.build_info_viewport;
                         app.ensure_build_info_visible(vp);
+                    }
+                    continue;
+                }
+
+                // Version picker (changelog modal in pin sub-mode): j/k select, a toggles older
+                // versions, enter/p pins the selected one (via a confirm), esc/q close. Handled
+                // before the normal changelog keys so they don't fight.
+                if app.show_changelog && app.changelog_pin_mode {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    let visible = app.pin_visible_indices();
+                    let last = visible.len().saturating_sub(1);
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.show_changelog = false;
+                            app.changelog_pin_mode = false;
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            app.pin_selected = (app.pin_selected + 1).min(last);
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.pin_selected = app.pin_selected.saturating_sub(1);
+                        }
+                        KeyCode::Char('g') | KeyCode::Home => app.pin_selected = 0,
+                        KeyCode::Char('G') | KeyCode::End => app.pin_selected = last,
+                        KeyCode::Char('a') => {
+                            app.pin_show_all = !app.pin_show_all;
+                            let visible = app.pin_visible_indices();
+                            app.pin_selected = app.pin_selected.min(visible.len().saturating_sub(1));
+                        }
+                        KeyCode::Enter | KeyCode::Char('p') => {
+                            if let Some(dialog) = app.pin_confirm_for_selected() {
+                                app.confirm = Some(dialog);
+                            }
+                        }
+                        _ => {}
                     }
                     continue;
                 }

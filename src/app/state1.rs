@@ -899,6 +899,7 @@ impl AppState {
             delete_files: Vec::new(),
             detail_lines: plan,
             detail_title: Some("Will reset:".to_string()),
+            copy_line: None,
         });
     }
 

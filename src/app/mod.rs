@@ -222,6 +222,9 @@ pub struct AppState {
     pub repo_page_message: Option<String>,
     /// Active confirmation dialog, if any.
     pub confirm: Option<ConfirmDialog>,
+    /// Click region of the confirm dialog's copyable line (e.g. the return-to-latest command),
+    /// captured each render. Clicking it copies `confirm.copy_line` without accepting the dialog.
+    pub confirm_copy_click: Option<(u16, u16, u16)>,
     /// Which optional list columns are enabled.
     pub columns: ColumnFlags,
     /// Relative paths of repos marked as favorites (persisted).
@@ -464,6 +467,28 @@ pub struct AppState {
     pub changelog_close_click: Option<(u16, u16, u16)>,
     /// Clickable accordion-header regions: (row, col_start, col_end, release index).
     pub changelog_header_click: Vec<(u16, u16, u16, usize)>,
+    // Version picker (build-info → "pin version"): the changelog modal in a pin sub-mode that
+    // lists live releases and installs a chosen one over the running binary, then auto-reloads.
+    /// Pin sub-mode of the changelog modal is active.
+    pub changelog_pin_mode: bool,
+    /// The live release list (merged with embedded notes), newest-first. Populated by the fetch.
+    pub pin_releases: Vec<PinRelease>,
+    /// Show pre-floor (no in-app switch) versions too. Off by default; the `a` toggle flips it.
+    pub pin_show_all: bool,
+    /// The release list is being fetched.
+    pub pin_releases_loading: bool,
+    /// A fetch/download/install error to surface inline in the picker.
+    pub pin_error: Option<String>,
+    /// Transient status while a pin is downloading/installing (e.g. "downloading v2.50.0…").
+    pub pin_status: Option<String>,
+    /// Keyboard selection into the *visible* (filtered) picker rows.
+    pub pin_selected: usize,
+    /// Clickable `[pin]` regions: (row, col_start, col_end, version).
+    pub pin_row_click: Vec<(u16, u16, u16, String)>,
+    /// The `show older / hide older` toggle's click region.
+    pub pin_toggle_click: Option<(u16, u16, u16)>,
+    /// Set by the worker after a successful install; the event loop re-execs into the new binary.
+    pub pin_auto_reload: bool,
     // Grouping (`z`, groups from ~/.config/polygit/groups.json):
     /// Render the list grouped (`z` toggles; persisted). Inert while `groups` is empty.
     pub grouping_enabled: bool,
@@ -665,6 +690,7 @@ impl AppState {
             repo_page_scroll: 0,
             repo_page_message: None,
             confirm: None,
+            confirm_copy_click: None,
             columns: persisted.columns,
             favorites: persisted.favorites.into_iter().collect(),
             favorites_first: persisted.favorites_first,
@@ -801,6 +827,16 @@ impl AppState {
             changelog_area: Rect::default(),
             changelog_close_click: None,
             changelog_header_click: Vec::new(),
+            changelog_pin_mode: false,
+            pin_releases: Vec::new(),
+            pin_show_all: false,
+            pin_releases_loading: false,
+            pin_error: None,
+            pin_status: None,
+            pin_selected: 0,
+            pin_row_click: Vec::new(),
+            pin_toggle_click: None,
+            pin_auto_reload: false,
             grouping_enabled: persisted.grouping_enabled,
             groups: Vec::new(),
             repo_group_map: Vec::new(),

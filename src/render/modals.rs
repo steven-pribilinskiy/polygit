@@ -255,6 +255,14 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
         footer.extend(footer_chip_state("j/k", " scroll", HintKey::Char('j'), can_scroll));
     }
     footer.push(footer_sep());
+    // Pin a specific released version (opens the picker) — only where self-install is supported.
+    if crate::update::current_target().is_some() {
+        footer.extend(footer_chip("p", " pin version", HintKey::Char('p')));
+    } else {
+        footer.push(("p".to_string(), Style::default().fg(Color::DarkGray), None));
+        footer.push((" pin version".to_string(), Style::default().fg(Color::DarkGray), None));
+    }
+    footer.push(footer_sep());
     footer.extend(footer_chip("r", " restart", HintKey::Char('r')));
     footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
@@ -398,6 +406,10 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
 /// as a collapsible accordion (header `▸ vX.Y.Z · <ago>`), the latest two expanded. After an update
 /// it opens in What's New mode: only releases newer than the last-seen version, all expanded.
 pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    if app.changelog_pin_mode {
+        render_pin_picker(frame, app, area);
+        return;
+    }
     enum Item {
         Header(usize),
         Note(String),
@@ -536,6 +548,187 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     let _ = pad;
 }
 
+/// The version picker — the changelog modal's "pin" sub-mode. Lists published releases newest-first
+/// (only floor-and-up by default; `a` reveals older "no in-app switch" versions), each with a
+/// right-aligned `[pin]` button. The selected row expands its changelog notes; pinning downloads +
+/// installs that version and auto-reloads. Loading/status/error states fill or top the body.
+fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    enum Item {
+        Header { vis_pos: usize, rel_idx: usize },
+        Note(String),
+    }
+    let visible = app.pin_visible_indices();
+    let sel = app.pin_selected.min(visible.len().saturating_sub(1));
+    app.pin_selected = sel;
+
+    // Build the row model: every visible release header, with the selected one's notes expanded.
+    let mut items: Vec<Item> = Vec::new();
+    for (vis_pos, &rel_idx) in visible.iter().enumerate() {
+        items.push(Item::Header { vis_pos, rel_idx });
+        if vis_pos == sel {
+            let notes = &app.pin_releases[rel_idx].notes;
+            for note in notes {
+                items.push(Item::Note(note.clone()));
+            }
+            if !notes.is_empty() {
+                items.push(Item::Note(String::new()));
+            }
+        }
+    }
+
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = area.width.saturating_sub(8).clamp(44, 96);
+    let height = area.height.saturating_sub(4).clamp(10, 40);
+    let modal = centered_rect(width, height, area);
+    let (close_line, close_click) = modal_close_button(modal);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("↑↓", " select", HintKey::Char('j')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("enter", " pin", HintKey::Enter));
+    footer.push(footer_sep());
+    let toggle_label = if app.pin_show_all { " hide older" } else { " show older" };
+    footer.extend(footer_chip("a", toggle_label, HintKey::Char('a')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Pin a version ")
+        .title_top(close_line)
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.changelog_area = modal;
+    app.changelog_close_click = close_click;
+    app.pin_row_click.clear();
+    // The show-older toggle lives in the footer (hint-click), so no body region for it.
+    app.pin_toggle_click = None;
+
+    // Full-body states: the initial fetch, a fetch error, or an empty list.
+    if app.pin_releases_loading {
+        frame.render_widget(
+            Paragraph::new("  loading releases…").style(Style::default().fg(Color::DarkGray)),
+            inner,
+        );
+        return;
+    }
+    if visible.is_empty() {
+        let (msg, color) = match &app.pin_error {
+            Some(err) => (format!("  {err}"), Color::Red),
+            None if !app.pin_releases.is_empty() && !app.pin_show_all => (
+                format!(
+                    "  no pinnable versions at or above v{} yet — press  a  to show older versions",
+                    crate::update::VERSION_SELECT_MIN
+                ),
+                Color::DarkGray,
+            ),
+            None => ("  no releases".to_string(), Color::DarkGray),
+        };
+        frame.render_widget(
+            Paragraph::new(msg).style(Style::default().fg(color)).wrap(Wrap { trim: false }),
+            inner,
+        );
+        return;
+    }
+
+    // A transient top line: a pin error (kept, so the list stays usable) or a download/install status.
+    let top = app
+        .pin_error
+        .as_ref()
+        .map(|err| (format!("  {err}"), Color::Red))
+        .or_else(|| app.pin_status.as_ref().map(|status| (format!("  {status}"), Color::Yellow)));
+    let body = if let Some((text, color)) = &top {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text.clone(),
+                Style::default().fg(*color).add_modifier(Modifier::BOLD),
+            ))),
+            Rect { height: 1, ..inner },
+        );
+        Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner }
+    } else {
+        inner
+    };
+
+    let viewport = body.height as usize;
+    let total = items.len();
+    let sel_line = items
+        .iter()
+        .position(|item| matches!(item, Item::Header { vis_pos, .. } if *vis_pos == sel))
+        .unwrap_or(0);
+    let max_scroll = total.saturating_sub(viewport);
+    let mut scroll = app.changelog_scroll.min(max_scroll);
+    if sel_line < scroll {
+        scroll = sel_line;
+    } else if viewport > 0 && sel_line >= scroll + viewport {
+        scroll = sel_line + 1 - viewport;
+    }
+    app.changelog_scroll = scroll;
+
+    let header_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let note_style = Style::default().fg(Color::Gray);
+    let pin_w = 5u16; // "[pin]"
+    let mut lines: Vec<Line> = Vec::new();
+    for (offset, item) in items.iter().skip(scroll).take(viewport).enumerate() {
+        let screen_y = body.y + offset as u16;
+        match item {
+            Item::Header { vis_pos, rel_idx } => {
+                let (version, date, is_current, is_supported) = {
+                    let release = &app.pin_releases[*rel_idx];
+                    (release.version.clone(), release.date.clone(), release.is_current, release.is_supported)
+                };
+                let ago = crate::changelog::released_ago(&date);
+                let chevron = if *vis_pos == sel { "\u{25be}" } else { "\u{25b8}" };
+                let mut label = format!(" {chevron} v{version} · {ago}");
+                if is_current {
+                    label.push_str("  (current)");
+                }
+                if !is_supported {
+                    label.push_str("  no in-app switch");
+                }
+                let base = if is_supported { header_style } else { dim };
+                let style = if *vis_pos == sel {
+                    base.fg(Color::Black).bg(Color::LightCyan)
+                } else {
+                    base
+                };
+                let mut spans = vec![Span::styled(label, style)];
+                // Right-aligned [pin] button (skipped for the running version).
+                if !is_current {
+                    let used = UnicodeWidthStr::width(spans[0].content.as_ref()) as u16;
+                    let pin_x = body.x + body.width.saturating_sub(pin_w + 1);
+                    let gap = pin_x.saturating_sub(body.x + used).max(1);
+                    spans.push(Span::raw(" ".repeat(gap as usize)));
+                    let pin_style = if is_supported {
+                        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+                    spans.push(Span::styled("[pin]", pin_style));
+                    app.pin_row_click.push((screen_y, pin_x, pin_x + pin_w, version));
+                }
+                lines.push(Line::from(spans));
+            }
+            Item::Note(text) if text.is_empty() => lines.push(Line::from(String::new())),
+            Item::Note(text) => {
+                let style = if text.starts_with('-') { note_style } else { dim };
+                lines.push(Line::from(Span::styled(format!("    {text}"), style)));
+            }
+        }
+    }
+    frame.render_widget(Paragraph::new(lines), body);
+    if total > viewport {
+        let track = Rect { x: body.x + body.width.saturating_sub(1), width: 1, ..body };
+        render_scrollbar(frame, track, scroll, total, viewport, false);
+    }
+    let _ = pad;
+}
+
 pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let Some(confirm) = &app.confirm else {
         return;
@@ -595,9 +788,16 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
         .max(detail_width as usize) as u16;
     // Padding eats 2 rows/cols inside the border; grow the box so content still fits.
     let pad = if app.panel_padding { 2 } else { 0 };
+    // A copyable command line (e.g. the return-to-latest curl) wants its own width budget.
+    let copy_width = confirm
+        .copy_line
+        .as_ref()
+        .map(|cmd| UnicodeWidthStr::width(cmd.as_str()) + 6)
+        .unwrap_or(0) as u16;
     // +2 covers the rounded border so the widest aligned detail row (e.g. a long "label  a → b")
     // isn't clipped at the right edge.
-    let content_width = (confirm.message.chars().count() as u16 + 8).max(file_width) + pad + 2;
+    let content_width =
+        (confirm.message.chars().count() as u16 + 8).max(file_width).max(copy_width) + pad + 2;
     let width = content_width.clamp(30, area.width.saturating_sub(4).max(30));
 
     // Build the file-detail body first so we can size the dialog to it.
@@ -669,6 +869,10 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
     if has_files {
         height += detail_lines.len() as u16 + 1;
     }
+    // A copyable line adds: blank + optional title + the command row.
+    if confirm.copy_line.is_some() {
+        height += 2 + confirm.detail_title.is_some() as u16;
+    }
     height += pad;
     let height = height.min(area.height.saturating_sub(2).max(6));
 
@@ -693,8 +897,11 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
     frame.render_widget(block, modal);
     let danger = confirm.danger;
     let message = confirm.message.clone();
+    let copy_line = confirm.copy_line.clone();
+    let copy_title = confirm.detail_title.clone();
     app.confirm_area = modal;
     app.confirm_close_click = close_click;
+    app.confirm_copy_click = None;
     let mut lines = vec![
         Line::from(String::new()),
         Line::from(Span::styled(format!("  {message}"), Style::default().fg(Color::Gray))),
@@ -709,6 +916,28 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
             format!("  {} This cannot be undone.", icons.warning),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )));
+    }
+    // A copyable command line (e.g. the return-to-latest curl), with a standout copy glyph. The
+    // whole row is registered as a copy click region; the copy text lives in `confirm.copy_line`.
+    if let Some(cmd) = &copy_line {
+        lines.push(Line::from(String::new()));
+        if has_files {
+            // detail_title already rendered above with the file/detail body; skip the dup.
+        } else if let Some(title) = &copy_title {
+            lines.push(Line::from(Span::styled(
+                format!("  {title}"),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+        }
+        let copy_y = inner.y + lines.len() as u16;
+        let glyph = " \u{29c9}";
+        let span_width = (UnicodeWidthStr::width(cmd.as_str()) + 2 + UnicodeWidthStr::width(glyph)) as u16;
+        let end = (inner.x + span_width).min(inner.x + inner.width);
+        app.confirm_copy_click = Some((copy_y, inner.x, end));
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {cmd}"), Style::default().fg(Color::Cyan)),
+            Span::styled(glyph, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        ]));
     }
     lines.push(Line::from(String::new()));
     // The yes/no prompt reuses the shared footer-chip buttons (cyan key + dim label), registered as
