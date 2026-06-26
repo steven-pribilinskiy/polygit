@@ -1739,6 +1739,45 @@
     }
 
     #[test]
+    fn ensure_build_info_visible_decoupled_from_selection() {
+        let mut state = state_named(&["a"]);
+        let json = format!(
+            "[{}]",
+            (0..20).map(|n| n.to_string()).collect::<Vec<_>>().join(",")
+        );
+        state.build_info_tree = crate::treeview::DataNode::parse_json(&json);
+        assert_eq!(state.build_info_tree_rows().len(), 20);
+        let viewport = 5; // max_scroll = 20 - 5 = 15
+
+        // A selection already on screen leaves the scroll untouched (web-app style).
+        state.build_info_scroll = 0;
+        state.build_info_tree_selected = 2;
+        state.ensure_build_info_visible(viewport);
+        assert_eq!(state.build_info_scroll, 0);
+
+        // Selecting the last row scrolls just enough to show it — pinned to max_scroll.
+        state.build_info_tree_selected = 19;
+        state.ensure_build_info_visible(viewport);
+        assert_eq!(state.build_info_scroll, 15);
+
+        // Selecting above the viewport snaps the top of the view to the selection.
+        state.build_info_tree_selected = 7;
+        state.ensure_build_info_visible(viewport);
+        assert_eq!(state.build_info_scroll, 7);
+
+        // Scroll set independently of the selection (a wheel bump) is left alone as long as the
+        // selection stays on screen — the two are decoupled.
+        state.build_info_scroll = 5; // rows 5..9 visible; selection 7 is in view
+        state.ensure_build_info_visible(viewport);
+        assert_eq!(state.build_info_scroll, 5);
+
+        // A zero viewport (modal too small / pre-first-render) is a no-op.
+        state.build_info_scroll = 4;
+        state.ensure_build_info_visible(0);
+        assert_eq!(state.build_info_scroll, 4);
+    }
+
+    #[test]
     fn button_hover_style_cycles() {
         assert_eq!(ButtonHoverStyle::Subtle.cycle(), ButtonHoverStyle::Inverted);
         assert_eq!(ButtonHoverStyle::Inverted.cycle(), ButtonHoverStyle::Subtle);

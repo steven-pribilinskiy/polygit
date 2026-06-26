@@ -300,6 +300,9 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
         ..inner
     };
     let viewport = preview.height as usize;
+    // Capture the viewport so keyboard nav can keep the selection in view (see
+    // `ensure_build_info_visible`); scroll is decoupled from selection, web-app style.
+    app.build_info_viewport = viewport;
 
     if let Some(tree) = &app.build_info_tree {
         let rows = crate::treeview::flatten(tree, &app.build_info_tree_expanded);
@@ -308,14 +311,9 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
             app.build_info_tree_selected = total.saturating_sub(1);
         }
         let selected = app.build_info_tree_selected;
-        // Keep the selected row in view.
+        // Scroll follows the wheel / keyboard's ensure-visible, not the selection — only clamp it.
         let max_scroll = total.saturating_sub(viewport);
-        let mut scroll = app.build_info_scroll.min(max_scroll);
-        if selected < scroll {
-            scroll = selected;
-        } else if viewport > 0 && selected >= scroll + viewport {
-            scroll = selected + 1 - viewport;
-        }
+        let scroll = app.build_info_scroll.min(max_scroll);
         app.build_info_scroll = scroll;
         app.build_info_tree_click.clear();
         let key_style = Style::default().fg(Color::Cyan);

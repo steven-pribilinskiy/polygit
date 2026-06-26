@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.71.1 — 2026-06-26
+Build-info modal: scroll the settings tree with the mouse wheel
+- **the Build-info settings-tree scrollbar no longer gets stuck.** Its scroll was slaved to the selected row, so the mouse wheel could never move past the selection — it stalled mid-list while the rest of the tree was unreachable. Scroll is now decoupled from selection, matching the main list: plain wheel scrolls the preview freely (web-app style), Alt+wheel and `j`/`k`/PageUp/Down/`g`/`G` move the selection and keep it in view. The thumb now tracks real scroll position.
+
 ## v2.71.0 — 2026-06-26
 releases auto-publish on version bump
 - **prebuilt binaries now publish automatically.** The release workflow triggers on any push to `main` that changes `Cargo.toml`: it reads the version, and if `vX.Y.Z` isn't released yet, creates the tag and builds + attaches binaries for all five targets. No more manual `git tag` step — so `curl … | install.sh` (which fetches `releases/latest`) always tracks the newest version instead of going stale.

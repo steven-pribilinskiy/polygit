@@ -1674,11 +1674,29 @@ async fn run_event_loop(
                 // inside is inert, so you can select/scroll the JSON preview without it vanishing).
                 if app.show_build_info {
                     match mouse.kind {
+                        // Plain wheel scrolls the preview (selection untouched, web-app style);
+                        // Alt+wheel moves the selection like j/k, mirroring the main list.
                         MouseEventKind::ScrollDown => {
-                            app.build_info_scroll = app.build_info_scroll.saturating_add(3);
+                            if mouse.modifiers.contains(KeyModifiers::ALT)
+                                && app.build_info_tree.is_some()
+                            {
+                                app.build_info_tree_move(3);
+                                let vp = app.build_info_viewport;
+                                app.ensure_build_info_visible(vp);
+                            } else {
+                                app.build_info_scroll = app.build_info_scroll.saturating_add(3);
+                            }
                         }
                         MouseEventKind::ScrollUp => {
-                            app.build_info_scroll = app.build_info_scroll.saturating_sub(3);
+                            if mouse.modifiers.contains(KeyModifiers::ALT)
+                                && app.build_info_tree.is_some()
+                            {
+                                app.build_info_tree_move(-3);
+                                let vp = app.build_info_viewport;
+                                app.ensure_build_info_visible(vp);
+                            } else {
+                                app.build_info_scroll = app.build_info_scroll.saturating_sub(3);
+                            }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             if region_hit(app.build_info_fold_all_click, mouse.column, mouse.row) {
@@ -2504,6 +2522,10 @@ async fn run_event_loop(
                         }
                         KeyCode::Char('g') | KeyCode::Home => app.build_info_scroll = 0,
                         _ => {}
+                    }
+                    if tree {
+                        let vp = app.build_info_viewport;
+                        app.ensure_build_info_visible(vp);
                     }
                     continue;
                 }
