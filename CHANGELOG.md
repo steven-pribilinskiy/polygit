@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.72.1 — 2026-06-26
+Changelog / What's New / version-picker notes now wrap
+- **long release notes wrap instead of clipping at the right edge.** Note text in the Changelog, What's New, and version-picker modals is word-wrapped to the modal width (bullets get a hanging indent so continuation lines align under the text). Wrapping happens before layout, so the scrollbar and `j`/`k` scrolling stay accurate.
+
 ## v2.72.0 — 2026-06-26
 pin any released version from the build-info dialog
 - **new version picker.** Build info (click `built … ago`) now has a `p pin version` action (key + clickable footer chip) that opens a picker of every published release, fetched live from GitHub. Select one and polygit downloads that release's binary for your platform, installs it over itself, and reloads into it.

@@ -275,6 +275,55 @@ pub(crate) fn wrap_chars(text: &str, width: usize) -> Vec<String> {
     chunks
 }
 
+/// Word-wrap `text` to `width` display columns, breaking on spaces. A single word wider than
+/// `width` is hard-split (via [`wrap_chars`]). Returns at least one line (empty input → one empty
+/// line). Used for prose like changelog notes so long bullets wrap instead of clipping.
+pub(crate) fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    let flush = |current: &mut String, current_width: &mut usize, lines: &mut Vec<String>| {
+        lines.push(std::mem::take(current));
+        *current_width = 0;
+    };
+    for word in text.split(' ') {
+        let word_width = unicode_width::UnicodeWidthStr::width(word);
+        if word_width > width {
+            // A word too long to ever fit: flush, then hard-split it; keep the tail as `current`
+            // so following words can still join it.
+            if !current.is_empty() {
+                flush(&mut current, &mut current_width, &mut lines);
+            }
+            let mut chunks = wrap_chars(word, width);
+            if let Some(last) = chunks.pop() {
+                lines.extend(chunks);
+                current = last;
+                current_width = unicode_width::UnicodeWidthStr::width(current.as_str());
+            }
+            continue;
+        }
+        let sep = usize::from(!current.is_empty());
+        if current_width + sep + word_width > width {
+            flush(&mut current, &mut current_width, &mut lines);
+            current.push_str(word);
+            current_width = word_width;
+        } else {
+            if sep == 1 {
+                current.push(' ');
+            }
+            current.push_str(word);
+            current_width += sep + word_width;
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
 /// Wrap a link / URL across `width`-wide lines, preferring to break right AFTER a separator
 /// (`/ - . : _ @`) so it splits at natural boundaries; falls back to a hard char break when no
 /// separator fits on the line. Each returned segment is ≤ `width` display columns.
@@ -1136,3 +1185,29 @@ pub(crate) fn build_group_summary(app: &AppState, group_idx: usize) -> Vec<Strin
     lines
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_words_breaks_on_spaces_within_width() {
+        let out = wrap_words("the quick brown fox jumps", 11);
+        assert!(out.iter().all(|line| line.chars().count() <= 11), "every line fits: {out:?}");
+        assert_eq!(out.join(" "), "the quick brown fox jumps");
+    }
+
+    #[test]
+    fn wrap_words_hard_splits_overlong_word() {
+        let out = wrap_words("supercalifragilistic", 5);
+        assert!(out.len() > 1);
+        assert!(out.iter().all(|line| line.chars().count() <= 5));
+        assert_eq!(out.concat(), "supercalifragilistic");
+    }
+
+    #[test]
+    fn wrap_words_keeps_single_short_line() {
+        assert_eq!(wrap_words("- short bullet", 40), vec!["- short bullet".to_string()]);
+        assert_eq!(wrap_words("", 10), vec![String::new()]);
+    }
+}
