@@ -355,6 +355,24 @@ impl AppState {
             .unwrap_or_default()
     }
 
+    /// Bring the selected settings-tree row into view (keyboard / Alt+wheel nav), web-app style —
+    /// a selection already on screen leaves the scroll untouched. Mirrors
+    /// `ensure_list_selection_visible`.
+    pub fn ensure_build_info_visible(&mut self, viewport: usize) {
+        if viewport == 0 {
+            return;
+        }
+        let total = self.build_info_tree_rows().len();
+        let max_scroll = total.saturating_sub(viewport);
+        let selected = self.build_info_tree_selected;
+        if selected < self.build_info_scroll {
+            self.build_info_scroll = selected;
+        } else if selected >= self.build_info_scroll + viewport {
+            self.build_info_scroll = selected + 1 - viewport;
+        }
+        self.build_info_scroll = self.build_info_scroll.min(max_scroll);
+    }
+
     /// Toggle (fold/unfold) the container at the selected settings-tree row, if it is one.
     pub fn build_info_toggle_selected(&mut self) {
         let rows = self.build_info_tree_rows();

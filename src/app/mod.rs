@@ -431,6 +431,9 @@ pub struct AppState {
     pub build_info_config_count: usize,
     pub build_info_settings_preview: Vec<String>,
     pub build_info_scroll: usize,
+    /// The preview viewport height captured by the last render, so keyboard nav can keep the
+    /// selection in view without recomputing geometry (analog of `list_rows_area.height`).
+    pub build_info_viewport: usize,
     /// The settings preview parsed into a collapsible tree (`None` if it isn't valid JSON — then the
     /// raw `build_info_settings_preview` lines render instead). Built when the modal opens.
     pub build_info_tree: Option<crate::treeview::DataNode>,
@@ -781,6 +784,7 @@ impl AppState {
             build_info_config_count: 0,
             build_info_settings_preview: Vec::new(),
             build_info_scroll: 0,
+            build_info_viewport: 0,
             build_info_tree: None,
             build_info_tree_expanded: std::collections::HashSet::new(),
             build_info_tree_selected: 0,
