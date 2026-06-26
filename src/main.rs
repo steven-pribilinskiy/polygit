@@ -1755,6 +1755,13 @@ async fn run_event_loop(
                                     mouse.row == *row && mouse.column >= *start && mouse.column < *end
                                 })
                                 .map(|(.., version)| version.clone());
+                            let clicked_header = app
+                                .pin_header_click
+                                .iter()
+                                .find(|(row, start, end, _)| {
+                                    mouse.row == *row && mouse.column >= *start && mouse.column < *end
+                                })
+                                .map(|&(.., vis)| vis);
                             if let Some(version) = clicked_version {
                                 let visible = app.pin_visible_indices();
                                 if let Some(pos) = visible
@@ -1766,11 +1773,16 @@ async fn run_event_loop(
                                 if let Some(dialog) = app.pin_confirm_for_selected() {
                                     app.confirm = Some(dialog);
                                 }
+                            } else if let Some(vis) = clicked_header {
+                                // Click a release header to select + expand it (accordion).
+                                app.pin_selected = vis;
                             } else if region_hit(app.pin_toggle_click, mouse.column, mouse.row) {
                                 app.pin_show_all = !app.pin_show_all;
                                 let visible = app.pin_visible_indices();
                                 app.pin_selected =
                                     app.pin_selected.min(visible.len().saturating_sub(1));
+                            } else if region_hit(app.changelog_maximize_click, mouse.column, mouse.row) {
+                                app.changelog_maximized = !app.changelog_maximized;
                             } else if region_hit(app.changelog_close_click, mouse.column, mouse.row)
                                 || !point_in(app.changelog_area, mouse.column, mouse.row)
                             {
@@ -1807,6 +1819,8 @@ async fn run_event_loop(
                                     let version = release.version.to_string();
                                     app.toggle_changelog_release(&version);
                                 }
+                            } else if region_hit(app.changelog_maximize_click, mouse.column, mouse.row) {
+                                app.changelog_maximized = !app.changelog_maximized;
                             } else if region_hit(app.changelog_close_click, mouse.column, mouse.row)
                                 || !point_in(app.changelog_area, mouse.column, mouse.row)
                             {
@@ -2641,6 +2655,7 @@ async fn run_event_loop(
                             let visible = app.pin_visible_indices();
                             app.pin_selected = app.pin_selected.min(visible.len().saturating_sub(1));
                         }
+                        KeyCode::Char('m') => app.changelog_maximized = !app.changelog_maximized,
                         KeyCode::Enter | KeyCode::Char('p') => {
                             if let Some(dialog) = app.pin_confirm_for_selected() {
                                 app.confirm = Some(dialog);
@@ -2659,6 +2674,16 @@ async fn run_event_loop(
                     {
                         drop(app);
                         return Ok(130);
+                    }
+                    // `p` jumps to the version picker (pin a release) from the changelog dialog.
+                    if key.code == KeyCode::Char('p')
+                        && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && update::current_target().is_some()
+                    {
+                        app.open_pin_picker();
+                        drop(app);
+                        tokio::spawn(run_fetch_releases(Arc::clone(&app_state)));
+                        continue;
                     }
                     let releases = changelog::releases();
                     let last = releases.len().saturating_sub(1);
@@ -2705,6 +2730,7 @@ async fn run_event_loop(
                                 app.toggle_changelog_release(&version);
                             }
                         }
+                        KeyCode::Char('m') => app.changelog_maximized = !app.changelog_maximized,
                         _ => {}
                     }
                     continue;

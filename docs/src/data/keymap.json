@@ -457,7 +457,7 @@
         "keys": [
           "p"
         ],
-        "action": "Pin a released version — opens the picker (from Build info / its footer chip)",
+        "action": "Open the version picker (pin/switch to any release) — from Build info or the Changelog/What's New dialog",
         "note": "downloads + installs that version and reloads into it; defaults to versions that also have the picker (v2.72.0+) so you can switch again",
         "keywords": [
           "pin",
@@ -485,11 +485,24 @@
           "Enter",
           "p"
         ],
-        "action": "Version picker: pin the selected version (a warning + copyable reinstall command for pre-picker versions)",
+        "action": "Version picker: pin the selected version; or click a release header to expand it (accordion)",
         "keywords": [
           "pin",
           "confirm",
           "install"
+        ]
+      },
+      {
+        "keys": [
+          "m"
+        ],
+        "action": "Changelog / What's New / version picker: maximize ⇄ restore the modal (or click [m maximize]/[m restore])",
+        "keywords": [
+          "maximize",
+          "restore",
+          "fullscreen",
+          "enlarge",
+          "modal"
         ]
       },
       {

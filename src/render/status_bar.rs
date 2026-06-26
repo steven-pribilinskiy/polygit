@@ -534,6 +534,35 @@ pub(crate) fn modal_close_button(modal: Rect) -> (Line<'static>, Option<(u16, u1
     (line, Some((modal.y, col_start, col_end)))
 }
 
+/// A clickable title-bar button's hit region: `(row, col_start, col_end)` (col_end exclusive).
+pub(crate) type BtnRegion = Option<(u16, u16, u16)>;
+
+/// A modal top-border control cluster: `[m maximize] [x]` (or `[m restore]` when maximized),
+/// right-aligned for `Block::title_top`. Returns the title line plus the maximize and close click
+/// regions `(row, col_start, col_end)`. Mirrors the help/repo-page window controls so any modal can
+/// gain maximize/restore by swapping `modal_close_button` for this.
+pub(crate) fn modal_window_buttons(
+    modal: Rect,
+    maximized: bool,
+) -> (Line<'static>, BtnRegion, BtnRegion) {
+    let close = "[x]";
+    let max_btn = if maximized { "[m restore]" } else { "[m maximize]" };
+    let close_w = close.len() as u16;
+    let max_w = max_btn.len() as u16;
+    let dim = Style::default().fg(Color::DarkGray);
+    let line = Line::from(vec![
+        Span::styled(max_btn, dim),
+        Span::raw(" "),
+        Span::styled(close, dim.add_modifier(Modifier::BOLD)),
+    ])
+    .right_aligned();
+    let col_end = modal.x + modal.width.saturating_sub(1);
+    let close_start = col_end.saturating_sub(close_w);
+    let max_end = close_start.saturating_sub(1);
+    let max_start = max_end.saturating_sub(max_w);
+    (line, Some((modal.y, close_start, col_end)), Some((modal.y, max_start, max_end)))
+}
+
 /// A centered rect of the given size within `area`.
 pub(crate) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
