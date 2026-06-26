@@ -275,51 +275,114 @@ pub(crate) fn wrap_chars(text: &str, width: usize) -> Vec<String> {
     chunks
 }
 
-/// Word-wrap `text` to `width` display columns, breaking on spaces. A single word wider than
-/// `width` is hard-split (via [`wrap_chars`]). Returns at least one line (empty input → one empty
-/// line). Used for prose like changelog notes so long bullets wrap instead of clipping.
-pub(crate) fn wrap_words(text: &str, width: usize) -> Vec<String> {
-    if width == 0 {
-        return vec![text.to_string()];
-    }
-    let mut lines: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0;
-    let flush = |current: &mut String, current_width: &mut usize, lines: &mut Vec<String>| {
-        lines.push(std::mem::take(current));
-        *current_width = 0;
-    };
-    for word in text.split(' ') {
-        let word_width = unicode_width::UnicodeWidthStr::width(word);
-        if word_width > width {
-            // A word too long to ever fit: flush, then hard-split it; keep the tail as `current`
-            // so following words can still join it.
-            if !current.is_empty() {
-                flush(&mut current, &mut current_width, &mut lines);
+
+/// Parse inline markdown — `**bold**` and `` `code` `` — over `base`, returning styled runs with
+/// the markers stripped. Code spans get a distinct color; bold adds the bold modifier to `base`.
+/// A lone `*` and unmatched markers render literally. Good enough for release-note prose.
+fn parse_inline_md(text: &str, base: Style) -> Vec<(String, Style)> {
+    let bold = base.add_modifier(Modifier::BOLD);
+    let code = Style::default().fg(Color::Yellow);
+    let chars: Vec<char> = text.chars().collect();
+    let mut runs: Vec<(String, Style)> = Vec::new();
+    let mut buf = String::new();
+    let mut in_bold = false;
+    let mut in_code = false;
+    let mut idx = 0;
+    while idx < chars.len() {
+        let style = if in_code { code } else if in_bold { bold } else { base };
+        if !in_code && chars[idx] == '*' && chars.get(idx + 1) == Some(&'*') {
+            if !buf.is_empty() {
+                runs.push((std::mem::take(&mut buf), style));
             }
-            let mut chunks = wrap_chars(word, width);
+            in_bold = !in_bold;
+            idx += 2;
+            continue;
+        }
+        if chars[idx] == '`' {
+            if !buf.is_empty() {
+                runs.push((std::mem::take(&mut buf), style));
+            }
+            in_code = !in_code;
+            idx += 1;
+            continue;
+        }
+        buf.push(chars[idx]);
+        idx += 1;
+    }
+    if !buf.is_empty() {
+        let style = if in_code { code } else if in_bold { bold } else { base };
+        runs.push((buf, style));
+    }
+    runs
+}
+
+/// Parse inline markdown in `text` over `base`, then word-wrap to `width` columns preserving each
+/// run's style. Returns wrapped lines, each a list of `(text, style)` segments. The single shared
+/// release-note renderer for the changelog, What's New, and version-picker modals.
+pub(crate) fn wrap_markdown(text: &str, base: Style, width: usize) -> Vec<Vec<(String, Style)>> {
+    let runs = parse_inline_md(text, base);
+    if width == 0 {
+        return vec![runs];
+    }
+    // Split the styled runs into whitespace-delimited words (a word keeps its segments' styles).
+    let mut words: Vec<Vec<(String, Style)>> = Vec::new();
+    let mut word: Vec<(String, Style)> = Vec::new();
+    for (run_text, style) in &runs {
+        for (part_idx, part) in run_text.split(' ').enumerate() {
+            if part_idx > 0 && !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            if !part.is_empty() {
+                word.push((part.to_string(), *style));
+            }
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+
+    let seg_width = |segs: &[(String, Style)]| -> usize {
+        segs.iter().map(|(text, _)| unicode_width::UnicodeWidthStr::width(text.as_str())).sum()
+    };
+    let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
+    let mut line: Vec<(String, Style)> = Vec::new();
+    let mut line_width = 0;
+    for word in words {
+        let word_width = seg_width(&word);
+        if word_width > width {
+            // A word too long to ever fit: hard-split on chars, keeping its first segment's style.
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+                line_width = 0;
+            }
+            let style = word.first().map(|(_, style)| *style).unwrap_or(base);
+            let joined: String = word.into_iter().map(|(text, _)| text).collect();
+            let mut chunks = wrap_chars(&joined, width);
             if let Some(last) = chunks.pop() {
-                lines.extend(chunks);
-                current = last;
-                current_width = unicode_width::UnicodeWidthStr::width(current.as_str());
+                for chunk in chunks {
+                    lines.push(vec![(chunk, style)]);
+                }
+                line_width = unicode_width::UnicodeWidthStr::width(last.as_str());
+                line = vec![(last, style)];
             }
             continue;
         }
-        let sep = usize::from(!current.is_empty());
-        if current_width + sep + word_width > width {
-            flush(&mut current, &mut current_width, &mut lines);
-            current.push_str(word);
-            current_width = word_width;
+        let sep = usize::from(!line.is_empty());
+        if line_width + sep + word_width > width {
+            lines.push(std::mem::take(&mut line));
+            line.extend(word);
+            line_width = word_width;
         } else {
             if sep == 1 {
-                current.push(' ');
+                line.push((" ".to_string(), Style::default()));
+                line_width += 1;
             }
-            current.push_str(word);
-            current_width += sep + word_width;
+            line.extend(word);
+            line_width += word_width;
         }
     }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
     }
     lines
 }
@@ -1190,24 +1253,39 @@ pub(crate) fn build_group_summary(app: &AppState, group_idx: usize) -> Vec<Strin
 mod tests {
     use super::*;
 
-    #[test]
-    fn wrap_words_breaks_on_spaces_within_width() {
-        let out = wrap_words("the quick brown fox jumps", 11);
-        assert!(out.iter().all(|line| line.chars().count() <= 11), "every line fits: {out:?}");
-        assert_eq!(out.join(" "), "the quick brown fox jumps");
+    fn plain(lines: &[Vec<(String, Style)>]) -> Vec<String> {
+        lines.iter().map(|segs| segs.iter().map(|(text, _)| text.clone()).collect()).collect()
     }
 
     #[test]
-    fn wrap_words_hard_splits_overlong_word() {
-        let out = wrap_words("supercalifragilistic", 5);
+    fn wrap_markdown_breaks_on_spaces_within_width() {
+        let base = Style::default();
+        let out = wrap_markdown("the quick brown fox jumps", base, 11);
+        let widths: Vec<usize> = plain(&out)
+            .iter()
+            .map(|line| unicode_width::UnicodeWidthStr::width(line.as_str()))
+            .collect();
+        assert!(widths.iter().all(|&w| w <= 11), "every line fits: {widths:?}");
+        assert_eq!(plain(&out).join(" ").replace("  ", " "), "the quick brown fox jumps");
+    }
+
+    #[test]
+    fn wrap_markdown_strips_markers_and_styles_runs() {
+        let base = Style::default();
+        let out = wrap_markdown("a **bold** and `code` end", base, 80);
+        // One line; markers gone from the text.
+        let text: String = plain(&out).concat();
+        assert!(!text.contains('*') && !text.contains('`'), "markers stripped: {text:?}");
+        // The bold run carries the BOLD modifier; the code run is recolored.
+        let segs = &out[0];
+        assert!(segs.iter().any(|(t, s)| t == "bold" && s.add_modifier == Modifier::BOLD));
+        assert!(segs.iter().any(|(t, s)| t == "code" && s.fg == Some(Color::Yellow)));
+    }
+
+    #[test]
+    fn wrap_markdown_hard_splits_overlong_word() {
+        let out = wrap_markdown("supercalifragilistic", Style::default(), 5);
         assert!(out.len() > 1);
-        assert!(out.iter().all(|line| line.chars().count() <= 5));
-        assert_eq!(out.concat(), "supercalifragilistic");
-    }
-
-    #[test]
-    fn wrap_words_keeps_single_short_line() {
-        assert_eq!(wrap_words("- short bullet", 40), vec!["- short bullet".to_string()]);
-        assert_eq!(wrap_words("", 10), vec![String::new()]);
+        assert_eq!(plain(&out).concat(), "supercalifragilistic");
     }
 }

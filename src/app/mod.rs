@@ -467,6 +467,11 @@ pub struct AppState {
     pub changelog_close_click: Option<(u16, u16, u16)>,
     /// Clickable accordion-header regions: (row, col_start, col_end, release index).
     pub changelog_header_click: Vec<(u16, u16, u16, usize)>,
+    /// Maximize ⇄ restore the changelog / What's New / version-picker modal (runtime-only, like the
+    /// help modal): `true` fills ~90% of the viewport. `m` or its title-bar button toggles it.
+    pub changelog_maximized: bool,
+    /// The modal's `[m maximize]`/`[m restore]` title-bar button region.
+    pub changelog_maximize_click: Option<(u16, u16, u16)>,
     // Version picker (build-info → "pin version"): the changelog modal in a pin sub-mode that
     // lists live releases and installs a chosen one over the running binary, then auto-reloads.
     /// Pin sub-mode of the changelog modal is active.
@@ -485,6 +490,9 @@ pub struct AppState {
     pub pin_selected: usize,
     /// Clickable `[pin]` regions: (row, col_start, col_end, version).
     pub pin_row_click: Vec<(u16, u16, u16, String)>,
+    /// Clickable release-header regions in the picker: (row, col_start, col_end, visible index).
+    /// Clicking selects + expands that release (accordion).
+    pub pin_header_click: Vec<(u16, u16, u16, usize)>,
     /// The `show older / hide older` toggle's click region.
     pub pin_toggle_click: Option<(u16, u16, u16)>,
     /// Set by the worker after a successful install; the event loop re-execs into the new binary.
@@ -827,6 +835,8 @@ impl AppState {
             changelog_area: Rect::default(),
             changelog_close_click: None,
             changelog_header_click: Vec::new(),
+            changelog_maximized: false,
+            changelog_maximize_click: None,
             changelog_pin_mode: false,
             pin_releases: Vec::new(),
             pin_show_all: false,
@@ -835,6 +845,7 @@ impl AppState {
             pin_status: None,
             pin_selected: 0,
             pin_row_click: Vec::new(),
+            pin_header_click: Vec::new(),
             pin_toggle_click: None,
             pin_auto_reload: false,
             grouping_enabled: persisted.grouping_enabled,

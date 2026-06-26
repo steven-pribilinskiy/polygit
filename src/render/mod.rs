@@ -375,13 +375,29 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             }
         }
     } else if app.show_changelog {
-        if let Some(&(row, start, end, idx)) =
+        // Pin picker: the `[pin]` buttons and release-header rows (accordion) get the button tint.
+        if let Some(&(row, start, end, _)) =
+            app.pin_row_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, vis)) =
+            app.pin_header_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            // The selected (expanded) release keeps its solid highlight.
+            if vis != app.pin_selected {
+                button_hits.push(row_rect(row, start, end));
+            }
+        } else if let Some(&(row, start, end, idx)) =
             app.changelog_header_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             // The selected header keeps its solid highlight (no extra hover tint).
             if idx != app.changelog_selected {
                 button_hits.push(row_rect(row, start, end));
             }
+        } else if let Some((row, start, end)) =
+            app.changelog_maximize_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.changelog_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {

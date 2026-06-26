@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.73.0 — 2026-06-26
+Changelog / What's New / version-picker: markdown, maximize, hover, accordion
+- **release notes render markdown** — `**bold**` and `` `code` `` show styled (markers gone) instead of literally, via one shared renderer used by the Changelog, What's New, and version-picker modals so they look identical.
+- **`m` maximizes ⇄ restores** the modal — or click the `[m maximize]` / `[m restore]` title-bar button. Maximized fills ~90% of the viewport. Same control as the help modal.
+- **the version picker's `[pin]` buttons and release rows now highlight on hover** (they were clickable but inert on hover before).
+- **click a release header in the picker to expand it** (accordion) — not just the keyboard selection.
+- **pin a version straight from the Changelog / What's New dialog** with `p` (or the new `p pin version` footer chip), not only from Build info.
+
 ## v2.72.1 — 2026-06-26
 Changelog / What's New / version-picker notes now wrap
 - **long release notes wrap instead of clipping at the right edge.** Note text in the Changelog, What's New, and version-picker modals is word-wrapped to the modal width (bullets get a hanging indent so continuation lines align under the text). Wrapping happens before layout, so the scrollbar and `j`/`k` scrolling stay accurate.

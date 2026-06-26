@@ -237,10 +237,13 @@ the latest build; `esc`, the `[x]`, or a click **outside** closes it (clicking i
 
 ### Pin a version
 
-Build info also carries a **`p pin version`** action (the key, or the clickable footer chip). It
-opens a **version picker** — every published release, fetched live from GitHub. Selecting a release
-expands its changelog notes inline; pressing `Enter`/`p` (or clicking its `[pin]`) downloads that
-release's binary for your platform, installs it over the running binary, and reloads into it.
+Build info carries a **`p pin version`** action (the key, or the clickable footer chip) — and the
+same `p` works from the Changelog / What's New dialog. It opens a **version picker** — every
+published release, fetched live from GitHub. Selecting a release (or clicking its header) expands
+its changelog notes inline; pressing `Enter`/`p` (or clicking its `[pin]`) downloads that release's
+binary for your platform, installs it over the running binary, and reloads into it. Notes render
+markdown (`**bold**`, `` `code` ``), the `[pin]` buttons highlight on hover, and `m` maximizes the
+picker.
 
 By default the picker only offers versions **at or above the one that introduced the picker**
 (`v2.72.0`) — those are the versions you can switch *out of* again from inside the app, so you can
@@ -255,7 +258,10 @@ Clicking the `vX.Y.Z` tag opens the **Changelog**: every release as a collapsibl
 header is the version + a time-ago (`▸ v2.60.0 · 2d ago`), with the latest two expanded. `j`/`k`
 select a release, `space`/`enter` (or a header click) fold it, `g`/`G` jump. After you reload into a
 newer build, a **What's New** modal pops automatically with every release since the version you last
-ran. The notes are embedded from `CHANGELOG.md`.
+ran. The notes are embedded from `CHANGELOG.md` and render **markdown** (`**bold**`, `` `code` ``);
+long notes wrap to the modal width (bulleted lines get a hanging indent). Press **`m`** — or click
+the `[m maximize]` / `[m restore]` title-bar button — to maximize ⇄ restore the Changelog, What's
+New, or version-picker modal (same as the help modal).
 
 ## Reading the result
 

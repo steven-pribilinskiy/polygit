@@ -402,6 +402,37 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let _ = pad;
 }
 
+/// Wrap a release's note lines into indented, markdown-styled display rows — the single shared note
+/// renderer for the changelog, What's New, and version-picker modals (so they look identical).
+/// `avail` is the wrap width (already minus the deepest indent). Bullets (`- …`) get a hanging
+/// indent; `**bold**` / `` `code` `` render styled. Returns `(indent_cols, styled_segments)` rows.
+fn wrap_release_notes(
+    notes: &[&str],
+    note_style: Style,
+    dim: Style,
+    avail: usize,
+) -> Vec<(usize, Vec<(String, Style)>)> {
+    let mut rows = Vec::new();
+    for note in notes {
+        let bullet = note.trim_start().starts_with('-');
+        let base = if bullet { note_style } else { dim };
+        for (row, segs) in super::preview::wrap_markdown(note, base, avail).into_iter().enumerate() {
+            let indent = if row > 0 && bullet { 6 } else { 4 };
+            rows.push((indent, segs));
+        }
+    }
+    rows
+}
+
+/// Render one wrapped note row (leading indent + styled markdown segments) into a `Line`.
+fn note_line(indent: usize, segs: &[(String, Style)]) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ".repeat(indent))];
+    for (text, style) in segs {
+        spans.push(Span::styled(text.clone(), *style));
+    }
+    Line::from(spans)
+}
+
 /// The changelog / What's New modal. `vX.Y.Z` (status bar) opens the full changelog — every release
 /// as a collapsible accordion (header `▸ vX.Y.Z · <ago>`), the latest two expanded. After an update
 /// it opens in What's New mode: only releases newer than the last-seen version, all expanded.
@@ -412,9 +443,11 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     }
     enum Item {
         Header(usize),
-        Note { line: String, bullet: bool },
+        Note { indent: usize, segs: Vec<(String, Style)> },
         Blank,
     }
+    let note_style = Style::default().fg(Color::Gray);
+    let dim = Style::default().fg(Color::DarkGray);
     let releases = crate::changelog::releases();
     let whats_new = app.changelog_whats_new;
     let visible: Vec<usize> = releases
@@ -429,8 +462,12 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         .collect();
 
     let pad = if app.panel_padding { 2 } else { 0 };
-    let width = area.width.saturating_sub(8).clamp(40, 96);
-    let height = area.height.saturating_sub(4).clamp(10, 40);
+    let (width, height) = if app.changelog_maximized {
+        // ~90% of the viewport (matches the help modal).
+        (area.width.saturating_mul(9) / 10, area.height.saturating_mul(9) / 10)
+    } else {
+        (area.width.saturating_sub(8).clamp(40, 96), area.height.saturating_sub(4).clamp(10, 40))
+    };
     // Note text wraps to the inner content width (borders + padding removed) so long bullets don't
     // clip; wrap to the deeper continuation indent so every wrapped row fits.
     let inner_width = width.saturating_sub(2 + pad) as usize;
@@ -442,19 +479,16 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         let expanded = whats_new || !app.changelog_collapsed.contains(release.version);
         items.push(Item::Header(idx));
         if expanded {
-            for note in &release.notes {
-                let bullet = note.trim_start().starts_with('-');
-                for (row, sub) in super::preview::wrap_words(note, wrap_avail).into_iter().enumerate() {
-                    let indent = if row > 0 && bullet { "      " } else { "    " };
-                    items.push(Item::Note { line: format!("{indent}{sub}"), bullet });
-                }
+            let notes: Vec<&str> = release.notes.clone();
+            for (indent, segs) in wrap_release_notes(&notes, note_style, dim, wrap_avail) {
+                items.push(Item::Note { indent, segs });
             }
             items.push(Item::Blank);
         }
     }
 
     let modal = centered_rect(width, height, area);
-    let (close_line, close_click) = modal_close_button(modal);
+    let (title_buttons, close_click, max_click) = modal_window_buttons(modal, app.changelog_maximized);
     let title = if whats_new {
         format!(" What's New in v{} ", env!("CARGO_PKG_VERSION"))
     } else {
@@ -471,6 +505,11 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         footer.push(("enter".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Enter)));
         footer.push((" fold".to_string(), Style::default().fg(Color::DarkGray), Some(HintKey::Enter)));
     }
+    // Jump to the version picker (pin a release) where self-install is supported.
+    if crate::update::current_target().is_some() {
+        footer.push(footer_sep());
+        footer.extend(footer_chip("p", " pin version", HintKey::Char('p')));
+    }
     footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let block = Block::default()
@@ -479,7 +518,7 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
-        .title_top(close_line)
+        .title_top(title_buttons)
         .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
     let inner = block.inner(modal);
     cast_shadow(frame, modal);
@@ -487,6 +526,7 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     frame.render_widget(block, modal);
     app.changelog_area = modal;
     app.changelog_close_click = close_click;
+    app.changelog_maximize_click = max_click;
     app.changelog_header_click.clear();
 
     let viewport = inner.height as usize;
@@ -509,8 +549,6 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     app.changelog_scroll = scroll;
     let header_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let active_header = Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(Color::DarkGray);
-    let note_style = Style::default().fg(Color::Gray);
     let mut lines: Vec<Line> = Vec::new();
     for (offset, item) in items.iter().skip(scroll).take(viewport).enumerate() {
         let screen_y = inner.y + offset as u16;
@@ -537,10 +575,7 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
                 lines.push(Line::from(Span::styled(label, style)));
             }
             Item::Blank => lines.push(Line::from(String::new())),
-            Item::Note { line, bullet } => {
-                let style = if *bullet { note_style } else { dim };
-                lines.push(Line::from(Span::styled(line.clone(), style)));
-            }
+            Item::Note { indent, segs } => lines.push(note_line(*indent, segs)),
         }
     }
     frame.render_widget(Paragraph::new(lines), inner);
@@ -565,15 +600,22 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
 fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     enum Item {
         Header { vis_pos: usize, rel_idx: usize },
-        Note { line: String, bullet: bool },
+        Note { indent: usize, segs: Vec<(String, Style)> },
         Blank,
     }
+    let note_style = Style::default().fg(Color::Gray);
+    let dim = Style::default().fg(Color::DarkGray);
     let visible = app.pin_visible_indices();
     let sel = app.pin_selected.min(visible.len().saturating_sub(1));
     app.pin_selected = sel;
 
     let pad = if app.panel_padding { 2 } else { 0 };
-    let width = area.width.saturating_sub(8).clamp(44, 96);
+    let (width, height) = if app.changelog_maximized {
+        // ~90% of the viewport (matches the help modal).
+        (area.width.saturating_mul(9) / 10, area.height.saturating_mul(9) / 10)
+    } else {
+        (area.width.saturating_sub(8).clamp(44, 96), area.height.saturating_sub(4).clamp(10, 40))
+    };
     // Wrap note text to the inner content width so long bullets wrap instead of clipping.
     let inner_width = width.saturating_sub(2 + pad) as usize;
     let wrap_avail = inner_width.saturating_sub(6).max(8);
@@ -583,22 +625,18 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     for (vis_pos, &rel_idx) in visible.iter().enumerate() {
         items.push(Item::Header { vis_pos, rel_idx });
         if vis_pos == sel {
-            let notes = app.pin_releases[rel_idx].notes.clone();
-            for note in &notes {
-                let bullet = note.trim_start().starts_with('-');
-                for (row, sub) in super::preview::wrap_words(note, wrap_avail).into_iter().enumerate() {
-                    let indent = if row > 0 && bullet { "      " } else { "    " };
-                    items.push(Item::Note { line: format!("{indent}{sub}"), bullet });
-                }
+            let notes: Vec<String> = app.pin_releases[rel_idx].notes.clone();
+            let refs: Vec<&str> = notes.iter().map(String::as_str).collect();
+            for (indent, segs) in wrap_release_notes(&refs, note_style, dim, wrap_avail) {
+                items.push(Item::Note { indent, segs });
             }
             if !notes.is_empty() {
                 items.push(Item::Blank);
             }
         }
     }
-    let height = area.height.saturating_sub(4).clamp(10, 40);
     let modal = centered_rect(width, height, area);
-    let (close_line, close_click) = modal_close_button(modal);
+    let (title_buttons, close_click, max_click) = modal_window_buttons(modal, app.changelog_maximized);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     footer.extend(footer_chip("↑↓", " select", HintKey::Char('j')));
     footer.push(footer_sep());
@@ -614,7 +652,7 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(" Pin a version ")
-        .title_top(close_line)
+        .title_top(title_buttons)
         .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
     let inner = block.inner(modal);
     cast_shadow(frame, modal);
@@ -622,6 +660,7 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     frame.render_widget(block, modal);
     app.changelog_area = modal;
     app.changelog_close_click = close_click;
+    app.changelog_maximize_click = max_click;
     app.pin_row_click.clear();
     // The show-older toggle lives in the footer (hint-click), so no body region for it.
     app.pin_toggle_click = None;
@@ -688,9 +727,8 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.changelog_scroll = scroll;
 
     let header_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(Color::DarkGray);
-    let note_style = Style::default().fg(Color::Gray);
     let pin_w = 5u16; // "[pin]"
+    app.pin_header_click.clear();
     let mut lines: Vec<Line> = Vec::new();
     for (offset, item) in items.iter().skip(scroll).take(viewport).enumerate() {
         let screen_y = body.y + offset as u16;
@@ -715,10 +753,13 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 } else {
                     base
                 };
+                let used = UnicodeWidthStr::width(label.as_str()) as u16;
+                // The header label (excluding the [pin] button) is a click target that selects +
+                // expands that release — the accordion behavior.
+                app.pin_header_click.push((screen_y, body.x, body.x + used, *vis_pos));
                 let mut spans = vec![Span::styled(label, style)];
                 // Right-aligned [pin] button (skipped for the running version).
                 if !is_current {
-                    let used = UnicodeWidthStr::width(spans[0].content.as_ref()) as u16;
                     let pin_x = body.x + body.width.saturating_sub(pin_w + 1);
                     let gap = pin_x.saturating_sub(body.x + used).max(1);
                     spans.push(Span::raw(" ".repeat(gap as usize)));
@@ -733,10 +774,7 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 lines.push(Line::from(spans));
             }
             Item::Blank => lines.push(Line::from(String::new())),
-            Item::Note { line, bullet } => {
-                let style = if *bullet { note_style } else { dim };
-                lines.push(Line::from(Span::styled(line.clone(), style)));
-            }
+            Item::Note { indent, segs } => lines.push(note_line(*indent, segs)),
         }
     }
     frame.render_widget(Paragraph::new(lines), body);
