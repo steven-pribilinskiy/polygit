@@ -34,15 +34,16 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     // + direction rides on the sort trigger. Captured for click hit-testing + dropdown anchoring.
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
-    // Top-border triggers, `·`-separated and ordered `filter · sort · columns`: `/ filter` begins the
-    // name filter (reusing the footer command's click machinery), `s sort ⟪col ▲⟫ ▾` and `t cols ▾`
-    // open the sort/columns dropdowns. The maximize button is the rightmost element.
+    // Top-border triggers, `·`-separated and ordered `filter · sort · columns`: `f by-status` arms
+    // the status-filter leader (reusing the footer command's click machinery), `s sort ⟪col ▲⟫ ▾`
+    // and `t cols ▾` open the sort/columns dropdowns. The maximize button is the rightmost element.
+    // (The `/` name filter is left in the status-bar footer where its active needle lives.)
     let cols_text = "t cols ▾";
     let cols_w = cols_text.chars().count() as u16;
     let sort_tag = format!("⟪{} {}⟫", app.sort_column.label(), app.sort_dir.arrow());
     let sort_label = format!(" sort {sort_tag} ▾");
     let sort_w = (1 + sort_label.chars().count()) as u16;
-    let filter_w = 1 + " filter".chars().count() as u16;
+    let filter_w = 1 + " by-status".chars().count() as u16;
     let sep_w = 3u16; // " · "
     let (max_spans, chips_end) =
         max_button_spans(app, Pane::List, area.y, area.x + area.width.saturating_sub(1));
@@ -55,15 +56,10 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let filter_start = filter_end.saturating_sub(filter_w);
     app.list_cols_click = Some((area.y, cols_start, cols_end));
     app.list_sort_click = Some((area.y, sort_start, sort_end));
-    app.clickable.push(ClickRegion {
-        row: area.y,
-        col_start: filter_start,
-        col_end: filter_end,
-        command: Command::NameFilter,
-    });
+    app.list_filter_click = Some((area.y, filter_start, filter_end));
     let chips = Line::from(vec![
-        Span::styled("/", key_style),
-        Span::styled(" filter", label_style),
+        Span::styled("f", key_style),
+        Span::styled(" by-status", label_style),
         Span::styled(" · ", label_style),
         Span::styled("s", key_style),
         Span::styled(sort_label.clone(), label_style),

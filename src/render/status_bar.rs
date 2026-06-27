@@ -279,10 +279,9 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
     let leader = app.pending_leader;
     let modal_open = app.any_modal_open();
     let leader_active = leader.is_some();
-    let leader_trigger = match leader {
-        Some(Leader::Filter) => Some(Command::FilterLeader),
-        _ => None,
-    };
+    // No leader currently owns a footer-chip trigger to pill-highlight (the status filter is a header
+    // dropdown now); kept as a hook for future leaders.
+    let leader_trigger: Option<Command> = None;
     let status_filter = app.status_filter;
     let grouping_on = app.grouping_active();
     let tree_on = app.tree_active();
@@ -347,36 +346,6 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
             Span::raw(format!("{filter_text}\u{2588}")),
             Span::styled(hint_text, Style::default().fg(Color::DarkGray)),
         ])
-    } else if leader == Some(Leader::Filter) {
-        let pick = |on: bool| if on { "●" } else { "○" };
-        let filter_item = |letter: &str, label: &str, filter: StatusFilter| {
-            leader_item(
-                format!("{} ", pick(status_filter == filter)),
-                letter,
-                label.to_string(),
-                Command::SetFilter(filter),
-            )
-        };
-        let mut segments: Vec<(String, Style, Option<Command>)> =
-            vec![("filter: ".to_string(), hint, None)];
-        let entries = [
-            filter_item("a", "all", StatusFilter::All),
-            filter_item("u", "updated", StatusFilter::Updated),
-            filter_item("c", "up-to-date", StatusFilter::UpToDate),
-            filter_item("s", "skipped", StatusFilter::Skipped),
-            filter_item("f", "failed", StatusFilter::Failed),
-            filter_item("i", "issues", StatusFilter::Issues),
-        ];
-        for (index, entry) in entries.into_iter().enumerate() {
-            if index > 0 {
-                segments.push((" · ".to_string(), hint, None));
-            }
-            segments.extend(entry);
-        }
-        segments.push((" · ".to_string(), hint, None));
-        segments.push(("esc".to_string(), key, Some(Command::LeaderCancel)));
-        // No right fragment while a leader menu is up — the menu needs the full row width.
-        compose_status_row(segments, Vec::new(), area, area.y, &mut clickable, hint)
     } else if leader == Some(Leader::View) {
         let pick = |on: bool| if on { "●" } else { "○" };
         let mut segments: Vec<(String, Style, Option<Command>)> =

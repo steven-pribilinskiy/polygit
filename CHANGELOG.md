@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.78.0 — 2026-06-27
+List header filter trigger is now a status-filter **dropdown** (`f by-status`), not the name filter
+- the header's filter trigger is the **status filter** (`f by-status · s sort ▾ · t cols ▾`), not the name filter — pressing `f`, clicking the `f by-status` trigger, or clicking the footer hint opens a **dropdown** matching `s sort` / `t cols`, with radio rows `all` / `updated` / `up-to-date` / `skipped` / `failed` / `issues`. Pick by hover+click, `↑↓`+Enter, or the row's mnemonic letter; the active filter shows a `●` marker.
+- replaces the old two-key `f` leader chord (`Leader::Filter` is gone). The `/` name filter stays in the status-bar footer (with its active `[needle]` tag) and the footer's `{status}` reset tag are both untouched.
+
 ## v2.77.0 — 2026-06-27
 List header gains a filter trigger (filter · sort · columns); declutter the log title
 - **the list pane's top border now leads with a `/ filter` trigger**, in the order `filter · sort · columns` with `·` separators (was `t cols ▾ s sort ▾`). Clicking `/ filter` starts the name filter; sort/columns still open their dropdowns. The footer keeps its `/ filter` (with the active `[needle]` tag) as the live filter indicator.

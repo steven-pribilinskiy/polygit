@@ -709,6 +709,7 @@ impl BasePicker {
 pub enum DropdownKind {
     ListColumns,
     ListSort,
+    ListFilter,
     PageColumns,
     PageSort,
 }
@@ -741,11 +742,10 @@ pub struct Dropdown {
     pub selected: Option<usize>,
 }
 
-/// A pending two-key chord: `f` then a status key picks a status filter; `v` then a key picks a
-/// view mode; `z` then a key folds. (Columns/sort are driven by the header dropdowns, not a chord.)
+/// A pending two-key chord: `v` then a key picks a view mode; `z` then a key folds. (Columns, sort,
+/// and the status filter are driven by the header dropdowns, not a chord.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Leader {
-    Filter,
     /// `v` then a key picks a view mode (`g` grouped, `t` tree).
     View,
     /// `z` then a key folds (`a` toggle, `o`/`c` open/close, `O`/`M`/`R` recursive/all).

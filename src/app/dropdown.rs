@@ -30,6 +30,16 @@ const LIST_SORTS: &[(SortColumn, &str, char)] = &[
     (SortColumn::PulledFiles, "changed", 'g'),
 ];
 
+/// The status-filter options, in dropdown order: `(filter, label, mnemonic)`.
+const LIST_FILTERS: &[(StatusFilter, &str, char)] = &[
+    (StatusFilter::All, "all", 'a'),
+    (StatusFilter::Updated, "updated", 'u'),
+    (StatusFilter::UpToDate, "up-to-date", 'c'),
+    (StatusFilter::Skipped, "skipped", 's'),
+    (StatusFilter::Failed, "failed", 'f'),
+    (StatusFilter::Issues, "issues", 'i'),
+];
+
 /// The toggleable repo-page columns, in dropdown order: `(column, label, mnemonic)`.
 const PAGE_COLS: &[(RepoPageColumn, &str, char)] = &[
     (RepoPageColumn::AheadBehind, "ahead/behind", 'b'),
@@ -90,6 +100,15 @@ impl AppState {
                 .map(|&(sort, label, mnemonic)| DropdownItem {
                     label: label.to_string(),
                     on: self.sort_column == sort,
+                    mnemonic,
+                    enabled: true,
+                })
+                .collect(),
+            DropdownKind::ListFilter => LIST_FILTERS
+                .iter()
+                .map(|&(filter, label, mnemonic)| DropdownItem {
+                    label: label.to_string(),
+                    on: self.status_filter == filter,
                     mnemonic,
                     enabled: true,
                 })
@@ -156,6 +175,7 @@ impl AppState {
         self.dropdown.map_or(0, |dropdown| match dropdown.kind {
             DropdownKind::ListColumns => LIST_COLS.len(),
             DropdownKind::ListSort => LIST_SORTS.len(),
+            DropdownKind::ListFilter => LIST_FILTERS.len(),
             DropdownKind::PageColumns => PAGE_COLS.len(),
             DropdownKind::PageSort => PAGE_SORTS.len(),
         })
@@ -209,6 +229,12 @@ impl AppState {
             DropdownKind::ListSort => {
                 if let Some((sort, ..)) = LIST_SORTS.get(index) {
                     self.set_sort(*sort);
+                }
+                true
+            }
+            DropdownKind::ListFilter => {
+                if let Some((filter, ..)) = LIST_FILTERS.get(index) {
+                    self.set_status_filter(*filter);
                 }
                 true
             }
