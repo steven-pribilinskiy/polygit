@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.76.1 — 2026-06-27
+Settings: flat-layout scrollbar, stable accordion height, fixed theme/Design-tab rows
+- **fix: the flat settings layout clipped overflow with no scrollbar** — on a short terminal the bottom rows (Theming → Tooltips) were cut off and unreachable. Flat now scrolls like the accordion: a draggable scrollbar, wheel/`j`/`k` scrolling, and the selected row is kept in view.
+- **the accordion settings modal no longer resizes when you fold/unfold sections** (a layout shift). It now sizes to the fully-expanded item count (capped at the available height), so its outer size is stable across collapse state while the content folds within it.
+- **fix: a row-index regression from the alphabetical settings reorder** — the Theme row's auto-detect underline landed on the wrong row, and the help **Design** tab's Theme/Background/Contrast/Selection radios were dispatching to Panel-padding/Borders/Pane-splitter/Repo-page-tabs. Both now use the correct rows.
+
 ## v2.76.0 — 2026-06-27
 Window-control buttons (close/maximize), icon-aware glyphs, copy-hotspot fix, alphabetical settings
 - **the repo page's `[esc back]` is now an `esc✕` close button** styled like the maximize/restore controls — a clean window-control row (`m▢`/`m▣` maximize + `esc✕` close).
