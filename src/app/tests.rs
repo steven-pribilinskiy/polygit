@@ -166,7 +166,7 @@
         // Window/focus state also comes from the real state.json — pin it so focus/pane tests are
         // hermetic.
         state.focus = Pane::List;
-        state.repo_page_maximized = false;
+        state.maximized = None;
         state.repo_page = None;
         // Workspace state comes from the real state.json too — pin it for hermetic tests.
         state.workspaces.clear();
@@ -265,12 +265,12 @@
         assert_eq!(state.repo_page, Some(0));
         assert_eq!(state.focus, Pane::RepoPage);
         // Default restored → the page is one of several panels.
-        assert!(!state.repo_page_maximized);
+        assert_ne!(state.maximized, Some(Pane::RepoPage));
         assert!(state.visible_panes().contains(&Pane::RepoPage));
         assert!(state.visible_panes().contains(&Pane::List));
         // Maximized → the page is the sole focusable panel (full-screen).
-        state.toggle_repo_page_maximized();
-        assert!(state.repo_page_maximized);
+        state.toggle_maximized(Pane::RepoPage);
+        assert_eq!(state.maximized, Some(Pane::RepoPage));
         assert_eq!(state.visible_panes(), vec![Pane::RepoPage]);
         // Closing returns focus to the list.
         state.close_repo_page();
@@ -366,13 +366,13 @@
     #[test]
     fn settings_repo_page_row_maps_restored_and_maximized() {
         let mut state = state_named(&["a"]);
-        state.repo_page_maximized = false;
+        state.maximized = None;
         assert_eq!(state.settings_active_option(20), 0, "restored is option 0");
         state.set_setting_option(20, 1);
-        assert!(state.repo_page_maximized);
+        assert_eq!(state.maximized, Some(Pane::RepoPage));
         assert_eq!(state.settings_active_option(20), 1, "maximized is option 1");
         state.set_setting_option(20, 0);
-        assert!(!state.repo_page_maximized);
+        assert_ne!(state.maximized, Some(Pane::RepoPage));
     }
 
     #[test]

@@ -109,6 +109,11 @@ pub struct AppState {
     /// The rect `render_scrollbar` drew the preview scrollbar on (the info-split lower chunk when
     /// the info block is pinned, else the full preview) — for scrollbar click/drag hit-testing.
     pub preview_scroll_area: Rect,
+    /// Info pane ([2]) geometry captured each render so the wheel can scroll it (when the cursor is
+    /// over it) and clamp to the real content, mirroring the preview's `preview_*` fields.
+    pub info_area: Rect,
+    pub info_total: usize,
+    pub info_viewport: usize,
     /// Column of the divider between the panes (= preview_area.x).
     pub divider_col: u16,
     /// True while the user is dragging the pane divider (drives the live drag highlight).
@@ -204,10 +209,11 @@ pub struct AppState {
     pub repo_page_selected: usize,
     /// Whether the repo page uses tabs for branches/worktrees/stashes (persisted).
     pub repo_page_tabs: RepoTabsMode,
-    /// Repo-page window state: maximized (full-screen) vs restored (docked bottom panel). Default
-    /// restored. This is the single source of truth for both the current state and the state a page
-    /// opens in next time (sticky, Windows-like). Persisted.
-    pub repo_page_maximized: bool,
+    /// Which pane (if any) is maximized to fill the screen — the single source of truth for every
+    /// pane's maximize state. `Some(RepoPage)` is the only value that persists (round-tripped via
+    /// the legacy `repo_page_maximized` field, so a repo page still opens maximized when sticky);
+    /// maximizing List/Info/Result is a session-only action. `None` = the normal multi-pane layout.
+    pub maximized: Option<Pane>,
     /// Periodic local branch/status refresh mode (persisted).
     pub branch_check: BranchCheck,
     /// The active repo-page tab (when tabbed). Session-only.
@@ -351,6 +357,9 @@ pub struct AppState {
     pub repo_page_back_click: Option<(u16, u16, u16)>,
     /// The repo page's clickable maximize/restore button on the top border (left of `[esc back]`).
     pub repo_page_window_click: Option<(u16, u16, u16)>,
+    /// Clickable maximize/restore buttons on the List/Info/Result panes' top borders:
+    /// (row, col_start, col_end, pane). Rebuilt each frame; the repo page uses `repo_page_window_click`.
+    pub max_click: Vec<(u16, u16, u16, Pane)>,
     /// The repo page's clickable PR cell on the current-branch row: (row, col_start, col_end, url).
     pub repo_page_pr_click: Option<(u16, u16, u16, String)>,
     /// An open header `[… ▾]` dropdown (columns / sort), the mouse companion to the t/s leaders.
@@ -536,8 +545,9 @@ pub struct AppState {
     pub hover_effects: bool,
     /// Draw borders around the two main panes (persisted, default on).
     pub show_borders: bool,
-    /// Draw the draggable splitter grip between the panes (persisted, default on).
-    pub show_splitter: bool,
+    /// How the pane splitters are presented: a dedicated 1-cell lane vs a thin on-hover grip
+    /// (persisted, default dedicated).
+    pub splitter_mode: SplitterMode,
     /// Pulse changed cells after a pull/refresh (persisted, default on).
     pub changed_row_flash: bool,
     /// Steadily highlight changed cells for the attention window (persisted, default off).
@@ -644,6 +654,9 @@ impl AppState {
             preview_total: 0,
             preview_viewport: 0,
             preview_scroll_area: Rect::default(),
+            info_area: Rect::default(),
+            info_total: 0,
+            info_viewport: 0,
             divider_col: 0,
             divider_dragging: false,
             list_offset: 0,
@@ -694,7 +707,8 @@ impl AppState {
             repo_page_inner: Rect::default(),
             repo_page_selected: 0,
             repo_page_tabs: persisted.repo_page_tabs,
-            repo_page_maximized: persisted.repo_page_maximized,
+            // Only the repo page's maximize is sticky; restore it from the legacy persisted bool.
+            maximized: persisted.repo_page_maximized.then_some(Pane::RepoPage),
             branch_check: persisted.branch_check,
             repo_page_tab: RepoTab::Branches,
             repo_page_tab_click: Vec::new(),
@@ -764,6 +778,7 @@ impl AppState {
             help_area: Rect::default(),
             repo_page_back_click: None,
             repo_page_window_click: None,
+            max_click: Vec::new(),
             repo_page_pr_click: None,
             dropdown: None,
             dropdown_area: Rect::default(),
@@ -868,7 +883,7 @@ impl AppState {
             auto_pull_in_tree: persisted.auto_pull_in_tree,
             hover_effects: persisted.hover_effects,
             show_borders: persisted.show_borders,
-            show_splitter: persisted.show_splitter,
+            splitter_mode: persisted.splitter_mode,
             changed_row_flash: persisted.changed_row_flash,
             changed_row_highlight: persisted.changed_row_highlight,
             tooltips: persisted.tooltips,

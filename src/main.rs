@@ -428,7 +428,7 @@ fn hint_key_event(hint: app::HintKey) -> KeyEvent {
 /// keep the panel pointed at the selected repo. A no-op when the page is maximized, the panel is
 /// focused (so its own keys drive it), or the selection isn't a repo.
 fn maybe_follow_repo_page(app: &mut AppState) {
-    if app.repo_page.is_some() && !app.repo_page_maximized && app.focus == Pane::List {
+    if app.repo_page.is_some() && app.maximized.is_none() && app.focus == Pane::List {
         if let Some(idx) = app.selected_repo_index() {
             app.retarget_repo_page(idx);
         }
@@ -449,6 +449,16 @@ fn wheel_step(modifiers: KeyModifiers, base: usize, page: usize) -> usize {
         base.saturating_mul(5)
     } else {
         base
+    }
+}
+
+/// Map a `1`/`2`/`3`/`4` digit to its pane (stable numbering — see `Pane::number`).
+fn pane_for_digit(digit: char) -> Pane {
+    match digit {
+        '1' => Pane::List,
+        '2' => Pane::Info,
+        '3' => Pane::Result,
+        _ => Pane::RepoPage,
     }
 }
 
@@ -1437,13 +1447,22 @@ async fn run_event_loop(
                     }
                 }
 
+                // Layout-splitter grabs (dock boundary + info/result split) are suppressed while any
+                // overlay is up, so a click on the modal (or the splitter row beneath it) is absorbed
+                // by the modal instead of leaking through to start a resize drag.
+                let overlay_open = app.any_modal_open()
+                    || app.dropdown.is_some()
+                    || app.picker.is_some()
+                    || app.finder.is_some();
+
                 // Dragging the restored panel's top boundary resizes it (a horizontal splitter).
                 // Handled before the repo-page/modal dispatch so a grab on the boundary wins — but
                 // the title-bar buttons live on that same border row, so exclude their columns or
                 // the maximize/restore and `[esc back]` buttons could never be clicked.
-                let on_dock_boundary = app
-                    .dock_divider_row
-                    .is_some_and(|row| mouse.row == row || mouse.row + 1 == row)
+                let on_dock_boundary = !overlay_open
+                    && app
+                        .dock_divider_row
+                        .is_some_and(|row| mouse.row == row || mouse.row + 1 == row)
                     && !app.title_button_hit(mouse.column, mouse.row);
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) if on_dock_boundary => {
@@ -1465,9 +1484,10 @@ async fn run_event_loop(
 
                 // Dragging the info/result boundary inside the preview resizes the two panels (a
                 // horizontal splitter within the right pane). Only over the preview pane's columns.
-                let on_preview_split = app.preview_divider_row.is_some_and(|row| {
-                    (mouse.row == row || mouse.row + 1 == row) && mouse.column >= app.divider_col
-                });
+                let on_preview_split = !overlay_open
+                    && app.preview_divider_row.is_some_and(|row| {
+                        (mouse.row == row || mouse.row + 1 == row) && mouse.column >= app.divider_col
+                    });
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) if on_preview_split => {
                         dragging_preview_split = true;
@@ -1518,6 +1538,18 @@ async fn run_event_loop(
                         }
                     }
                     _ => {}
+                }
+
+                // Pane maximize/restore buttons (the `m▢`/`m▣` on the List/Info/Result top borders) —
+                // handled before the per-view gates so a click works in any layout. The repo page's
+                // own maximize button is handled in its mouse block (repo_page_window_click).
+                if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                    if let Some(&(.., pane)) = app.max_click.iter().find(|&&(row, start, end, _)| {
+                        mouse.row == row && mouse.column >= start && mouse.column < end
+                    }) {
+                        app.toggle_maximized(pane);
+                        continue;
+                    }
                 }
 
                 // Folder picker: footer hints inject keys; [x]/outside cancel; a breadcrumb navigates;
@@ -1625,7 +1657,7 @@ async fn run_event_loop(
                         // A click on the restored panel's footer acts on panel [4]: focus it first so
                         // the injected key reaches the repo-page handler (not the list).
                         if app.repo_page.is_some()
-                            && !app.repo_page_maximized
+                            && app.maximized.is_none()
                             && point_in(app.dock_rect, mouse.column, mouse.row)
                         {
                             app.focus = Pane::RepoPage;
@@ -2057,7 +2089,7 @@ async fn run_event_loop(
                 // list/preview so the restored panel is master-detail (panel [4]).
                 let in_repo_page = app.repo_page.is_some()
                     && !app.show_help
-                    && (app.repo_page_maximized
+                    && (app.maximized == Some(Pane::RepoPage)
                         || point_in(app.dock_rect, mouse.column, mouse.row));
                 if in_repo_page {
                     match mouse.kind {
@@ -2095,7 +2127,7 @@ async fn run_event_loop(
                                 })
                                 .map(|(_, _, _, url)| url.clone());
                             if region_hit(app.repo_page_window_click, mouse.column, mouse.row) {
-                                app.toggle_repo_page_maximized();
+                                app.toggle_maximized(Pane::RepoPage);
                             } else if region_hit(app.repo_page_back_click, mouse.column, mouse.row) {
                                 app.close_repo_page();
                             } else if let Some((row, _, end)) =
@@ -2439,6 +2471,15 @@ async fn run_event_loop(
                             } else {
                                 app.scroll_list(-WHEEL_LIST_STEP, viewport);
                             }
+                        } else if point_in(app.info_area, mouse.column, mouse.row)
+                            && app.info_total > app.info_viewport
+                        {
+                            // Cursor over the info pane ([2]): scroll it, not the log below.
+                            let step = wheel_step(mouse.modifiers, 3, app.info_viewport);
+                            if let Some(repo_idx) = app.selected_repo_index() {
+                                let mut state = app.repos[repo_idx].lock().unwrap();
+                                state.info_scroll = state.info_scroll.saturating_sub(step);
+                            }
                         } else if let Some(repo_idx) = app.selected_repo_index() {
                             let step = wheel_step(mouse.modifiers, 3, app.preview_viewport);
                             let mut state = app.repos[repo_idx].lock().unwrap();
@@ -2454,6 +2495,15 @@ async fn run_event_loop(
                                 app.ensure_list_selection_visible(viewport);
                             } else {
                                 app.scroll_list(WHEEL_LIST_STEP, viewport);
+                            }
+                        } else if point_in(app.info_area, mouse.column, mouse.row)
+                            && app.info_total > app.info_viewport
+                        {
+                            let step = wheel_step(mouse.modifiers, 3, app.info_viewport);
+                            let max_scroll = app.info_total.saturating_sub(app.info_viewport);
+                            if let Some(repo_idx) = app.selected_repo_index() {
+                                let mut state = app.repos[repo_idx].lock().unwrap();
+                                state.info_scroll = (state.info_scroll + step).min(max_scroll);
                             }
                         } else if let Some(repo_idx) = app.selected_repo_index() {
                             // Clamp to the real content (works for log AND diff views) so wheel-up
@@ -3189,10 +3239,7 @@ async fn run_event_loop(
                 // Dedicated repo page: navigate branches/worktrees and act on the selected row.
                 // Restored, this only takes keys when panel [4] holds focus — otherwise keys drive
                 // the list/preview (master-detail). Maximized, it's the only panel, so it always wins.
-                if app.repo_page.is_some()
-                    && !app.show_help
-                    && (app.repo_page_maximized || app.focus == Pane::RepoPage)
-                {
+                if app.repo_page.is_some() && !app.show_help && app.active_pane() == Pane::RepoPage {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
@@ -3203,7 +3250,7 @@ async fn run_event_loop(
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
                         // `m` maximizes / restores the page (Windows-style window control).
-                        KeyCode::Char('m') => app.toggle_repo_page_maximized(),
+                        KeyCode::Char('m') => app.toggle_maximized(Pane::RepoPage),
                         // `?` opens help (the overlay shows the repo-page hotkeys).
                         KeyCode::Char('?') => app.open_help(),
                         // `,` opens settings (handled by the early gate next iteration).
@@ -3351,6 +3398,12 @@ async fn run_event_loop(
                                     continue;
                                 }
                             }
+                        }
+                        // `1`/`2`/`3`/`4` jump to a pane (so the repo page isn't a focus trap). When a
+                        // pane is maximized, this swaps which pane is maximized; otherwise it moves
+                        // focus. Unavailable targets are a no-op. (Shared with the main-view handler.)
+                        KeyCode::Char(digit @ ('1' | '2' | '3' | '4')) => {
+                            app.focus_or_maximize_pane(pane_for_digit(digit));
                         }
                         _ => {}
                     }
@@ -3652,10 +3705,10 @@ async fn run_event_loop(
                     (KeyCode::Tab, _) => app.cycle_focus(true),
                     (KeyCode::BackTab, _) => app.cycle_focus(false),
                     // `1`-`4`: focus the list / info / result / repo-page panel directly (lazygit-style).
-                    (KeyCode::Char('1'), _) => app.focus_pane(Pane::List),
-                    (KeyCode::Char('2'), _) => app.focus_pane(Pane::Info),
-                    (KeyCode::Char('3'), _) => app.focus_pane(Pane::Result),
-                    (KeyCode::Char('4'), _) => app.focus_pane(Pane::RepoPage),
+                    // Jump to a pane; when one is maximized this swaps which pane is maximized.
+                    (KeyCode::Char(digit @ ('1' | '2' | '3' | '4')), _) => {
+                        app.focus_or_maximize_pane(pane_for_digit(digit));
+                    }
 
                     // Space: collapse/expand a selected group header, else toggle the Result
                     // preview overlay (temporary switch).
@@ -3730,9 +3783,14 @@ async fn run_event_loop(
                     // Filter
                     (KeyCode::Char('/'), _) => app.begin_filter_input(),
 
-                    // Favorite the selected repo (★); `M` toggles the favorites-first pinned section.
-                    (KeyCode::Char('m'), _) => app.toggle_selected_favorite(),
-                    (KeyCode::Char('M'), _) => app.toggle_favorites_first(),
+                    // `m` maximizes / restores the focused pane (every pane; consistent with the
+                    // repo page). Favorite moved to `b` (★), favorites-first to `B`.
+                    (KeyCode::Char('m'), _) => {
+                        let pane = app.active_pane();
+                        app.toggle_maximized(pane);
+                    }
+                    (KeyCode::Char('b'), _) => app.toggle_selected_favorite(),
+                    (KeyCode::Char('B'), _) => app.toggle_favorites_first(),
 
                     // Open the fuzzy finder overlay (jump to any repo across all folders).
                     (KeyCode::Char('P'), _) => app.open_finder(),

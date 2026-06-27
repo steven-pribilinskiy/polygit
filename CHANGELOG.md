@@ -3,6 +3,25 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.75.0 — 2026-06-27
+Every pane is maximizeable · dedicated splitter lanes · docked-pane hover fix · scrollbar hardening
+- **every pane maximizes now, not just the repo page.** `m` (or the new `m▢`/`m▣` button on each pane's top border) maximizes/restores the focused pane — list `[1]`, info `[2]`, result `[3]`, or repo page `[4]` — and `1`/`2`/`3`/`4` swap which pane fills the screen while one is maximized. Unified behind a single `maximized: Option<Pane>`; only the repo page's maximize stays sticky (persisted), the others are session-only. **Favorite toggle moved off `m` → `b`, and favorites-first off `M` → `B`** to free `m` for maximize across every pane.
+- **fix: the docked repo page killed hover effects on the other panes.** With panel `[4]` docked, hovering a list row / info link / result was dead because `apply_hover` only inspected the repo-page regions. Hover now follows the cursor across whichever panes are visible (independent of focus), gated by which pane is maximized so stale geometry can't false-match.
+- **pane splitters are now a setting (Settings → Layout → Pane splitter).** **Dedicated** (default) reserves a visible 1-cell lane between panes — a column for list|preview, a row for the dock and info/result splits — filled with a persistent `▒` grip; **on hover** keeps the panes flush and shows only a thin grip (`▏` vertical, `▁` horizontal) under the cursor at a hotspot. (Replaces the old on/off "Splitter" toggle.)
+- **scrollbar hardening:** registering a scrollbar's draggable hit is now folded into `render_scrollbar`, so a scrollbar can't be drawn without being draggable. This fixed two more decorative scrollbars found in the audit — the **build-info modal** and the **version picker** — and makes the whole class of bug impossible.
+
+## v2.74.1 — 2026-06-27
+Mouse fixes: list scrollbar drag, info-pane scrolling, splitters under modals
+- **fix: dragging the repo-list scrollbar started a splitter drag instead of scrolling.** The list scrollbar was decorative — it registered no draggable region, so a mousedown on it (it sits on the list's right edge, inside the pane divider's grab band) was claimed by the splitter. The list now registers a real scrollbar hit (like the preview/diff/repo-page do), and the scrollbar grab is tested before the divider, so a grab on it scrolls the list and highlights while dragged.
+- **fix: the info pane ([2]) couldn't scroll.** Its scrollbar was hardcoded to offset 0 with no draggable region, so when the info content overflowed (long PR titles, many worktrees/stashes) the bottom was clipped and unreachable — the wheel scrolled the log below instead. The info pane now scrolls by wheel (when the cursor is over it) and by dragging its scrollbar, with a per-repo offset.
+- **fix: clicks leaked through an open modal to the layout splitters.** With Settings (or any modal/overlay) open over the docked repo page, a mousedown on the dock boundary or the info/result split started a resize drag instead of being absorbed by the modal. Splitter grabs are now suppressed while any overlay is up.
+
+## v2.74.0 — 2026-06-27
+Repo page (panel [4]): pane switching, docked modals, single focus-aware footer
+- **`1`/`2`/`3`/`4` now switch panels from inside the repo page** — it was a focus trap (the keys were swallowed before the main-view handler ran). From a maximized page, `1`/`2`/`3` restore the panel layout first so the target panel is visible; `4` keeps the page focused.
+- **fix: diff / copy / base-picker modals never appeared when opened from the docked repo page** (double-click or Enter/Space on a stash/dirty row, `y`, `b`). They opened in state but were never drawn — only the maximized page's render path drew them. The docked path now draws them too.
+- **the footer is single and focus-aware** — instead of showing the repo-page keys *and* the main-view footer at once, the status bar now shows only the focused panel's keys: repo-page keys while panel `[4]` is focused, the main-view footer while a list panel is focused. The repo page keeps its own border footer only when maximized.
+
 ## v2.73.1 — 2026-06-26
 Changelog / version-picker: the wheel scrolls freely again
 - **fix: you couldn't scroll up past the selected release** in the Changelog / What's New / version-picker modal — every render snapped the selected (or just-expanded) release back into view, fighting the wheel. Scroll is now decoupled from selection (web-app style, like the main list): the wheel and PageUp/Down scroll freely, and only a keyboard selection move or an expand/collapse snaps the selection into view (once).

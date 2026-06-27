@@ -330,7 +330,8 @@ impl AppState {
             tree_enabled: self.tree_enabled,
             collapsed_folders,
             repo_page_tabs: self.repo_page_tabs,
-            repo_page_maximized: self.repo_page_maximized,
+            // Only the repo page's maximize is sticky; other panes' maximize is session-only.
+            repo_page_maximized: self.maximized == Some(Pane::RepoPage),
             branch_check: self.branch_check,
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
@@ -340,7 +341,7 @@ impl AppState {
             auto_pull_in_tree: self.auto_pull_in_tree,
             hover_effects: self.hover_effects,
             show_borders: self.show_borders,
-            show_splitter: self.show_splitter,
+            splitter_mode: self.splitter_mode,
             changed_row_flash: self.changed_row_flash,
             changed_row_highlight: self.changed_row_highlight,
             tooltips: self.tooltips,
@@ -672,12 +673,16 @@ impl AppState {
             (16, 1) => self.panel_padding = false,
             (17, 0) => self.show_borders = true,
             (17, 1) => self.show_borders = false,
-            (18, 0) => self.show_splitter = true,
-            (18, 1) => self.show_splitter = false,
+            (18, 0) => self.splitter_mode = SplitterMode::Dedicated,
+            (18, 1) => self.splitter_mode = SplitterMode::Hover,
             (19, 0) => self.repo_page_tabs = RepoTabsMode::Off,
             (19, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
-            (20, 0) => self.repo_page_maximized = false,
-            (20, 1) => self.repo_page_maximized = true,
+            (20, 0) => {
+                if self.maximized == Some(Pane::RepoPage) {
+                    self.maximized = None;
+                }
+            }
+            (20, 1) => self.maximized = Some(Pane::RepoPage),
             (21, 0) => self.branch_check = BranchCheck::Off,
             (21, 1) => self.branch_check = BranchCheck::Auto,
             (22, 0) => self.tooltips.set_all(true),
@@ -753,12 +758,15 @@ impl AppState {
             15 => usize::from(!self.changed_row_highlight),
             16 => usize::from(!self.panel_padding),
             17 => usize::from(!self.show_borders),
-            18 => usize::from(!self.show_splitter),
+            18 => match self.splitter_mode {
+                SplitterMode::Dedicated => 0,
+                SplitterMode::Hover => 1,
+            },
             19 => match self.repo_page_tabs {
                 RepoTabsMode::Off => 0,
                 RepoTabsMode::Auto => 1,
             },
-            20 => usize::from(self.repo_page_maximized),
+            20 => usize::from(self.maximized == Some(Pane::RepoPage)),
             21 => match self.branch_check {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
@@ -864,9 +872,9 @@ impl AppState {
         self.changed_row_highlight = false;
         self.panel_padding = false;
         self.show_borders = true;
-        self.show_splitter = true;
+        self.splitter_mode = SplitterMode::Dedicated;
         self.repo_page_tabs = RepoTabsMode::Off;
-        self.repo_page_maximized = false;
+        self.maximized = None;
         self.branch_check = BranchCheck::Off;
         self.tooltips = TooltipPrefs::default();
         self.claude_agent = ClaudeAgent::default();
@@ -1026,6 +1034,17 @@ impl AppState {
     /// selection changed (so the caller can reload that file's diff).
     pub fn apply_scroll(&mut self, kind: ScrollKind, value: usize) -> bool {
         match kind {
+            ScrollKind::List => {
+                // Scroll the list view independently of the selection (render clamps to range).
+                self.list_scroll = value;
+                false
+            }
+            ScrollKind::Info => {
+                if let Some(idx) = self.selected_repo_index() {
+                    self.repos[idx].lock().unwrap().info_scroll = value;
+                }
+                false
+            }
             ScrollKind::Preview => {
                 if let Some(idx) = self.selected_repo_index() {
                     let mut state = self.repos[idx].lock().unwrap();
@@ -1065,6 +1084,10 @@ impl AppState {
             }
             ScrollKind::Changelog => {
                 self.changelog_scroll = value;
+                false
+            }
+            ScrollKind::BuildInfo => {
+                self.build_info_scroll = value;
                 false
             }
         }

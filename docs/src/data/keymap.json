@@ -188,11 +188,12 @@
           "3",
           "4"
         ],
-        "action": "Focus the list / info / result / repo-page panel directly",
+        "action": "Focus the list / info / result / repo-page panel directly — or, when a pane is maximized, swap which pane is maximized",
         "keywords": [
           "panel",
           "pane",
-          "focus"
+          "focus",
+          "maximize"
         ]
       },
       {
@@ -522,6 +523,18 @@
         "keys": [
           "m"
         ],
+        "action": "Maximize / restore the focused pane (every pane; also the m▢/m▣ top-border button)",
+        "keywords": [
+          "maximize",
+          "restore",
+          "full-screen",
+          "zoom"
+        ]
+      },
+      {
+        "keys": [
+          "b"
+        ],
         "action": "Toggle the selected repo as a favorite (★)",
         "keywords": [
           "favorite",
@@ -532,7 +545,7 @@
       },
       {
         "keys": [
-          "M"
+          "B"
         ],
         "action": "Toggle the ★ Favorites section pinned to the top of the list",
         "keywords": [
@@ -770,6 +783,22 @@
           "l"
         ],
         "action": "Open lazygit in the row's path"
+      },
+      {
+        "keys": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "action": "Focus the list / info / result / repo-page panel directly (or swap which pane is maximized)",
+        "note": "same as the repo list — switches panels without leaving the page; when a pane is maximized, swaps which pane fills the screen",
+        "keywords": [
+          "focus",
+          "panel",
+          "pane",
+          "switch"
+        ]
       },
       {
         "keys": [

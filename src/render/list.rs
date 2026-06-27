@@ -38,20 +38,26 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let sort_tag = format!("⟪{} {}⟫", app.sort_column.label(), app.sort_dir.arrow());
     let sort_label = format!(" sort {sort_tag} ▾");
     let sort_text_len = 1 + sort_label.chars().count();
+    // The maximize/restore button is the rightmost top-border element; the cols/sort chips sit to its
+    // left (their click columns shift left by the button width + a 1-col gap, tracked by `chips_end`).
+    let (max_spans, chips_end) =
+        max_button_spans(app, Pane::List, area.y, area.x + area.width.saturating_sub(1));
+    let sort_start = chips_end.saturating_sub(sort_text_len as u16);
+    let cols_end = sort_start.saturating_sub(1);
+    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
+    app.list_sort_click = Some((area.y, sort_start, chips_end));
+    app.list_cols_click = Some((area.y, cols_start, cols_end));
     let chips = Line::from(vec![
         Span::styled("t", key_style),
         Span::styled(" cols ▾", label_style),
         Span::raw(" "),
         Span::styled("s", key_style),
         Span::styled(sort_label.clone(), label_style),
+        Span::raw(" "),
+        max_spans[0].clone(),
+        max_spans[1].clone(),
     ])
     .right_aligned();
-    let right_end = area.x + area.width.saturating_sub(1);
-    let sort_start = right_end.saturating_sub(sort_text_len as u16);
-    let cols_end = sort_start.saturating_sub(1);
-    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
-    app.list_sort_click = Some((area.y, sort_start, right_end));
-    app.list_cols_click = Some((area.y, cols_start, cols_end));
     let block = Block::default()
         .title(title)
         .title_top(chips)
@@ -59,7 +65,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(app.focus == Pane::List, modal_open));
+        .border_style(pane_border_style(app.active_pane() == Pane::List, modal_open));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -485,7 +491,8 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         width: area.width,
         height: rows_area.height,
     };
-    render_scrollbar(frame, scrollbar_area, scroll, total_items, viewport, false);
+    // Registers a draggable List hit (so a grab scrolls the list instead of the divider beside it).
+    render_scrollbar(frame, app, scrollbar_area, scroll, total_items, viewport, ScrollKind::List);
 
     // Capture clickable PR-cell regions: for each visible repo with an open PR, the `#N` cell's
     // screen row + the PR column's x-range (taken from the header) opens the PR in the browser.

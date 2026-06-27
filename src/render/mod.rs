@@ -13,7 +13,7 @@ use crate::app::{
     AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, DiffView,
     DropdownKind, HelpTab, HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow,
     PageRowKind, Pane, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit,
-    ScrollKind, SortColumn, SortDir, StatusFilter,
+    ScrollKind, SortColumn, SortDir, SplitterMode, StatusFilter,
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
@@ -54,6 +54,25 @@ fn pane_border_style(active: bool, modal_open: bool) -> Style {
     } else {
         Style::default().fg(Color::DarkGray)
     }
+}
+
+/// Build the compact maximize/restore button (`m▢` maximize / `m▣` restore) for `pane` — a keycap
+/// `m` plus a window-control glyph — and register its 2-cell click region ending at `right_end`
+/// (exclusive) on `row`. Returns the two spans (place them rightmost on the pane's top border) and
+/// the column just left of the button (with a 1-col gap) for any chips a caller right-aligns to its
+/// left. Every pane gets one, so maximize has a consistent click affordance + the `m` key is shown.
+fn max_button_spans(
+    app: &mut AppState,
+    pane: Pane,
+    row: u16,
+    right_end: u16,
+) -> ([Span<'static>; 2], u16) {
+    let glyph = if app.maximized == Some(pane) { "▣" } else { "▢" };
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let start = right_end.saturating_sub(2);
+    app.max_click.push((row, start, right_end, pane));
+    ([Span::styled("m", key), Span::styled(glyph, dim)], start.saturating_sub(1))
 }
 
 /// Title style for the main panes: dim while a modal overlays them, so the background chrome
@@ -407,73 +426,86 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         }
-    } else if app.repo_page.is_some() {
-        // The `t cols ▾` / `s sort ▾` top-border triggers get the button hover tint, mirroring the
-        // main list header's chips (same machinery, same look).
-        if let Some((row, start, end)) = app
-            .page_cols_click
-            .filter(|&(r, s, e)| contains(r, s, e))
-            .or_else(|| app.page_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
+    } else {
+        // No modal: hover follows the cursor across whatever panes rendered this frame (it's
+        // independent of focus — so the docked repo page no longer kills the list/info/result
+        // hovers). Each pane's regions are gated by whether that pane is actually visible: a
+        // maximized pane hides the others, whose click vecs would otherwise hold stale geometry.
+        // `max_click`, `hint_click`, and the scrollbar are cleared every frame, so they're always
+        // safe to check. Regions are position-disjoint, so the first containing the cursor wins.
+        let max = app.maximized;
+        let repo_visible = app.repo_page.is_some() && max.is_none_or(|pane| pane == Pane::RepoPage);
+        let list_visible = max.is_none_or(|pane| pane == Pane::List);
+        let right_visible = max.is_none_or(|pane| matches!(pane, Pane::Info | Pane::Result));
+
+        // Gated button regions (precomputed so the else-if chain stays flat — no let-chains).
+        let repo_button = repo_visible
+            .then(|| {
+                app.page_cols_click
+                    .filter(|&(r, s, e)| contains(r, s, e))
+                    .or_else(|| app.page_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| app.repo_page_window_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| app.repo_page_back_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| {
+                        app.repo_page_tab_click
+                            .iter()
+                            .find(|&&(r, s, e, _)| contains(r, s, e))
+                            .map(|&(r, s, e, _)| (r, s, e))
+                    })
+                    .or_else(|| {
+                        app.repo_page_sort_click
+                            .iter()
+                            .find(|&&(r, s, e, _)| contains(r, s, e))
+                            .map(|&(r, s, e, _)| (r, s, e))
+                    })
+                    .or_else(|| {
+                        app.base_cell_click
+                            .iter()
+                            .find(|&&(r, s, e, _)| contains(r, s, e))
+                            .map(|&(r, s, e, _)| (r, s, e))
+                    })
+            })
+            .flatten();
+        let list_button = list_visible
+            .then(|| {
+                app.list_cols_click
+                    .filter(|&(r, s, e)| contains(r, s, e))
+                    .or_else(|| app.list_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
+            })
+            .flatten();
+        let header_col = if list_visible { app.header_sort_at(hcol, hrow) } else { None };
+        let info_button = if right_visible {
+            app.info_click.iter().find(|&&(r, s, e, _)| contains(r, s, e)).map(|&(r, s, e, _)| (r, s, e))
+        } else {
+            None
+        };
+        let pr_hit = if list_visible {
+            app.pr_cell_click.iter().find(|&&(r, s, e, _)| contains(r, s, e)).map(|&(r, s, e, _)| (r, s, e))
+        } else {
+            None
+        };
+        let repo_row = if repo_visible {
+            app.repo_page_click.iter().find(|&&(row, _)| row == hrow).map(|&(_, idx)| idx)
+        } else {
+            None
+        };
+        let list_row = if list_visible { app.list_selection_at(hcol, hrow) } else { None };
+
+        if let Some(&(row, start, end, _)) =
+            app.max_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
-            button_hits.push(row_rect(row, start, end));
-        } else if let Some(&(row, start, end, _)) =
-            app.repo_page_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
-        {
-            button_hits.push(row_rect(row, start, end));
-        } else if let Some(&(row, start, end, _)) =
-            app.repo_page_sort_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
-        {
-            button_hits.push(row_rect(row, start, end));
-        } else if let Some(&(row, start, end, _)) =
-            app.base_cell_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
-        {
+            // A pane's maximize/restore button (List/Info/Result top border).
             button_hits.push(row_rect(row, start, end));
         } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
-        } else if let Some((row, start, end)) =
-            app.repo_page_window_click.filter(|&(r, s, e)| contains(r, s, e))
-        {
+        } else if let Some((row, start, end)) = repo_button {
             button_hits.push(row_rect(row, start, end));
-        } else if let Some((row, start, end)) =
-            app.repo_page_back_click.filter(|&(r, s, e)| contains(r, s, e))
-        {
+        } else if let Some((row, start, end)) = list_button {
             button_hits.push(row_rect(row, start, end));
-        } else if let Some(scroll) =
-            scrollbar_col_hit()
-        {
-            hits.push(scroll);
-        } else if let Some(&(_, sel_index)) =
-            app.repo_page_click.iter().find(|&&(row, _)| row == hrow)
-        {
-            // A selectable body row (branch / worktree / stash) — tint it like the main list: a
-            // soft wash, or the deeper selection tint when it's also the selected row.
-            let rect = Rect {
-                x: app.repo_page_inner.x,
-                y: hrow,
-                width: app.repo_page_inner.width,
-                height: 1,
-            };
-            if sel_index == app.repo_page_selected {
-                strong_hits.push(rect);
-            } else {
-                hits.push(rect);
-            }
-        }
-    } else {
-        // Main two-pane view. (Footer status-bar commands are handled by the top-level check above.)
-        // The `t cols ▾` / `s sort ▾` header trigger chips get the button hover tint (mirrors their
-        // click regions in main.rs — start inclusive, end exclusive).
-        if let Some((row, start, end)) = app
-            .list_cols_click
-            .filter(|&(r, s, e)| contains(r, s, e))
-            .or_else(|| app.list_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
-        {
-            button_hits.push(row_rect(row, start, end));
-        } else if let Some(column) = app.header_sort_at(hcol, hrow) {
-            // A sortable list column header cell — highlight it across the header's rows (a wide,
-            // multi-row cell reads better tinted than reverse-video).
+        } else if let Some(column) = header_col {
+            // A sortable list column header cell — highlight it across the header's rows.
             if let Some(&(start, end, _)) =
                 app.header_click.iter().find(|&&(s, e, c)| c == column && hcol >= s && hcol < e)
             {
@@ -482,30 +514,29 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                     hits.push(row_rect(row, start, end));
                 }
             }
-        } else if let Some(&(row, start, end, _)) =
-            app.info_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
-        {
+        } else if let Some((row, start, end)) = info_button {
             button_hits.push(row_rect(row, start, end));
-        } else if let Some((row, start, end)) = app
-            .pr_cell_click
-            .iter()
-            .find(|(r, s, e, _)| contains(*r, *s, *e))
-            .map(|&(row, start, end, _)| (row, start, end))
-        {
+        } else if let Some((row, start, end)) = pr_hit {
             button_hits.push(row_rect(row, start, end));
-        } else if let Some(scroll) =
-            scrollbar_col_hit()
-        {
+        } else if let Some(scroll) = scrollbar_col_hit() {
             hits.push(scroll);
-        } else if (i32::from(hcol) - i32::from(app.divider_col)).abs() <= 1
+        } else if let Some(sel_index) = repo_row {
+            // A selectable repo-page body row (branch / worktree / stash).
+            let rect =
+                Rect { x: app.repo_page_inner.x, y: hrow, width: app.repo_page_inner.width, height: 1 };
+            if sel_index == app.repo_page_selected {
+                strong_hits.push(rect);
+            } else {
+                hits.push(rect);
+            }
+        } else if max.is_none()
+            && (i32::from(hcol) - i32::from(app.divider_col)).abs() <= 1
             && hrow >= app.main_area.y
             && hrow < app.main_area.y + app.main_area.height
         {
             hits.push(Rect { x: app.divider_col, y: app.main_area.y, width: 1, height: app.main_area.height });
-        } else if let Some(idx) = app.list_selection_at(hcol, hrow) {
-            // Any selectable list row — repo/group/folder rows plus the Result/Errors summary
-            // rows. Hovering the *selected* row gets the stronger tint so it stays distinct
-            // instead of washing out.
+        } else if let Some(idx) = list_row {
+            // Any selectable list row — repo/group/folder rows plus the Result/Errors summary rows.
             let rect = Rect {
                 x: app.list_area.x,
                 y: hrow,
@@ -735,10 +766,12 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     app.scroll_hits.clear();
     app.clickable.clear();
     app.hint_click.clear();
+    app.max_click.clear();
 
-    // A maximized repo page is full-screen and replaces the normal layout. A restored one falls
-    // through to render as a docked bottom panel below the two panes (panel [4]).
-    if app.repo_page.is_some() && app.repo_page_maximized {
+    // A maximized repo page is full-screen and replaces the normal layout (it carries its own
+    // border footer, so — unlike the other panes — it returns early with no status bar). A restored
+    // one falls through to render as a docked bottom panel below the two panes (panel [4]).
+    if app.maximized == Some(Pane::RepoPage) && app.repo_page.is_some() {
         app.dock_rect = Rect::default();
         render_repo_page(frame, app, area, tick);
         render_throttle_banner(frame, app, area);
@@ -791,63 +824,111 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     let full_main_area = vertical_chunks[0];
     let status_bar_area = vertical_chunks[1];
 
-    // Docked repo page: carve a bottom panel off the main area; the two panes share what's left.
-    // The boundary is a draggable horizontal splitter (height = dock_ratio of the main area).
     app.dock_full_area = full_main_area;
     app.dock_divider_row = None;
     app.dock_rect = Rect::default();
-    let dock_area = if app.repo_page.is_some() && !app.repo_page_maximized {
-        let dock_height = (f64::from(full_main_area.height) * app.dock_ratio).round() as u16;
-        let dock_height = dock_height.clamp(6, full_main_area.height.saturating_sub(6).max(6));
-        let split = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(dock_height)])
-            .split(full_main_area);
-        app.dock_divider_row = Some(split[1].y);
-        Some((split[0], split[1]))
-    } else {
-        None
+
+    // A maximized main pane (List/Info/Result) fills the whole main area; the 3-row status bar still
+    // shows beneath it (its commands describe these panes), so unlike the repo page this isn't an
+    // early return. `divider_col` is parked off-screen-edge so wheel/click routing treats the whole
+    // area as that pane's side.
+    let max_main = match app.maximized {
+        Some(pane) if pane != Pane::RepoPage && app.is_pane_available(pane) => Some(pane),
+        _ => None,
     };
-    let main_area = dock_area.map_or(full_main_area, |(top, _)| top);
+    if let Some(pane) = max_main {
+        app.main_area = full_main_area;
+        if pane == Pane::List {
+            app.list_area = full_main_area;
+            app.preview_area = Rect::default();
+            app.divider_col = full_main_area.x.saturating_add(full_main_area.width);
+            let list_offset = render_list(frame, app, full_main_area, tick);
+            app.list_offset = list_offset;
+        } else {
+            // Info or Result — render_preview shows only the maximized sub-pane.
+            app.list_area = Rect::default();
+            app.preview_area = full_main_area;
+            app.divider_col = full_main_area.x;
+            render_preview(frame, app, full_main_area, tick);
+        }
+    } else {
+        // In "dedicated" splitter mode each boundary gets a real 1-cell lane (a row for the dock /
+        // info-result splits, a column for the list/preview split) that render_divider fills with a
+        // persistent grip; in "hover" mode the panes stay flush and the grip only shows under the
+        // cursor. The lane steals one cell, so the panes are laid out against the reduced extent.
+        let dedicated = app.splitter_mode == SplitterMode::Dedicated;
 
-    // Split main area horizontally using the adjustable ratio.
-    let left_width = ((f64::from(main_area.width)) * app.split_ratio).round() as u16;
-    let left_width = left_width.clamp(1, main_area.width.saturating_sub(1).max(1));
-    let horizontal_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(left_width), Constraint::Min(0)])
-        .split(main_area);
+        // Docked repo page: carve a bottom panel off the main area; the boundary is a draggable
+        // horizontal splitter (height = dock_ratio of the main area).
+        let dock_area = if app.repo_page.is_some() {
+            let dock_height = (f64::from(full_main_area.height) * app.dock_ratio).round() as u16;
+            let dock_height = dock_height.clamp(6, full_main_area.height.saturating_sub(6).max(6));
+            let constraints = if dedicated {
+                vec![Constraint::Min(0), Constraint::Length(1), Constraint::Length(dock_height)]
+            } else {
+                vec![Constraint::Min(0), Constraint::Length(dock_height)]
+            };
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(constraints)
+                .split(full_main_area);
+            let dock = *split.last().unwrap();
+            // The hotspot/lane row: the dedicated lane (split[1]) or the dock's top border row.
+            app.dock_divider_row = Some(if dedicated { split[1].y } else { dock.y });
+            Some((split[0], dock))
+        } else {
+            None
+        };
+        let main_area = dock_area.map_or(full_main_area, |(top, _)| top);
 
-    let list_area = horizontal_chunks[0];
-    let preview_area = horizontal_chunks[1];
+        // Split main area horizontally using the adjustable ratio (against the width left after the
+        // dedicated lane, if any).
+        let avail = if dedicated { main_area.width.saturating_sub(1) } else { main_area.width };
+        let left_width = ((f64::from(avail)) * app.split_ratio).round() as u16;
+        let left_width = left_width.clamp(1, avail.saturating_sub(1).max(1));
+        let constraints = if dedicated {
+            vec![Constraint::Length(left_width), Constraint::Length(1), Constraint::Min(0)]
+        } else {
+            vec![Constraint::Length(left_width), Constraint::Min(0)]
+        };
+        let horizontal_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(constraints)
+            .split(main_area);
 
-    // Capture geometry for mouse hit-testing in the event loop.
-    app.main_area = main_area;
-    app.list_area = list_area;
-    app.preview_area = preview_area;
-    app.divider_col = preview_area.x;
+        let list_area = horizontal_chunks[0];
+        let preview_area = *horizontal_chunks.last().unwrap();
 
-    // Render left pane (returns the list's scroll offset for hit-testing).
-    let list_offset = render_list(frame, app, list_area, tick);
-    app.list_offset = list_offset;
+        // Capture geometry for mouse hit-testing in the event loop. `divider_col` is the lane column
+        // (dedicated) or the flush boundary (hover); the hotspot test is ±1 around it either way.
+        app.main_area = main_area;
+        app.list_area = list_area;
+        app.preview_area = preview_area;
+        app.divider_col = if dedicated { horizontal_chunks[1].x } else { preview_area.x };
 
-    // Render right pane
-    render_preview(frame, app, preview_area, tick);
+        // Render left pane (returns the list's scroll offset for hit-testing).
+        let list_offset = render_list(frame, app, list_area, tick);
+        app.list_offset = list_offset;
 
-    // Restored repo page (panel [4]): render into the bottom panel (it captures its own geometry
-    // from the area it's given, so selection/scroll/clicks work there too). `dock_rect` lets the
-    // event loop route clicks outside it to the list/preview (master-detail).
-    if let Some((_, dock)) = dock_area {
-        app.dock_rect = dock;
-        render_repo_page(frame, app, dock, tick);
+        // Render right pane
+        render_preview(frame, app, preview_area, tick);
+
+        // Restored repo page (panel [4]): render into the bottom panel (it captures its own geometry
+        // from the area it's given, so selection/scroll/clicks work there too). `dock_rect` lets the
+        // event loop route clicks outside it to the list/preview (master-detail).
+        if let Some((_, dock)) = dock_area {
+            app.dock_rect = dock;
+            render_repo_page(frame, app, dock, tick);
+        }
     }
 
     // Render status bar
     render_status_bar(frame, app, status_bar_area);
 
-    // Draw the draggable divider grip (and a live highlight while it's being dragged), unless the
-    // user hid the splitter.
-    if app.show_splitter {
+    // The splitter grips: a persistent lane fill (dedicated mode) or a thin on-hover grip (hover
+    // mode). No divider when a single pane is maximized (no boundary then). render_divider decides
+    // what to draw per mode + cursor.
+    if max_main.is_none() {
         render_divider(frame, app);
     }
 
@@ -867,6 +948,18 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.show_changelog {
         render_changelog(frame, app, area);
+    }
+    // Modals opened from the docked repo page (panel [4]) — without these they open in state but
+    // never draw, so a double-click/enter on a stash/dirty row looked like a no-op. The maximized
+    // page draws the same set on its own path above.
+    if app.diff_modal.is_some() {
+        render_diff_modal(frame, app, area);
+    }
+    if app.copy_menu.is_some() {
+        render_copy_menu(frame, app, area);
+    }
+    if app.base_picker.is_some() {
+        render_base_picker(frame, app, area);
     }
     // Confirmation dialog overlays all — rendered after the modal it may sit over (settings reset,
     // the pin-version picker) so it's always on top.
@@ -968,56 +1061,91 @@ fn map_crate_hint_key(key: tui_pick::HintKey) -> HintKey {
 
 /// Draw a grip marker at the center of the pane divider so it reads as draggable, and—while a
 /// drag is in progress—brighten the whole divider column for live feedback.
+/// Fill a vertical run of cells at `col`, rows `[top, bottom)`, with `symbol` in `color`.
+fn fill_col(frame: &mut Frame, col: u16, top: u16, bottom: u16, symbol: &str, color: Color) {
+    let buffer = frame.buffer_mut();
+    for row in top..bottom {
+        if let Some(cell) = buffer.cell_mut((col, row)) {
+            cell.set_symbol(symbol).set_fg(color);
+        }
+    }
+}
+
+/// Fill a horizontal run of cells at `row`, cols `[left, right)`, with `symbol` in `color`.
+fn fill_row(frame: &mut Frame, row: u16, left: u16, right: u16, symbol: &str, color: Color) {
+    let buffer = frame.buffer_mut();
+    for col in left..right {
+        if let Some(cell) = buffer.cell_mut((col, row)) {
+            cell.set_symbol(symbol).set_fg(color);
+        }
+    }
+}
+
+/// Draw the pane splitters per `splitter_mode`. Dedicated mode fills each boundary's reserved lane
+/// with a persistent `▒` grip (full-height column for list|preview, full-width row for the dock and
+/// info/result splits); hover mode keeps the panes flush and shows only a thin grip (`▏` vertical,
+/// `▁` horizontal) under the cursor. Either mode brightens to cyan on hover and `█`/cyan while the
+/// vertical splitter is dragged. The vertical grip stays on `divider_col` only (never `col-1`, the
+/// list's scrollbar column).
 fn render_divider(frame: &mut Frame, app: &AppState) {
+    let dedicated = app.splitter_mode == SplitterMode::Dedicated;
+    let hover = if app.hover_effects { app.hover } else { None };
+
+    // Vertical splitter (list | preview).
     let area = app.main_area;
     let col = app.divider_col;
-    if area.height < 3 || col <= area.x || col >= area.x + area.width {
-        return;
-    }
-    let top = area.y + 1;
-    let bottom = area.y + area.height - 1;
-    let center = area.y + area.height / 2;
-    let dragging = app.divider_dragging;
-    // Hovered (not dragging): the grip brightens to cyan so the handle reacts to the cursor.
-    let hovered = !dragging
-        && app.hover_effects
-        && app.hover.is_some_and(|(hover_col, hover_row)| {
-            (i32::from(hover_col) - i32::from(col)).abs() <= 1 && hover_row >= top && hover_row < bottom
-        });
-    // The grip sits on the divider column itself (the right pane's first column). It must NOT
-    // straddle into `col - 1`: that's the left pane's last column, where the vertical scrollbar is
-    // drawn — a 2-wide grip would paint over the scrollbar.
-    let cols = [col];
-    let buffer = frame.buffer_mut();
-
-    if dragging {
-        for &grip_col in &cols {
-            for row in top..bottom {
-                if let Some(cell) = buffer.cell_mut((grip_col, row)) {
-                    cell.set_fg(Color::Cyan);
-                }
-            }
+    if area.height >= 3 && col > area.x && col < area.x + area.width {
+        let top = area.y + 1;
+        let bottom = area.y + area.height - 1;
+        let dragging = app.divider_dragging;
+        let hovered = !dragging
+            && hover.is_some_and(|(hc, hr)| {
+                (i32::from(hc) - i32::from(col)).abs() <= 1 && hr >= top && hr < bottom
+            });
+        if dedicated {
+            let (sym, color) = if dragging {
+                ("█", Color::Cyan)
+            } else if hovered {
+                ("▒", Color::Cyan)
+            } else {
+                ("▒", Color::Gray)
+            };
+            fill_col(frame, col, top, bottom, sym, color);
+        } else if dragging || hovered {
+            let center = area.y + area.height / 2;
+            let half = (area.height / 5).clamp(3, 9) / 2;
+            let start = center.saturating_sub(half).max(top);
+            let end = (center + half + 1).min(bottom);
+            let (sym, color) = if dragging { ("█", Color::Cyan) } else { ("▏", Color::Cyan) };
+            fill_col(frame, col, start, end, sym, color);
         }
     }
 
-    // A shaded run at center hints "grab here"; its length scales with the pane height. While
-    // dragging it brightens to cyan AND fills solid for unmistakable grabbed feedback.
-    let (grip_symbol, grip_color) = if dragging {
-        ("█", Color::Cyan)
-    } else if hovered {
-        ("▒", Color::Cyan)
-    } else {
-        ("▒", Color::Gray)
+    // Horizontal splitters: the dock boundary and the info/result split. Dedicated mode fills the
+    // reserved lane row; hover mode shows a thin centered grip only under the cursor (its row is the
+    // adjacent pane's top border, so it must stay transient — a persistent fill would erase the border).
+    let mut h_split = |row: u16, x: u16, width: u16| {
+        if width == 0 {
+            return;
+        }
+        let (left, right) = (x, x + width);
+        let hovered = hover.is_some_and(|(hc, hr)| hr == row && hc >= left && hc < right);
+        if dedicated {
+            let (sym, color) = if hovered { ("▒", Color::Cyan) } else { ("▒", Color::Gray) };
+            fill_row(frame, row, left, right, sym, color);
+        } else if hovered {
+            let center = x + width / 2;
+            let half = (width / 5).clamp(3, 9) / 2;
+            let start = center.saturating_sub(half).max(left);
+            let end = (center + half + 1).min(right);
+            fill_row(frame, row, start, end, "▁", Color::Cyan);
+        }
     };
-    let half = (area.height / 5).clamp(3, 9) / 2;
-    let start = center.saturating_sub(half).max(top);
-    let end = (center + half + 1).min(bottom);
-    for &grip_col in &cols {
-        for row in start..end {
-            if let Some(cell) = buffer.cell_mut((grip_col, row)) {
-                cell.set_symbol(grip_symbol).set_fg(grip_color);
-            }
-        }
+    if let Some(row) = app.dock_divider_row {
+        h_split(row, app.dock_full_area.x, app.dock_full_area.width);
+    }
+    if let Some(row) = app.preview_divider_row {
+        h_split(row, app.preview_area.x, app.preview_area.width);
     }
 }
 
@@ -1057,12 +1185,18 @@ fn scrollbar_track(outer: Rect, inner: Rect) -> Rect {
 /// being dragged, like the divider.
 fn render_scrollbar(
     frame: &mut Frame,
+    app: &mut AppState,
     area: Rect,
     position: usize,
     total: usize,
     viewport: usize,
-    highlighted: bool,
+    kind: ScrollKind,
 ) {
+    // INVARIANT: drawing a scrollbar AND registering its draggable `ScrollHit` are one operation —
+    // they can't drift apart (a scrollbar that's drawn but not registered is decorative: not
+    // draggable, wheel can't target it). Register first so the geometry is always captured;
+    // `scrollbar_at` guards `total > viewport`, so a non-overflowing hit simply never matches.
+    app.scroll_hits.push(ScrollHit { kind, track: area, total, viewport });
     if total <= viewport {
         return;
     }
@@ -1073,7 +1207,7 @@ fn render_scrollbar(
     let mut state = ScrollbarState::new(content)
         .position(position)
         .viewport_content_length(viewport);
-    let thumb_style = if highlighted {
+    let thumb_style = if app.scrollbar_dragging == Some(kind) {
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     } else {
         Style::default()

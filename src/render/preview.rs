@@ -24,26 +24,52 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
 
     // Clickable info-block regions are rebuilt each frame (and only the main view captures them).
     app.info_click.clear();
+    // Reset the info-pane scroll geometry each frame; render_info_panel re-captures it when shown,
+    // so the wheel only targets the info pane while it's actually on screen.
+    app.info_area = Rect::default();
+    app.info_total = 0;
+    app.info_viewport = 0;
 
     // The preview pane stacks an info panel (`i`, top, repo-only) and the result/log panel (`I`,
     // bottom). Each hides independently; with both shown a draggable boundary splits them by
     // `preview_split_ratio`. Hidden result → info fills the pane (reads like the repo list).
-    let info_visible = app.info_pinned && selected_repo.is_some();
-    let result_visible = app.show_result_panel;
+    // When a sub-pane is maximized, render_preview owns the whole screen and shows only that one.
+    let info_visible = match app.maximized {
+        Some(Pane::Info) => true,
+        Some(Pane::Result) => false,
+        _ => app.info_pinned && selected_repo.is_some(),
+    };
+    let result_visible = match app.maximized {
+        Some(Pane::Result) => true,
+        Some(Pane::Info) => false,
+        _ => app.show_result_panel,
+    };
     app.preview_divider_row = None;
     let area = match (info_visible, result_visible) {
         (true, true) => {
             let repo_idx = selected_repo.unwrap();
-            let info_h = ((f64::from(area.height)) * app.preview_split_ratio).round() as u16;
-            let info_h = info_h.clamp(3, area.height.saturating_sub(3).max(3));
+            // In "dedicated" splitter mode a 1-row lane separates the info + result panes (filled by
+            // render_divider); in "hover" mode they're flush and the boundary row is the result's top
+            // border. Lay out info against the height left after the lane, if any.
+            let dedicated = app.splitter_mode == SplitterMode::Dedicated;
+            let avail = if dedicated { area.height.saturating_sub(1) } else { area.height };
+            let info_h = ((f64::from(avail)) * app.preview_split_ratio).round() as u16;
+            let info_h = info_h.clamp(3, avail.saturating_sub(3).max(3));
+            let constraints = if dedicated {
+                vec![Constraint::Length(info_h), Constraint::Length(1), Constraint::Min(0)]
+            } else {
+                vec![Constraint::Length(info_h), Constraint::Min(0)]
+            };
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(info_h), Constraint::Min(0)])
+                .constraints(constraints)
                 .split(area);
             app.preview_split_area = area;
-            app.preview_divider_row = Some(chunks[1].y);
+            // The hotspot/lane row: the dedicated lane (chunks[1]) or the result pane's top border.
+            let result_area = *chunks.last().unwrap();
+            app.preview_divider_row = Some(if dedicated { chunks[1].y } else { result_area.y });
             render_info_panel(frame, app, chunks[0], repo_idx);
-            chunks[1]
+            result_area
         }
         (true, false) => {
             render_info_panel(frame, app, area, selected_repo.unwrap());
@@ -113,17 +139,13 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
     };
 
     let modal_open = app.any_modal_open();
-    let mut block = Block::default()
-        .title(format!(" [3]{header_text}"))
-        .title_style(pane_title_style(modal_open))
-        .borders(pane_borders(app))
-        .border_type(BorderType::Rounded)
-        .padding(panel_pad(app))
-        .border_style(pane_border_style(app.focus == Pane::Result, modal_open));
-
-    // A `⧉` copy button on the top border copies the repo's log when it has output, otherwise the
-    // repo path — so it's always useful (an up-to-date repo's log is empty). Same clipboard handler
-    // as the info panel's Path copy.
+    // The maximize/restore button is the rightmost top-border element; the `⧉` copy button (when the
+    // repo log shows) sits to its left. Both are right-aligned into one title line.
+    let (max_spans, copy_end) =
+        max_button_spans(app, Pane::Result, area.y, area.x + area.width.saturating_sub(1));
+    let mut top_spans: Vec<Span<'static>> = Vec::new();
+    // A `⧉` copy button copies the repo's log when it has output, otherwise the repo path — so it's
+    // always useful (an up-to-date repo's log is empty). Same clipboard handler as the info Path copy.
     let showing_repo_log = selected_repo.is_some()
         && !overlay
         && selected_group.is_none()
@@ -138,22 +160,23 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
             log_text
         };
         if !copy_text.is_empty() {
-            let glyph = "⧉";
-            // The right-aligned title renders the glyph just inside the border corner, at
-            // `area.x+width-2` (`col_end` is exclusive). The copy button is a 2-char target: the
-            // glyph cell plus the cell to its left.
-            let col_end = area.x + area.width.saturating_sub(1);
-            let col_start = col_end.saturating_sub(2);
-            block = block.title_top(
-                Line::from(Span::styled(
-                    glyph,
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ))
-                .right_aligned(),
-            );
-            app.info_click.push((area.y, col_start, col_end, InfoAction::CopyText(copy_text)));
+            // The copy button is a 2-char target ending one column left of the maximize button.
+            let col_start = copy_end.saturating_sub(2);
+            top_spans.push(Span::styled("⧉", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+            top_spans.push(Span::raw(" "));
+            app.info_click.push((area.y, col_start, copy_end, InfoAction::CopyText(copy_text)));
         }
     }
+    top_spans.push(max_spans[0].clone());
+    top_spans.push(max_spans[1].clone());
+    let mut block = Block::default()
+        .title(format!(" [3]{header_text}"))
+        .title_top(Line::from(top_spans).right_aligned())
+        .title_style(pane_title_style(modal_open))
+        .borders(pane_borders(app))
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(pane_border_style(app.active_pane() == Pane::Result, modal_open));
 
     // Group view: the key hints live in the pane chrome as styled, CLICKABLE segments (same
     // machinery as the status bar), not as plain content text.
@@ -211,25 +234,12 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         .wrap(Wrap { trim: false });
     frame.render_widget(para, inner);
     let track = scrollbar_track(area, inner);
-    render_scrollbar(
-        frame,
-        track,
-        effective_scroll,
-        total_lines,
-        inner_height,
-        app.scrollbar_dragging == Some(ScrollKind::Preview),
-    );
-
-    // Capture scroll geometry for the event loop's wheel/scrollbar hit-testing.
+    // Capture scroll geometry for the event loop's wheel hit-testing; render_scrollbar registers the
+    // draggable Preview hit.
     app.preview_total = total_lines;
     app.preview_viewport = inner_height;
     app.preview_scroll_area = track;
-    app.scroll_hits.push(ScrollHit {
-        kind: ScrollKind::Preview,
-        track,
-        total: total_lines,
-        viewport: inner_height,
-    });
+    render_scrollbar(frame, app, track, effective_scroll, total_lines, inner_height, ScrollKind::Preview);
 }
 
 /// Render the per-repo info view (status, branch, ahead/behind, remote, last commit,
@@ -775,7 +785,10 @@ pub(crate) fn render_info_panel(frame: &mut Frame, app: &mut AppState, area: Rec
     let name = app.repos[repo_idx].lock().unwrap().name.clone();
     let info_width = area.width.saturating_sub(if app.panel_padding { 4 } else { 2 }) as usize;
     let (lines, clicks) = build_info_lines(app, repo_idx, info_width);
-    render_info_block(frame, app, area, format!(" [2] {name} · info "), lines, clicks);
+    let scroll = app.repos[repo_idx].lock().unwrap().info_scroll;
+    let scroll = render_info_block(frame, app, area, format!(" [2] {name} · info "), lines, clicks, scroll);
+    // Write back the clamped offset so the wheel/drag never sit past the content.
+    app.repos[repo_idx].lock().unwrap().info_scroll = scroll;
 }
 
 /// Render the placeholder shown when the result/log panel is hidden and there's no info panel to
@@ -802,6 +815,9 @@ pub(crate) fn render_preview_hidden_hint(frame: &mut Frame, app: &mut AppState, 
     }
 }
 
+/// Render the info block (border + scrollable pre-wrapped lines + draggable scrollbar), translating
+/// each clickable region to an absolute screen rect on `app.info_click`. Returns the clamped scroll
+/// offset (the caller persists it on the repo). `scroll` is the requested top line.
 pub(crate) fn render_info_block(
     frame: &mut Frame,
     app: &mut AppState,
@@ -809,33 +825,45 @@ pub(crate) fn render_info_block(
     title: String,
     lines: Vec<Line<'static>>,
     clicks: Vec<InfoClick>,
-) {
+    scroll: usize,
+) -> usize {
     let modal_open = app.any_modal_open();
+    let (max_spans, _) = max_button_spans(app, Pane::Info, area.y, area.x + area.width.saturating_sub(1));
     let block = Block::default()
         .title(title)
+        .title_top(Line::from(max_spans.to_vec()).right_aligned())
         .title_style(pane_title_style(modal_open))
         .borders(pane_borders(app))
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(pane_border_style(app.focus == Pane::Info, modal_open));
+        .border_style(pane_border_style(app.active_pane() == Pane::Info, modal_open));
     let inner = block.inner(area);
     let total = lines.len();
+    let viewport = inner.height as usize;
+    let scroll = scroll.min(total.saturating_sub(viewport));
     frame.render_widget(block, area);
     // Lines are already wrapped to the inner width, so render them verbatim (no Paragraph wrap)
-    // — that keeps line N at row inner.y + N, which the click translation below relies on.
-    let visible = (inner.height as usize).min(lines.len());
-    frame.render_widget(Paragraph::new(lines), inner);
+    // — that keeps line N at row inner.y + (N - scroll), which the click translation below relies on.
+    let visible_lines: Vec<Line<'static>> = lines.into_iter().skip(scroll).take(viewport).collect();
+    frame.render_widget(Paragraph::new(visible_lines), inner);
     for (line_idx, start, end, action) in clicks {
-        if line_idx < visible {
+        if line_idx >= scroll && line_idx < scroll + viewport {
             app.info_click.push((
-                inner.y + line_idx as u16,
+                inner.y + (line_idx - scroll) as u16,
                 inner.x + start,
                 inner.x + end,
                 action,
             ));
         }
     }
-    render_scrollbar(frame, scrollbar_track(area, inner), 0, total, inner.height as usize, false);
+    let track = scrollbar_track(area, inner);
+    // Capture geometry for the wheel; render_scrollbar registers the draggable Info hit (it was
+    // decorative before — scroll hardcoded to 0 and overflow clipped unreachably).
+    app.info_area = area;
+    app.info_total = total;
+    app.info_viewport = viewport;
+    render_scrollbar(frame, app, track, scroll, total, viewport, ScrollKind::Info);
+    scroll
 }
 
 /// Convert a string that may contain ANSI escape codes to a ratatui Line.
