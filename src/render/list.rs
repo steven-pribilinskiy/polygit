@@ -34,25 +34,42 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     // + direction rides on the sort trigger. Captured for click hit-testing + dropdown anchoring.
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
+    // Top-border triggers, `·`-separated and ordered `filter · sort · columns`: `/ filter` begins the
+    // name filter (reusing the footer command's click machinery), `s sort ⟪col ▲⟫ ▾` and `t cols ▾`
+    // open the sort/columns dropdowns. The maximize button is the rightmost element.
     let cols_text = "t cols ▾";
+    let cols_w = cols_text.chars().count() as u16;
     let sort_tag = format!("⟪{} {}⟫", app.sort_column.label(), app.sort_dir.arrow());
     let sort_label = format!(" sort {sort_tag} ▾");
-    let sort_text_len = 1 + sort_label.chars().count();
-    // The maximize/restore button is the rightmost top-border element; the cols/sort chips sit to its
-    // left (their click columns shift left by the button width + a 1-col gap, tracked by `chips_end`).
+    let sort_w = (1 + sort_label.chars().count()) as u16;
+    let filter_w = 1 + " filter".chars().count() as u16;
+    let sep_w = 3u16; // " · "
     let (max_spans, chips_end) =
         max_button_spans(app, Pane::List, area.y, area.x + area.width.saturating_sub(1));
-    let sort_start = chips_end.saturating_sub(sort_text_len as u16);
-    let cols_end = sort_start.saturating_sub(1);
-    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
-    app.list_sort_click = Some((area.y, sort_start, chips_end));
+    // Place right-to-left from the maximize button: columns (rightmost), then sort, then filter.
+    let cols_end = chips_end;
+    let cols_start = cols_end.saturating_sub(cols_w);
+    let sort_end = cols_start.saturating_sub(sep_w);
+    let sort_start = sort_end.saturating_sub(sort_w);
+    let filter_end = sort_start.saturating_sub(sep_w);
+    let filter_start = filter_end.saturating_sub(filter_w);
     app.list_cols_click = Some((area.y, cols_start, cols_end));
+    app.list_sort_click = Some((area.y, sort_start, sort_end));
+    app.clickable.push(ClickRegion {
+        row: area.y,
+        col_start: filter_start,
+        col_end: filter_end,
+        command: Command::NameFilter,
+    });
     let chips = Line::from(vec![
-        Span::styled("t", key_style),
-        Span::styled(" cols ▾", label_style),
-        Span::raw(" "),
+        Span::styled("/", key_style),
+        Span::styled(" filter", label_style),
+        Span::styled(" · ", label_style),
         Span::styled("s", key_style),
         Span::styled(sort_label.clone(), label_style),
+        Span::styled(" · ", label_style),
+        Span::styled("t", key_style),
+        Span::styled(" cols ▾", label_style),
         Span::raw(" "),
         max_spans[0].clone(),
         max_spans[1].clone(),
