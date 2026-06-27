@@ -1112,7 +1112,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     // 24 headers · 25 counts · 26 settings · 27 links (Tooltips), 28 AI-agent · 29 skip-permissions
     // (Agent), 30 merged-PRs (Pull requests).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
-    let sections: Vec<(&str, Vec<SettingsRow>)> = vec![
+    let mut sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
             "Lists",
             vec![
@@ -1296,6 +1296,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         ),
     ];
 
+    // Sections display + index in alphabetical order (matching `SETTINGS_TABS` / `SETTINGS_LABELS`):
+    // Agent · Interaction · Layout · Lists · Pull requests · Sync · Theming · Tooltips.
+    sections.sort_by_key(|(name, _)| *name);
     // Flatten the sections into the global row order (`SETTINGS_TABS` defines the grouping).
     let all_rows: Vec<SettingsRow> = sections.into_iter().flat_map(|(_, rows)| rows).collect();
     let row_width = |options: &[(&str, bool)]| -> u16 {
@@ -1436,8 +1439,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         let (label, options) = &all_rows[row_idx];
         let in_view = row_y < inner.y + inner.height;
         let underline_idx = if row_idx == 5 { theme_underline } else { None };
-        // Hide zeros (row 4) is inert under emoji icons (which always hide zeros).
-        let disabled = row_idx == 4 && emoji_icons;
+        // Hide zeros (row 19) is inert under emoji icons (which always hide zeros).
+        let disabled = row_idx == 19 && emoji_icons;
         out.push(settings_row_line(
             row_idx,
             app.settings_selected == row_idx,
@@ -1474,7 +1477,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             let row_y = inner.y + lines.len() as u16;
             let in_view = row_y < inner.y + inner.height;
             let underline_idx = if row_idx == 5 { theme_underline } else { None };
-            let disabled = row_idx == 4 && emoji_icons;
+            let disabled = row_idx == 19 && emoji_icons;
             lines.push(settings_row_line(
                 row_idx,
                 app.settings_selected == row_idx,
@@ -1637,7 +1640,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 AccItem::Row(row) => {
                     let (label, options) = &all_rows[*row];
                     let underline_idx = if *row == 5 { theme_underline } else { None };
-                    let disabled = *row == 4 && emoji_icons;
+                    let disabled = *row == 19 && emoji_icons;
                     lines.push(settings_row_line(
                         *row,
                         app.settings_on_header.is_none() && app.settings_selected == *row,

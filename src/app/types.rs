@@ -1372,50 +1372,50 @@ impl RepoTabsMode {
 /// here must match it. Appending a setting = bump the relevant count (and add its row data + the
 /// `set_setting_option`/`toggle_selected_setting` arm).
 pub const SETTINGS_TABS: &[(&str, usize)] = &[
-    ("Lists", 3),
-    ("Theming", 7),
-    ("Sync", 3),
+    ("Agent", 2),
     ("Interaction", 3),
     ("Layout", 6),
-    ("Tooltips", 6),
-    ("Agent", 2),
+    ("Lists", 3),
     ("Pull requests", 1),
+    ("Sync", 3),
+    ("Theming", 7),
+    ("Tooltips", 6),
 ];
 
 /// Every settings row's label in global row order — the single list the search filter matches
 /// against (keep in sync with the inline `sections` in `render_settings`).
 pub const SETTINGS_LABELS: [&str; 31] = [
-    "Grouping",            // 0
-    "Tree view",           // 1
-    "Hide folder lines",   // 2
-    "Icons",               // 3
-    "Hide zeros",          // 4
-    "Theme",               // 5
-    "Background",          // 6
-    "Contrast",            // 7
-    "List selection",      // 8
-    "Button hover",        // 9
-    "Auto-pull on launch", // 10
-    "Auto-pull limit",     // 11
-    "Auto-pull in tree",   // 12
-    "Hover effects",       // 13
-    "Changed-row flash",   // 14
-    "Changed-row highlight", // 15
-    "Panel padding",       // 16
-    "Borders",             // 17
-    "Pane splitter",       // 18
-    "Repo page tabs",      // 19
-    "Repo page",           // 20
-    "Auto branch-check",   // 21
-    "All tooltips",        // 22
-    "Footer commands",     // 23
-    "Column headers",      // 24
-    "Group counts",        // 25
-    "Settings rows",       // 26
-    "Help links",          // 27
-    "AI agent",            // 28
-    "Skip permissions",    // 29
-    "Merged PRs",          // 30
+    "AI agent",              // 0   Agent
+    "Skip permissions",      // 1
+    "Hover effects",         // 2   Interaction
+    "Changed-row flash",     // 3
+    "Changed-row highlight",  // 4
+    "Panel padding",         // 5   Layout
+    "Borders",               // 6
+    "Pane splitter",         // 7
+    "Repo page tabs",        // 8
+    "Repo page",             // 9
+    "Auto branch-check",     // 10
+    "Grouping",              // 11  Lists
+    "Tree view",             // 12
+    "Hide folder lines",     // 13
+    "Merged PRs",            // 14  Pull requests
+    "Auto-pull on launch",   // 15  Sync
+    "Auto-pull limit",       // 16
+    "Auto-pull in tree",     // 17
+    "Icons",                 // 18  Theming
+    "Hide zeros",            // 19
+    "Theme",                 // 20
+    "Background",            // 21
+    "Contrast",              // 22
+    "List selection",        // 23
+    "Button hover",          // 24
+    "All tooltips",          // 25  Tooltips
+    "Footer commands",       // 26
+    "Column headers",        // 27
+    "Group counts",          // 28
+    "Settings rows",         // 29
+    "Help links",            // 30
 ];
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
@@ -1481,6 +1481,12 @@ pub struct IconSet {
     /// Favorited / not-favorited star (favorites column).
     pub fav_on: &'static str,
     pub fav_off: &'static str,
+    /// Pane window-control glyphs (top-border buttons): maximize, restore-from-maximized, close.
+    pub maximize: &'static str,
+    pub restore: &'static str,
+    pub close: &'static str,
+    /// Copy-to-clipboard button glyph (the result pane's log-copy button).
+    pub copy: &'static str,
 }
 
 // Status glyphs are drawn from Geometric Shapes (U+25xx), which terminal fonts like Cascadia Code
@@ -1511,7 +1517,12 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     fav_on: "★",
     fav_off: "☆",
     // Geometric Shapes (U+25xx), single-cell like the status glyphs above: hollow square = maximize,
-    // square-in-square = restore. Distinct shapes, reliable width across terminal fonts.
+    // square-in-square = restore, multiplication-X = close. Distinct shapes, reliable single-cell
+    // width across terminal fonts (✕ is U+2715, distinct from the `failed` ✗).
+    maximize: "▢",
+    restore: "▣",
+    close: "✕",
+    copy: "⧉",
 };
 
 pub static EMOJI_ICONS: IconSet = IconSet {
@@ -1547,7 +1558,13 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     // favorites column keeps a fixed width regardless of icon style.
     fav_on: "★",
     fav_off: "☆",
-    // Window controls stay Unicode in both sets (like the arrows/stars) for a fixed single-cell width.
+    // Window controls as single-codepoint Emoji_Presentation glyphs (2 cells, no variation selector):
+    // white square button = maximize, black square button = restore, cross mark = close. The button
+    // renderer measures display width, so the 2-cell glyphs lay out + hit-test correctly.
+    maximize: "🔳",
+    restore: "🔲",
+    close: "❌",
+    copy: "📋",
 };
 
 /// A mouse-clickable command region in the status bar (rebuilt each render).
