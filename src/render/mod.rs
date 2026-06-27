@@ -56,23 +56,42 @@ fn pane_border_style(active: bool, modal_open: bool) -> Style {
     }
 }
 
-/// Build the compact maximize/restore button (`m▢` maximize / `m▣` restore) for `pane` — a keycap
-/// `m` plus a window-control glyph — and register its 2-cell click region ending at `right_end`
-/// (exclusive) on `row`. Returns the two spans (place them rightmost on the pane's top border) and
-/// the column just left of the button (with a 1-col gap) for any chips a caller right-aligns to its
-/// left. Every pane gets one, so maximize has a consistent click affordance + the `m` key is shown.
+/// A window-control button = a cyan `keycap` (the key that triggers it, e.g. `m` / `esc`) + a dim
+/// window-control `glyph` (`▢`/`▣`/`✕` in Unicode mode, emoji in emoji mode), right-aligned ending
+/// at `right_end` (exclusive) on `row`. Returns the two spans, the button's `(row, start, end)`
+/// click region (measured by display width, so a 2-cell emoji glyph hit-tests correctly), and the
+/// column just left of the button (1-col gap) for chips a caller right-aligns to its left.
+fn window_button(
+    keycap: &str,
+    glyph: &str,
+    row: u16,
+    right_end: u16,
+) -> ([Span<'static>; 2], (u16, u16, u16), u16) {
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let width = (UnicodeWidthStr::width(keycap) + UnicodeWidthStr::width(glyph)) as u16;
+    let start = right_end.saturating_sub(width);
+    (
+        [Span::styled(keycap.to_string(), key), Span::styled(glyph.to_string(), dim)],
+        (row, start, right_end),
+        start.saturating_sub(1),
+    )
+}
+
+/// The maximize/restore button (`m`+`▢`/`▣`, or the emoji equivalents) for `pane`, registered into
+/// `max_click` so the universal hit-test + hover wiring handle it. Returns the spans + the column
+/// just left of it. Every pane gets one, so maximize has a consistent click affordance + `m` key.
 fn max_button_spans(
     app: &mut AppState,
     pane: Pane,
     row: u16,
     right_end: u16,
 ) -> ([Span<'static>; 2], u16) {
-    let glyph = if app.maximized == Some(pane) { "▣" } else { "▢" };
-    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(Color::DarkGray);
-    let start = right_end.saturating_sub(2);
-    app.max_click.push((row, start, right_end, pane));
-    ([Span::styled("m", key), Span::styled(glyph, dim)], start.saturating_sub(1))
+    let icons = app.icons();
+    let glyph = if app.maximized == Some(pane) { icons.restore } else { icons.maximize };
+    let (spans, (r, start, end), left) = window_button("m", glyph, row, right_end);
+    app.max_click.push((r, start, end, pane));
+    (spans, left)
 }
 
 /// Title style for the main panes: dim while a modal overlays them, so the background chrome

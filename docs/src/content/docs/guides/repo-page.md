@@ -6,8 +6,9 @@ description: The per-repo view (panel 4) for branches, worktrees, and stashes, a
 Press `Enter` (or double-click) on a repo in the list to open its **repo page** (panel `[4]`) —
 which runs `git fetch` and then lists everything about the repo. By default it opens **restored**
 (a docked panel across the bottom, so the list stays live above it and selecting another repo
-retargets the page); press `m` or the `[m maximize]` title-bar button (left of `[esc back]`) to
-**maximize** it full-screen, `[m restore]`/`m` to restore. **Maximized is a single view** — every
+retargets the page); press `m` or the `m▢` title-bar button (next to the `esc✕` close button) to
+**maximize** it full-screen, `m▣`/`m` to restore. The window controls use the active icon set
+(emoji glyphs in emoji mode). **Maximized is a single view** — every
 section stacked under its header, no tab bar (tabs apply only while restored). The state is sticky
 (Settings → Layout → **Repo page**). Rows hover-highlight like the main list.
 

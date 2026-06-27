@@ -695,11 +695,11 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let footer_line = (app.maximized == Some(Pane::RepoPage)).then(|| {
         build_hint_footer(repo_page_footer_segments(app), area.x + 1, footer_row, &mut app.hint_click)
     });
-    // Top-border window controls: a textual maximize/restore button (with its `m` key mnemonic),
-    // then the `[esc back]` close button. The label reflects the current state. Both are
-    // always-visible, clickable affordances.
-    let win_text = if app.maximized == Some(Pane::RepoPage) { "[m restore]" } else { "[m maximize]" };
-    let back_text = "[esc back]";
+    // Top-border window controls (rightmost): a maximize/restore button (`m`+▢/▣) and a close
+    // button (`esc`+✕) — the same compact window-control style as every other pane, in the active
+    // icon set (emoji glyphs in emoji mode). The `t cols ▾` / `s sort ▾` triggers sit to their left.
+    // Maximize registers into `max_click` (the universal handler toggles it); close into
+    // `repo_page_back_click` (the repo-page mouse block closes the page).
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
     let cols_text = "t cols ▾";
@@ -709,32 +709,34 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         None => " sort ▾".to_string(),
     };
     let sort_text_len = 1 + sort_label.chars().count();
+    let right_end = area.x + area.width.saturating_sub(1);
+    // Close button (rightmost), then maximize/restore to its left.
+    let (close_spans, close_region, after_close) =
+        window_button("esc", app.icons().close, area.y, right_end);
+    app.repo_page_back_click = Some(close_region);
+    app.repo_page_window_click = None;
+    let (max_spans, after_max) = max_button_spans(app, Pane::RepoPage, area.y, after_close);
+    // The `t cols ▾` / `s sort ▾` triggers sit left of the window controls.
+    let sort_end = after_max;
+    let sort_start = sort_end.saturating_sub(sort_text_len as u16);
+    let cols_end = sort_start.saturating_sub(1);
+    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
+    app.page_sort_click = Some((area.y, sort_start, sort_end));
+    app.page_cols_click = Some((area.y, cols_start, cols_end));
     let title_top = Line::from(vec![
         Span::styled("t", key_style),
         Span::styled(" cols ▾", label_style),
         Span::raw(" "),
         Span::styled("s", key_style),
         Span::styled(sort_label.clone(), label_style),
-        Span::raw("  "),
-        Span::styled(win_text, key_style),
         Span::raw(" "),
-        Span::styled(back_text, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        max_spans[0].clone(),
+        max_spans[1].clone(),
+        Span::raw(" "),
+        close_spans[0].clone(),
+        close_spans[1].clone(),
     ])
     .right_aligned();
-    let back_end = area.x + area.width.saturating_sub(1);
-    let back_start = back_end.saturating_sub(back_text.len() as u16);
-    app.repo_page_back_click = Some((area.y, back_start, back_end));
-    // The maximize/restore button sits one space to the left of `[esc back]`.
-    let win_end = back_start.saturating_sub(1);
-    let win_start = win_end.saturating_sub(win_text.len() as u16);
-    app.repo_page_window_click = Some((area.y, win_start, win_end));
-    // The `t cols ▾` / `s sort ▾` triggers sit left of the window controls (two-space gap).
-    let sort_end = win_start.saturating_sub(2);
-    let sort_start = sort_end.saturating_sub(sort_text_len as u16);
-    let cols_end = sort_start.saturating_sub(1);
-    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
-    app.page_sort_click = Some((area.y, sort_start, sort_end));
-    app.page_cols_click = Some((area.y, cols_start, cols_end));
     // Focused when restored and panel [4] holds focus, or always when maximized (it's the only pane).
     let focused = (app.maximized == Some(Pane::RepoPage)) || app.focus == Pane::RepoPage;
     let modal_open = app.any_modal_open();

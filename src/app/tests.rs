@@ -367,11 +367,11 @@
     fn settings_repo_page_row_maps_restored_and_maximized() {
         let mut state = state_named(&["a"]);
         state.maximized = None;
-        assert_eq!(state.settings_active_option(20), 0, "restored is option 0");
-        state.set_setting_option(20, 1);
+        assert_eq!(state.settings_active_option(9), 0, "restored is option 0");
+        state.set_setting_option(9, 1);
         assert_eq!(state.maximized, Some(Pane::RepoPage));
-        assert_eq!(state.settings_active_option(20), 1, "maximized is option 1");
-        state.set_setting_option(20, 0);
+        assert_eq!(state.settings_active_option(9), 1, "maximized is option 1");
+        state.set_setting_option(9, 0);
         assert_ne!(state.maximized, Some(Pane::RepoPage));
     }
 
@@ -925,12 +925,12 @@
     fn merged_prs_setting_persists_and_resets() {
         let mut state = state_named(&["a"]);
         assert!(!state.show_merged_prs); // off by default
-        // The settings row (index 30) toggles + reports its active option.
-        assert_eq!(state.settings_active_option(30), 1); // "off"
-        state.settings_selected = 30;
+        // The settings row (index 14) toggles + reports its active option.
+        assert_eq!(state.settings_active_option(14), 1); // "off"
+        state.settings_selected = 14;
         state.toggle_selected_setting();
         assert!(state.show_merged_prs);
-        assert_eq!(state.settings_active_option(30), 0); // "on"
+        assert_eq!(state.settings_active_option(14), 0); // "on"
         // Reset restores the default (off).
         state.apply_settings_reset();
         assert!(!state.show_merged_prs);
@@ -1521,64 +1521,69 @@
         assert_eq!(errors.len(), 2);
     }
 
+    // Resolve a settings row by its label, so these tests don't hard-code the (alphabetical) row
+    // indices and survive any future reorder of the settings sections.
+    fn srow(label: &str) -> usize {
+        crate::app::SETTINGS_LABELS
+            .iter()
+            .position(|candidate| *candidate == label)
+            .unwrap_or_else(|| panic!("no settings row labelled {label:?}"))
+    }
+
     #[test]
     fn set_setting_option_sets_exact_values() {
-        // Row order: 0 grouping · 1 tree · 2 hide-folder-lines (Lists), 3 icons · 4 hide-zeros ·
-        // 5 theme · 6 background · 7 contrast · 8 selection · 9 button-hover (Theming),
-        // 16 padding · 17 borders … 21 branch-check (Layout).
         let mut state = state_named(&["a"]);
-        state.set_setting_option(0, 0);
+        state.set_setting_option(srow("Grouping"), 0);
         assert!(state.grouping_enabled);
-        state.set_setting_option(0, 1);
+        state.set_setting_option(srow("Grouping"), 1);
         assert!(!state.grouping_enabled);
-        state.set_setting_option(1, 0);
+        state.set_setting_option(srow("Tree view"), 0);
         assert!(state.tree_enabled);
-        state.set_setting_option(1, 1);
+        state.set_setting_option(srow("Tree view"), 1);
         assert!(!state.tree_enabled);
-        state.set_setting_option(2, 0);
+        state.set_setting_option(srow("Hide folder lines"), 0);
         assert!(state.hide_folder_lines);
-        state.set_setting_option(2, 1);
+        state.set_setting_option(srow("Hide folder lines"), 1);
         assert!(!state.hide_folder_lines);
-        // Hide zeros (row 4) toggles with the Unicode set.
-        state.set_setting_option(3, 0);
+        // Hide zeros toggles with the Unicode set.
+        state.set_setting_option(srow("Icons"), 0);
         assert_eq!(state.icon_style, IconStyle::Unicode);
-        state.set_setting_option(4, 0);
+        state.set_setting_option(srow("Hide zeros"), 0);
         assert!(state.hide_zero_counts);
-        state.set_setting_option(4, 1);
+        state.set_setting_option(srow("Hide zeros"), 1);
         assert!(!state.hide_zero_counts);
-        state.set_setting_option(3, 1);
+        state.set_setting_option(srow("Icons"), 1);
         assert_eq!(state.icon_style, IconStyle::Emoji);
         // Under emoji, Hide zeros is inert — a click can't turn it on.
-        state.set_setting_option(4, 0);
+        state.set_setting_option(srow("Hide zeros"), 0);
         assert!(!state.hide_zero_counts);
-        state.set_setting_option(3, 0);
-        state.set_setting_option(5, 1);
+        state.set_setting_option(srow("Icons"), 0);
+        state.set_setting_option(srow("Theme"), 1);
         assert_eq!(state.theme, Theme::Dark);
-        state.set_setting_option(5, 2);
+        state.set_setting_option(srow("Theme"), 2);
         assert_eq!(state.theme, Theme::Light);
-        state.set_setting_option(6, 1);
+        state.set_setting_option(srow("Background"), 1);
         assert_eq!(state.background, Background::Soft);
-        state.set_setting_option(6, 0);
+        state.set_setting_option(srow("Background"), 0);
         assert_eq!(state.background, Background::Normal);
-        state.set_setting_option(7, 1);
+        state.set_setting_option(srow("Contrast"), 1);
         assert_eq!(state.contrast, Contrast::Soft);
-        state.set_setting_option(9, 0);
+        state.set_setting_option(srow("Button hover"), 0);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Inverted);
-        state.set_setting_option(9, 1);
+        state.set_setting_option(srow("Button hover"), 1);
         assert_eq!(state.button_hover_style, ButtonHoverStyle::Subtle);
-        // Layout rows: 16 = padding, 17 = borders, 21 = branch-check.
-        state.set_setting_option(16, 1);
+        state.set_setting_option(srow("Panel padding"), 1);
         assert!(!state.panel_padding);
-        state.set_setting_option(16, 0);
+        state.set_setting_option(srow("Panel padding"), 0);
         assert!(state.panel_padding);
-        state.set_setting_option(17, 1);
+        state.set_setting_option(srow("Borders"), 1);
         assert!(!state.show_borders);
-        state.set_setting_option(21, 1);
+        state.set_setting_option(srow("Auto branch-check"), 1);
         assert_eq!(state.branch_check, crate::app::BranchCheck::Auto);
-        // Out-of-range pairs are a no-op.
+        // Out-of-range pairs are a no-op (invalid option, then invalid row).
         let theme = state.theme;
-        state.set_setting_option(5, 9);
-        state.set_setting_option(25, 0);
+        state.set_setting_option(srow("Theme"), 9);
+        state.set_setting_option(99, 0);
         assert_eq!(state.theme, theme);
     }
 
@@ -1642,54 +1647,63 @@
     #[test]
     fn settings_active_option_tracks_current_values() {
         let mut state = state_named(&["a"]);
-        // 2-radio: grouping (row 0) on → option 0, off → option 1.
-        state.set_setting_option(0, 0);
-        assert_eq!(state.settings_active_option(0), 0);
-        state.set_setting_option(0, 1);
-        assert_eq!(state.settings_active_option(0), 1);
-        // 3-radio: theme auto/dark/light → 0/1/2 (row 5 after the hide-zeros insert).
-        state.set_setting_option(5, 2);
-        assert_eq!(state.settings_active_option(5), 2);
-        // 4-radio: auto-pull limit 50/100/250/∞ → 0/1/2/3 (row 11).
-        state.set_setting_option(11, 3);
-        assert_eq!(state.settings_active_option(11), 3);
-        // Button hover (Theming row 9): inverted/subtle → 0/1.
-        state.set_setting_option(9, 0);
-        assert_eq!(state.settings_active_option(9), 0);
-        state.set_setting_option(9, 1);
-        assert_eq!(state.settings_active_option(9), 1);
+        // 2-radio: grouping on → option 0, off → option 1.
+        let grouping = srow("Grouping");
+        state.set_setting_option(grouping, 0);
+        assert_eq!(state.settings_active_option(grouping), 0);
+        state.set_setting_option(grouping, 1);
+        assert_eq!(state.settings_active_option(grouping), 1);
+        // 3-radio: theme auto/dark/light → 0/1/2.
+        let theme = srow("Theme");
+        state.set_setting_option(theme, 2);
+        assert_eq!(state.settings_active_option(theme), 2);
+        // 4-radio: auto-pull limit 50/100/250/∞ → 0/1/2/3.
+        let limit = srow("Auto-pull limit");
+        state.set_setting_option(limit, 3);
+        assert_eq!(state.settings_active_option(limit), 3);
+        // Button hover: inverted/subtle → 0/1.
+        let hover = srow("Button hover");
+        state.set_setting_option(hover, 0);
+        assert_eq!(state.settings_active_option(hover), 0);
+        state.set_setting_option(hover, 1);
+        assert_eq!(state.settings_active_option(hover), 1);
         // A click on the active option then cycling lands on the next value.
-        state.settings_selected = 9;
-        let active = state.settings_active_option(9);
+        state.settings_selected = hover;
+        let active = state.settings_active_option(hover);
         state.toggle_selected_setting();
-        assert_ne!(state.settings_active_option(9), active);
+        assert_ne!(state.settings_active_option(hover), active);
     }
 
     #[test]
     fn tooltip_settings_group_toggles_each_area() {
         let mut state = normalized(state_named(&["a"]));
-        // All on by default → option 0 for every Tooltips row (22..=27).
-        for row in 22..=27 {
+        let all = srow("All tooltips");
+        let tip_rows: Vec<usize> = ["All tooltips", "Footer commands", "Column headers", "Group counts", "Settings rows", "Help links"]
+            .iter()
+            .map(|label| srow(label))
+            .collect();
+        // All on by default → option 0 for every Tooltips row.
+        for &row in &tip_rows {
             assert_eq!(state.settings_active_option(row), 0, "row {row} defaults on");
         }
-        // "All tooltips" off (row 22) cascades to every area.
-        state.set_setting_option(22, 1);
+        // "All tooltips" off cascades to every area.
+        state.set_setting_option(all, 1);
         assert!(state.tooltips.all_off());
-        assert_eq!(state.settings_active_option(22), 1);
+        assert_eq!(state.settings_active_option(all), 1);
         // Turning one area back on makes the master mixed (neither radio active → option 2).
-        state.set_setting_option(24, 0); // column headers on
+        state.set_setting_option(srow("Column headers"), 0);
         assert!(state.tooltips.headers && !state.tooltips.footer);
-        assert_eq!(state.settings_active_option(22), 2, "mixed → no radio active");
-        // "All tooltips" on (row 22) cascades every area back on.
-        state.set_setting_option(22, 0);
+        assert_eq!(state.settings_active_option(all), 2, "mixed → no radio active");
+        // "All tooltips" on cascades every area back on.
+        state.set_setting_option(all, 0);
         assert!(state.tooltips.all_on());
         // An individual change (settings rows off) flips just that flag.
-        state.set_setting_option(26, 1);
+        state.set_setting_option(srow("Settings rows"), 1);
         assert!(!state.tooltips.settings && state.tooltips.footer);
         // Defaults: every Tooltips row reads as already-default (no reset entry).
         let mut fresh = normalized(state_named(&["a"]));
         fresh.tooltips = crate::app::TooltipPrefs::default();
-        for row in 22..=27 {
+        for &row in &tip_rows {
             assert_eq!(
                 fresh.settings_active_option(row),
                 AppState::settings_default_option(row),

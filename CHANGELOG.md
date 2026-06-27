@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.76.0 — 2026-06-27
+Window-control buttons (close/maximize), icon-aware glyphs, copy-hotspot fix, alphabetical settings
+- **the repo page's `[esc back]` is now an `esc✕` close button** styled like the maximize/restore controls — a clean window-control row (`m▢`/`m▣` maximize + `esc✕` close).
+- **the window-control + copy glyphs follow the icon set:** Unicode mode uses `▢`/`▣`/`✕`/`⧉`, emoji mode uses 🔳/🔲/❌/📋. They're measured by display width, so the 2-cell emoji glyphs lay out and hit-test correctly.
+- **fix: the result-pane copy button's hover/click hotspot was offset and the wrong width.** It's now exactly the glyph's display width and sits squarely on the glyph (no stray cell to its left), and a 2-column gap separates it from the maximize button.
+- **the settings sections are now alphabetical:** Agent · Interaction · Layout · Lists · Pull requests · Sync · Theming · Tooltips.
+
 ## v2.75.0 — 2026-06-27
 Every pane is maximizeable · dedicated splitter lanes · docked-pane hover fix · scrollbar hardening
 - **every pane maximizes now, not just the repo page.** `m` (or the new `m▢`/`m▣` button on each pane's top border) maximizes/restores the focused pane — list `[1]`, info `[2]`, result `[3]`, or repo page `[4]` — and `1`/`2`/`3`/`4` swap which pane fills the screen while one is maximized. Unified behind a single `maximized: Option<Pane>`; only the repo page's maximize stays sticky (persisted), the others are session-only. **Favorite toggle moved off `m` → `b`, and favorites-first off `M` → `B`** to free `m` for maximize across every pane.

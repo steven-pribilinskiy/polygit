@@ -160,10 +160,16 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
             log_text
         };
         if !copy_text.is_empty() {
-            // The copy button is a 2-char target ending one column left of the maximize button.
-            let col_start = copy_end.saturating_sub(2);
-            top_spans.push(Span::styled("⧉", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-            top_spans.push(Span::raw(" "));
+            // The copy button follows the icon set (⧉ in Unicode mode, 📋 in emoji mode); its click +
+            // hover region is exactly the glyph's display width (1 or 2 cells), so the hover bg lands
+            // squarely on the glyph instead of a fixed 2-char target offset to its left. A 2-col gap
+            // (the two spaces below) separates it from the maximize button.
+            let glyph = app.icons().copy;
+            let glyph_w = UnicodeWidthStr::width(glyph) as u16;
+            let copy_end = copy_end.saturating_sub(1); // widen the gap to 2 cols
+            let col_start = copy_end.saturating_sub(glyph_w);
+            top_spans.push(Span::styled(glyph, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+            top_spans.push(Span::raw("  "));
             app.info_click.push((area.y, col_start, copy_end, InfoAction::CopyText(copy_text)));
         }
     }
