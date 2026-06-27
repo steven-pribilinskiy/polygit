@@ -206,7 +206,67 @@ pub(crate) fn style_footer(
         .collect()
 }
 
+/// Pack pre-styled footer hint segments into rows no wider than `width`, splitting only at ` · `
+/// separator boundaries so a key never parts from its label, and never leading a wrapped row with a
+/// stray separator. Used to fit the repo-page footer into the status-bar area.
+fn pack_hint_rows(
+    segments: Vec<(String, Style, Option<HintKey>)>,
+    width: u16,
+) -> Vec<Vec<(String, Style, Option<HintKey>)>> {
+    let is_sep = |text: &str| text == " · ";
+    // Group each ` · `-led separator with the key+label run that follows it (the first group has no
+    // leading separator).
+    let mut groups: Vec<Vec<(String, Style, Option<HintKey>)>> = Vec::new();
+    for segment in segments {
+        if is_sep(&segment.0) || groups.is_empty() {
+            groups.push(vec![segment]);
+        } else {
+            groups.last_mut().unwrap().extend([segment]);
+        }
+    }
+    let group_width = |group: &[(String, Style, Option<HintKey>)]| -> usize {
+        group.iter().map(|(text, _, _)| UnicodeWidthStr::width(text.as_str())).sum()
+    };
+    let mut rows: Vec<Vec<(String, Style, Option<HintKey>)>> = vec![Vec::new()];
+    let mut current_width = 0usize;
+    for group in groups {
+        let gw = group_width(&group);
+        if !rows.last().unwrap().is_empty() && current_width + gw > width as usize {
+            // Start a fresh row; drop this group's leading separator so the row doesn't begin with one.
+            let mut group = group;
+            if group.first().is_some_and(|(text, _, _)| is_sep(text)) {
+                group.remove(0);
+            }
+            current_width = group_width(&group);
+            rows.push(group);
+        } else {
+            rows.last_mut().unwrap().extend(group);
+            current_width += gw;
+        }
+    }
+    rows
+}
+
 pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    // Single footer, swapped by focus: when the docked repo page (panel [4]) holds focus, the status
+    // bar carries the repo-page hints instead of the main-view footer. (A maximized page never
+    // reaches here — it returns early in `render_widgets` with the footer on its own border.)
+    if app.repo_page.is_some() && app.maximized.is_none() && app.focus == Pane::RepoPage {
+        let rows = pack_hint_rows(repo_page_footer_segments(app), area.width);
+        let max_rows = (area.height as usize).max(1);
+        let lines: Vec<Line> = rows
+            .into_iter()
+            .take(max_rows)
+            .enumerate()
+            .map(|(index, row_segments)| {
+                build_hint_footer(row_segments, area.x, area.y + index as u16, &mut app.hint_click)
+            })
+            .collect();
+        let para = Paragraph::new(Text::from(lines)).style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(para, area);
+        return;
+    }
+
     let hint = Style::default().fg(Color::DarkGray);
     let active = Style::default().fg(Color::Gray);
     // Keycaps: accent + bold when the action is available; `style_footer` fades them to `dim_style`

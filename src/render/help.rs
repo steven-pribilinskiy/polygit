@@ -1125,20 +1125,7 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         frame.render_widget(Paragraph::new(design_tab_lines), design_tab_area);
     }
     let track = scrollbar_track(modal_area, content_area);
-    render_scrollbar(
-        frame,
-        track,
-        app.help_scroll,
-        items.len(),
-        content_height,
-        app.scrollbar_dragging == Some(ScrollKind::Help),
-    );
-    app.scroll_hits.push(ScrollHit {
-        kind: ScrollKind::Help,
-        track,
-        total: items.len(),
-        viewport: content_height,
-    });
+    render_scrollbar(frame, app, track, app.help_scroll, items.len(), content_height, ScrollKind::Help);
 }
 
 /// Pad `label` with spaces so it occupies exactly `width` display cells, centered.
@@ -1418,19 +1405,6 @@ pub(crate) fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area:
     frame.render_widget(Paragraph::new(windowed), panel_area);
 
     let track = scrollbar_track(modal_area, panel_area);
-    render_scrollbar(
-        frame,
-        track,
-        app.keyboard_scroll,
-        panel_lines.len(),
-        panel_height,
-        false,
-    );
-    app.scroll_hits.push(ScrollHit {
-        kind: ScrollKind::Keyboard,
-        track,
-        total: panel_lines.len(),
-        viewport: panel_height,
-    });
+    render_scrollbar(frame, app, track, app.keyboard_scroll, panel_lines.len(), panel_height, ScrollKind::Keyboard);
 }
 

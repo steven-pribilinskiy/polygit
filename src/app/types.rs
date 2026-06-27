@@ -933,6 +933,29 @@ impl Theme {
     }
 }
 
+/// How the draggable pane splitters are presented. `Dedicated` reserves a real 1-cell lane (a
+/// column between the panes, a row between stacked panes) filled with a persistent grip — clearly
+/// visible, at the cost of one cell of space. `Hover` keeps the panes flush (zero-width boundary)
+/// and only shows a thin grip under the cursor when it crosses a splitter hotspot. The two are
+/// mutually exclusive; the hotspots work in both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SplitterMode {
+    #[default]
+    Dedicated,
+    Hover,
+}
+
+impl SplitterMode {
+    /// Cycle Dedicated ⇄ Hover.
+    pub fn cycle(self) -> Self {
+        match self {
+            SplitterMode::Dedicated => SplitterMode::Hover,
+            SplitterMode::Hover => SplitterMode::Dedicated,
+        }
+    }
+}
+
 /// Which AI coding-agent CLI the `c` hotkey launches in the selected repo. The binary is run in
 /// the repo dir; when "Skip permissions" is on, the agent's bypass-all-prompts flag is appended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1380,7 +1403,7 @@ pub const SETTINGS_LABELS: [&str; 31] = [
     "Changed-row highlight", // 15
     "Panel padding",       // 16
     "Borders",             // 17
-    "Splitter",            // 18
+    "Pane splitter",       // 18
     "Repo page tabs",      // 19
     "Repo page",           // 20
     "Auto branch-check",   // 21
@@ -1649,6 +1672,8 @@ pub struct HintClick {
 /// Which scrollable region a scrollbar drag targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollKind {
+    List,
+    Info,
     Preview,
     DiffFiles,
     DiffBody,
@@ -1657,6 +1682,7 @@ pub enum ScrollKind {
     Keyboard,
     Settings,
     Changelog,
+    BuildInfo,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.
@@ -1922,6 +1948,8 @@ pub struct RepoState {
     pub auto_scroll: bool,
     /// Preview pane scroll offset (lines from top).
     pub preview_scroll: usize,
+    /// Info pane ([2]) scroll offset (lines from top) — independent per repo, like `preview_scroll`.
+    pub info_scroll: usize,
     /// When this repo's pull began (after acquiring the concurrency permit).
     pub start: Option<Instant>,
     /// Wall-clock time spent on this repo, set when a terminal status is assigned.
@@ -2003,6 +2031,7 @@ impl RepoState {
             log: LogBuffer::default(),
             auto_scroll: true,
             preview_scroll: 0,
+            info_scroll: 0,
             start: None,
             elapsed: None,
             details: None,

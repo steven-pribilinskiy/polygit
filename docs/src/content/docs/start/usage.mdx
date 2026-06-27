@@ -101,7 +101,10 @@ polygit has up to four focusable panels, each with a stable number in its title:
 
 `Tab` / `Shift-Tab` cycle focus across the **visible** panels (hidden ones are skipped, but
 numbers stay stable); `1`/`2`/`3`/`4` jump directly. The focused panel shows a bright rounded
-border. Drag the divider between the list and the right pane (it shows a grip and highlights
+border. **Every panel is maximizeable** — press `m` (or the `m▢`/`m▣` button on its top border)
+to maximize/restore the focused pane to full-screen; while a pane is maximized, `1`/`2`/`3`/`4`
+swap which pane fills the screen. Only the repo page's maximize is sticky; the others are
+session-only. Drag the divider between the list and the right pane (it shows a grip and highlights
 while dragging) or use `[` / `]`; drag the info/result boundary to resize `[2]` and `[3]`, and
 the restored repo page's top border to resize `[4]`.
 
@@ -135,8 +138,9 @@ Radios · Dialogs) as clickable **vertical tabs**, with `[`/`]` to move between 
 `,` opens a small settings modal (persisted in `~/.config/polygit/state.json`), organized into
 a **Lists** section (grouping, tree view, hide folder-header lines), a **Theming** section (icons,
 theme, background, contrast, selection), a **Sync** section (auto-pull policy — see below), an
-**Interaction** section (hover effects), a **Layout** section (panel padding, borders, splitter,
-repo-page tabs, repo page restored/maximized, branch-check), a **Tooltips** section (a master
+**Interaction** section (hover effects), a **Layout** section (panel padding, borders, pane
+splitter — *dedicated lane* vs *on hover*, repo-page tabs, repo page restored/maximized,
+branch-check), a **Tooltips** section (a master
 "All tooltips" toggle plus per-area switches — footer commands, column headers, group counts,
 settings rows, help links; tooltips also require Hover effects on), an **Agent** section
 (which AI coding-agent the `c` key launches — claude / codex / gemini — and a "Skip permissions"

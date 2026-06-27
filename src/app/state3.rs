@@ -698,19 +698,62 @@ impl AppState {
         self.repo_page_tab = RepoTab::Branches;
     }
 
-    /// Maximize ⇄ restore the repo page. The state is sticky (persisted) and the page stays focused.
-    pub fn toggle_repo_page_maximized(&mut self) {
-        self.repo_page_maximized = !self.repo_page_maximized;
-        self.focus = Pane::RepoPage;
+    /// Whether `pane` can be shown/maximized right now (maximizing an unavailable pane is a no-op):
+    /// Info needs a selected repo, the repo page needs to be open; List/Result are always available.
+    pub fn is_pane_available(&self, pane: Pane) -> bool {
+        match pane {
+            Pane::List | Pane::Result => true,
+            Pane::Info => self.selected_repo_index().is_some(),
+            Pane::RepoPage => self.repo_page.is_some(),
+        }
+    }
+
+    /// The pane that effectively owns the screen + keyboard right now: the maximized pane when one is
+    /// (still) available, otherwise the focused pane. Key routing and the maximized render path both
+    /// key off this so there's one definition of "which pane is active".
+    pub fn active_pane(&self) -> Pane {
+        match self.maximized {
+            Some(pane) if self.is_pane_available(pane) => pane,
+            _ => self.focus,
+        }
+    }
+
+    /// Maximize ⇄ restore `pane` (no-op if it isn't available). The pane becomes focused. Only the
+    /// repo page's maximize persists (via `save_state` → the legacy `repo_page_maximized` bool);
+    /// maximizing List/Info/Result is session-only but we still save so the repo-page bit stays correct.
+    pub fn toggle_maximized(&mut self, pane: Pane) {
+        if !self.is_pane_available(pane) {
+            return;
+        }
+        self.maximized = if self.maximized == Some(pane) { None } else { Some(pane) };
+        self.focus = pane;
         self.save_state();
     }
 
-    /// The focusable panels in cycle order, only the currently-visible ones. A maximized repo page
-    /// is full-screen, so it's the sole entry; otherwise List is always present and Info / Result /
+    /// Direct a `1`/`2`/`3`/`4` (or click) at `pane`: when a pane is maximized, swap which pane is
+    /// maximized (you're always looking at exactly one pane); otherwise just move focus. No-op if the
+    /// target pane isn't available.
+    pub fn focus_or_maximize_pane(&mut self, pane: Pane) {
+        if !self.is_pane_available(pane) {
+            return;
+        }
+        if self.maximized.is_some() {
+            self.maximized = Some(pane);
+            self.focus = pane;
+            self.save_state();
+        } else {
+            self.focus_pane(pane);
+        }
+    }
+
+    /// The focusable panels in cycle order, only the currently-visible ones. A maximized pane is
+    /// full-screen, so it's the sole entry; otherwise List is always present and Info / Result /
     /// RepoPage appear when shown. The number labels stay stable regardless (see `Pane::number`).
     pub fn visible_panes(&self) -> Vec<Pane> {
-        if self.repo_page.is_some() && self.repo_page_maximized {
-            return vec![Pane::RepoPage];
+        if let Some(pane) = self.maximized {
+            if self.is_pane_available(pane) {
+                return vec![pane];
+            }
         }
         let mut panes = vec![Pane::List];
         if self.info_pinned && !self.result_overlay && self.selected_repo_index().is_some() {
@@ -931,7 +974,7 @@ impl AppState {
     /// Whether the repo page is currently rendered as tabs (mode Auto + ≥2 non-empty sections).
     /// Maximized is always a single, full view — every section stacked, no tab bar.
     pub fn repo_page_tabbed(&self) -> bool {
-        !self.repo_page_maximized
+        self.maximized != Some(Pane::RepoPage)
             && self.repo_page_tabs == RepoTabsMode::Auto
             && self.repo_page_present_tabs().len() >= 2
     }

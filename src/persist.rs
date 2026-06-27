@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::{
     Background, BranchCheck, ButtonHoverStyle, ClaudeAgent, ColumnFlags, Contrast, DesignLayout,
     HelpTab, IconStyle, RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn,
-    SortDir, Theme, TooltipPrefs,
+    SortDir, SplitterMode, Theme, TooltipPrefs,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -118,9 +118,10 @@ pub struct PersistedState {
     /// Draw borders around the two main panes (default on). Off reclaims the border rows/cols.
     #[serde(default = "default_true")]
     pub show_borders: bool,
-    /// Draw the draggable splitter grip between the panes (default on).
-    #[serde(default = "default_true")]
-    pub show_splitter: bool,
+    /// How the pane splitters are presented: a dedicated 1-cell lane (default) or a thin grip shown
+    /// only on hover. (Replaces the old `show_splitter` bool; unknown old keys are ignored on load.)
+    #[serde(default)]
+    pub splitter_mode: SplitterMode,
     /// Pulse (flash) a repo row's changed cells after a pull/refresh (default on).
     #[serde(default = "default_true")]
     pub changed_row_flash: bool,

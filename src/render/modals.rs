@@ -382,7 +382,7 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
             frame.buffer_mut().set_style(rect, Style::default().bg(bg));
         }
         let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
-        render_scrollbar(frame, track, scroll, total, viewport, false);
+        render_scrollbar(frame, app, track, scroll, total, viewport, crate::app::ScrollKind::BuildInfo);
     } else {
         // Fallback: the raw lines (not valid JSON), syntax-highlighted, scrolled.
         let total = app.build_info_settings_preview.len();
@@ -397,7 +397,7 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
             .collect();
         frame.render_widget(Paragraph::new(visible), preview);
         let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
-        render_scrollbar(frame, track, app.build_info_scroll, total, viewport, false);
+        render_scrollbar(frame, app, track, app.build_info_scroll, total, viewport, crate::app::ScrollKind::BuildInfo);
     }
     let _ = pad;
 }
@@ -582,14 +582,7 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     frame.render_widget(Paragraph::new(lines), inner);
     if total > viewport {
         let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
-        let dragging = app.scrollbar_dragging == Some(crate::app::ScrollKind::Changelog);
-        render_scrollbar(frame, track, scroll, total, viewport, dragging);
-        app.scroll_hits.push(crate::app::ScrollHit {
-            kind: crate::app::ScrollKind::Changelog,
-            track,
-            total,
-            viewport,
-        });
+        render_scrollbar(frame, app, track, scroll, total, viewport, crate::app::ScrollKind::Changelog);
     }
     let _ = pad;
 }
@@ -785,7 +778,7 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     frame.render_widget(Paragraph::new(lines), body);
     if total > viewport {
         let track = Rect { x: body.x + body.width.saturating_sub(1), width: 1, ..body };
-        render_scrollbar(frame, track, scroll, total, viewport, false);
+        render_scrollbar(frame, app, track, scroll, total, viewport, crate::app::ScrollKind::Changelog);
     }
     let _ = pad;
 }
@@ -1217,7 +1210,13 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             vec![
                 ("Panel padding", vec![("on", app.panel_padding), ("off", !app.panel_padding)]),
                 ("Borders", vec![("on", app.show_borders), ("off", !app.show_borders)]),
-                ("Splitter", vec![("on", app.show_splitter), ("off", !app.show_splitter)]),
+                (
+                    "Pane splitter",
+                    vec![
+                        ("dedicated", app.splitter_mode == crate::app::SplitterMode::Dedicated),
+                        ("on hover", app.splitter_mode == crate::app::SplitterMode::Hover),
+                    ],
+                ),
                 (
                     "Repo page tabs",
                     vec![
@@ -1228,8 +1227,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 (
                     "Repo page",
                     vec![
-                        ("restored", !app.repo_page_maximized),
-                        ("maximized", app.repo_page_maximized),
+                        ("restored", app.maximized != Some(crate::app::Pane::RepoPage)),
+                        ("maximized", app.maximized == Some(crate::app::Pane::RepoPage)),
                     ],
                 ),
                 (
@@ -1659,18 +1658,11 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             }
         }
         frame.render_widget(Paragraph::new(lines), inner);
-        // A scrollbar when the content overflows the modal — registered as a ScrollHit so it's
-        // mouse-draggable (the generic handler maps a grab to `ScrollKind::Settings`).
+        // A scrollbar when the content overflows the modal — render_scrollbar registers it as a
+        // ScrollHit so it's mouse-draggable (the generic handler maps a grab to `ScrollKind::Settings`).
         if items.len() > viewport {
             let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
-            let dragging = app.scrollbar_dragging == Some(crate::app::ScrollKind::Settings);
-            render_scrollbar(frame, track, scroll, items.len(), viewport, dragging);
-            app.scroll_hits.push(crate::app::ScrollHit {
-                kind: crate::app::ScrollKind::Settings,
-                track,
-                total: items.len(),
-                viewport,
-            });
+            render_scrollbar(frame, app, track, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
         }
     } else {
         let mut lines: Vec<Line> = Vec::new();

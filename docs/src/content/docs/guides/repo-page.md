@@ -11,6 +11,12 @@ retargets the page); press `m` or the `[m maximize]` title-bar button (left of `
 section stacked under its header, no tab bar (tabs apply only while restored). The state is sticky
 (Settings → Layout → **Repo page**). Rows hover-highlight like the main list.
 
+While **restored**, the page is just panel `[4]` — `1`/`2`/`3`/`4` jump focus straight to the
+list / info / result / repo-page panels without leaving the page (and from a maximized page,
+`1`/`2`/`3` restore the layout first so the target panel is visible). The footer is **single and
+focus-aware**: it shows the repo-page keys while panel `[4]` is focused and the main-view keys
+while a list panel is focused — only the active panel's keys, never both at once.
+
 ## What the page shows
 
 Each section header is prefixed with its type icon. The worktrees and stashes sections only
@@ -64,6 +70,7 @@ Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / a click), then:
 | `y` | Copy the selected row's path |
 | `c` | Launch the AI coding agent in the row's path (set in Settings → Agent) |
 | `l` | Open [lazygit](https://github.com/jesseduffield/lazygit) in the row's path |
+| `1`/`2`/`3`/`4` | Focus the list / info / result / repo-page panel (restores the layout first if maximized) |
 | `m` | Maximize / restore the page (restored = docked panel `[4]`; maximized = full-screen) |
 | `Esc` / `q` | Return to the repo list |
 

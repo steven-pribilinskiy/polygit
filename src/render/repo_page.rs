@@ -417,20 +417,7 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
             .collect();
         frame.render_widget(Paragraph::new(rows), file_content);
         // Scrollbar inside the panel (on the inner's right column), not on the border.
-        render_scrollbar(
-            frame,
-            list_inner,
-            file_scroll,
-            visible.len(),
-            view_rows,
-            app.scrollbar_dragging == Some(ScrollKind::DiffFiles),
-        );
-        app.scroll_hits.push(ScrollHit {
-            kind: ScrollKind::DiffFiles,
-            track: list_inner,
-            total: visible.len(),
-            viewport: view_rows,
-        });
+        render_scrollbar(frame, app, list_inner, file_scroll, visible.len(), view_rows, ScrollKind::DiffFiles);
     }
 
     // ---- Diff panel ----
@@ -469,20 +456,7 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     let diff_view: Vec<Line> =
         rendered[diff_scroll..(diff_scroll + diff_view_h).min(diff_total)].to_vec();
     frame.render_widget(Paragraph::new(diff_view), diff_content);
-    render_scrollbar(
-        frame,
-        diff_inner,
-        diff_scroll,
-        diff_total,
-        diff_view_h,
-        app.scrollbar_dragging == Some(ScrollKind::DiffBody),
-    );
-    app.scroll_hits.push(ScrollHit {
-        kind: ScrollKind::DiffBody,
-        track: diff_inner,
-        total: diff_total,
-        viewport: diff_view_h,
-    });
+    render_scrollbar(frame, app, diff_inner, diff_scroll, diff_total, diff_view_h, ScrollKind::DiffBody);
 
     if let Some(modal) = app.diff_modal.as_mut() {
         modal.scroll = diff_scroll;
@@ -611,6 +585,61 @@ pub(crate) fn build_repo_page_info_lines(
     lines
 }
 
+/// The repo page's footer hints (`↑↓ move · enter diff · …`) as styled, clickable segments. Shared
+/// by the maximized page (drawn on its bottom border) and the docked layout (drawn in the status
+/// bar when panel [4] holds focus) so both stay in lock-step. The `d` verb is dynamic to the
+/// selected row, and `m` reflects the maximize/restore state.
+pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, Option<HintKey>)> {
+    let rows = app.repo_page_rows();
+    let selected = app.repo_page_selected.min(rows.len().saturating_sub(1));
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint = Style::default().fg(Color::DarkGray);
+    let sep = || (" · ".to_string(), hint, None);
+    let mut footer_segments: Vec<(String, Style, Option<HintKey>)> = vec![
+        ("↑↓".to_string(), key, None),
+        (" move".to_string(), hint, None),
+        sep(),
+        ("enter".to_string(), key, Some(HintKey::Enter)),
+        (" diff".to_string(), hint, Some(HintKey::Enter)),
+        sep(),
+        ("⇧enter".to_string(), key, Some(HintKey::ShiftEnter)),
+        (" checkout".to_string(), hint, Some(HintKey::ShiftEnter)),
+        sep(),
+        ("p".to_string(), key, Some(HintKey::Char('p'))),
+        (" pull".to_string(), hint, Some(HintKey::Char('p'))),
+    ];
+    if let Some(action) = rows.get(selected).and_then(|row| row.delete_action()) {
+        footer_segments.push(sep());
+        footer_segments.push(("d".to_string(), key, Some(HintKey::Char('d'))));
+        footer_segments.push((format!(" {action}"), hint, Some(HintKey::Char('d'))));
+    }
+    footer_segments.extend([
+        sep(),
+        ("t".to_string(), key, Some(HintKey::Char('t'))),
+        (" cols".to_string(), hint, Some(HintKey::Char('t'))),
+        sep(),
+        ("i".to_string(), key, Some(HintKey::Char('i'))),
+        (" info".to_string(), hint, Some(HintKey::Char('i'))),
+        sep(),
+        ("y".to_string(), key, Some(HintKey::Char('y'))),
+        (" copy".to_string(), hint, Some(HintKey::Char('y'))),
+        sep(),
+        ("?".to_string(), key, Some(HintKey::Char('?'))),
+        (" help".to_string(), hint, Some(HintKey::Char('?'))),
+        sep(),
+        ("m".to_string(), key, Some(HintKey::Char('m'))),
+        (
+            if app.maximized == Some(Pane::RepoPage) { " restore".to_string() } else { " maximize".to_string() },
+            hint,
+            Some(HintKey::Char('m')),
+        ),
+        sep(),
+        ("esc".to_string(), key, Some(HintKey::Esc)),
+        (" back".to_string(), hint, Some(HintKey::Esc)),
+    ]);
+    footer_segments
+}
+
 /// Render the full-screen dedicated repo page: branches + worktrees + fresh ahead/behind.
 pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
     let tabbed = app.repo_page_tabbed();
@@ -659,62 +688,17 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     } else if loading || !fetched {
         title.push_str(&format!("· {} fetching… ", spinner_frame(tick, icons)));
     }
-    // A styled, clickable footer matching the root status bar: bold accent keys, dim labels,
-    // each key/label clickable (it injects the same key). The `d` verb is dynamic to the selected
-    // row, and `?` opens the full keys. `↑↓ move` is a hint only — rows are selected by clicking.
-    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let hint = Style::default().fg(Color::DarkGray);
-    let sep = || (" · ".to_string(), hint, None);
-    let mut footer_segments: Vec<(String, Style, Option<HintKey>)> = vec![
-        ("↑↓".to_string(), key, None),
-        (" move".to_string(), hint, None),
-        sep(),
-        ("enter".to_string(), key, Some(HintKey::Enter)),
-        (" diff".to_string(), hint, Some(HintKey::Enter)),
-        sep(),
-        ("⇧enter".to_string(), key, Some(HintKey::ShiftEnter)),
-        (" checkout".to_string(), hint, Some(HintKey::ShiftEnter)),
-        sep(),
-        ("p".to_string(), key, Some(HintKey::Char('p'))),
-        (" pull".to_string(), hint, Some(HintKey::Char('p'))),
-    ];
-    if let Some(action) = rows.get(selected).and_then(|row| row.delete_action()) {
-        footer_segments.push(sep());
-        footer_segments.push(("d".to_string(), key, Some(HintKey::Char('d'))));
-        footer_segments.push((format!(" {action}"), hint, Some(HintKey::Char('d'))));
-    }
-    footer_segments.extend([
-        sep(),
-        ("t".to_string(), key, Some(HintKey::Char('t'))),
-        (" cols".to_string(), hint, Some(HintKey::Char('t'))),
-        sep(),
-        ("i".to_string(), key, Some(HintKey::Char('i'))),
-        (" info".to_string(), hint, Some(HintKey::Char('i'))),
-        sep(),
-        ("y".to_string(), key, Some(HintKey::Char('y'))),
-        (" copy".to_string(), hint, Some(HintKey::Char('y'))),
-        sep(),
-        ("?".to_string(), key, Some(HintKey::Char('?'))),
-        (" help".to_string(), hint, Some(HintKey::Char('?'))),
-        sep(),
-        ("m".to_string(), key, Some(HintKey::Char('m'))),
-        (
-            if app.repo_page_maximized { " restore".to_string() } else { " maximize".to_string() },
-            hint,
-            Some(HintKey::Char('m')),
-        ),
-        sep(),
-        ("esc".to_string(), key, Some(HintKey::Esc)),
-        (" back".to_string(), hint, Some(HintKey::Esc)),
-    ]);
-    // The footer sits on the bottom border, left-aligned (starts one cell in from the corner) so
-    // its click columns are predictable.
+    // The footer hints live on the bottom border ONLY when maximized (there's no status bar then).
+    // Docked, the footer is carried by the bottom status bar (it swaps to these hints when panel [4]
+    // holds focus), so drawing it here too would duplicate it — see `render_status_bar`.
     let footer_row = area.y + area.height.saturating_sub(1);
-    let footer_line = build_hint_footer(footer_segments, area.x + 1, footer_row, &mut app.hint_click);
+    let footer_line = (app.maximized == Some(Pane::RepoPage)).then(|| {
+        build_hint_footer(repo_page_footer_segments(app), area.x + 1, footer_row, &mut app.hint_click)
+    });
     // Top-border window controls: a textual maximize/restore button (with its `m` key mnemonic),
     // then the `[esc back]` close button. The label reflects the current state. Both are
     // always-visible, clickable affordances.
-    let win_text = if app.repo_page_maximized { "[m restore]" } else { "[m maximize]" };
+    let win_text = if app.maximized == Some(Pane::RepoPage) { "[m restore]" } else { "[m maximize]" };
     let back_text = "[esc back]";
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
@@ -752,16 +736,18 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     app.page_sort_click = Some((area.y, sort_start, sort_end));
     app.page_cols_click = Some((area.y, cols_start, cols_end));
     // Focused when restored and panel [4] holds focus, or always when maximized (it's the only pane).
-    let focused = app.repo_page_maximized || app.focus == Pane::RepoPage;
+    let focused = (app.maximized == Some(Pane::RepoPage)) || app.focus == Pane::RepoPage;
     let modal_open = app.any_modal_open();
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(pane_border_style(focused, modal_open))
         .title(title)
-        .title_top(title_top)
-        .title_bottom(footer_line);
+        .title_top(title_top);
+    if let Some(footer_line) = footer_line {
+        block = block.title_bottom(footer_line);
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -1281,20 +1267,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     }
     frame.render_widget(Paragraph::new(lines), inner);
     let track = scrollbar_track(area, inner);
-    render_scrollbar(
-        frame,
-        track,
-        app.repo_page_scroll,
-        items.len(),
-        inner_height,
-        app.scrollbar_dragging == Some(ScrollKind::RepoPage),
-    );
-    app.scroll_hits.push(ScrollHit {
-        kind: ScrollKind::RepoPage,
-        track,
-        total: items.len(),
-        viewport: inner_height,
-    });
+    render_scrollbar(frame, app, track, app.repo_page_scroll, items.len(), inner_height, ScrollKind::RepoPage);
 
     // Info panel: a bordered box showing details of the selected row.
     if let (Some(area), Some(info_lines)) = (info_area, info_lines) {
