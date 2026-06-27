@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.77.0 — 2026-06-27
+List header gains a filter trigger (filter · sort · columns); declutter the log title
+- **the list pane's top border now leads with a `/ filter` trigger**, in the order `filter · sort · columns` with `·` separators (was `t cols ▾ s sort ▾`). Clicking `/ filter` starts the name filter; sort/columns still open their dropdowns. The footer keeps its `/ filter` (with the active `[needle]` tag) as the live filter indicator.
+- **the command-log pane title drops the `pid —` noise** — the git subprocess PID only appears (`· pid N`) while a pull is actually running; a settled repo's title is now just `Command log · <repo> · <status> · <elapsed>`.
+- **a dim `·` separates the copy and maximize buttons** on the result pane's top border (`📋 · m▢`), matching the header dots.
+
 ## v2.76.1 — 2026-06-27
 Settings: flat-layout scrollbar, stable accordion height, fixed theme/Design-tab rows
 - **fix: the flat settings layout clipped overflow with no scrollbar** — on a short terminal the bottom rows (Theming → Tooltips) were cut off and unreachable. Flat now scrolls like the accordion: a draggable scrollbar, wheel/`j`/`k` scrolling, and the selected row is kept in view.

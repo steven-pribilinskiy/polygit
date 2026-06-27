@@ -115,9 +115,11 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
                 .unwrap_or_else(|| vec!["(loading…)".to_string()]);
             (format!(" {} · diff ", state.name), lines, state.preview_scroll)
         } else {
+            // The git subprocess PID is only meaningful while the pull is actually running; show it
+            // then and omit it otherwise (a settled repo has no process, so `pid —` was just noise).
             let pid_str = match &state.status {
-                RepoStatus::Running { pid } => format!("pid {pid}"),
-                _ => "pid —".to_string(),
+                RepoStatus::Running { pid } => format!(" · pid {pid}"),
+                _ => String::new(),
             };
             let elapsed_str = match state.elapsed {
                 Some(elapsed) => format!(" · {:.2}s", elapsed.as_secs_f64()),
@@ -127,7 +129,7 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
                 },
             };
             let header = format!(
-                " Command log · {} · {} · {}{} ",
+                " Command log · {} · {}{}{} ",
                 state.name,
                 status_label(&state.status),
                 pid_str,
@@ -162,14 +164,14 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         if !copy_text.is_empty() {
             // The copy button follows the icon set (⧉ in Unicode mode, 📋 in emoji mode); its click +
             // hover region is exactly the glyph's display width (1 or 2 cells), so the hover bg lands
-            // squarely on the glyph instead of a fixed 2-char target offset to its left. A 2-col gap
-            // (the two spaces below) separates it from the maximize button.
+            // squarely on the glyph. A dim ` · ` separator (3 cols) sits between it and the maximize
+            // button — matching the header's filter · sort · columns dots.
             let glyph = app.icons().copy;
             let glyph_w = UnicodeWidthStr::width(glyph) as u16;
-            let copy_end = copy_end.saturating_sub(1); // widen the gap to 2 cols
+            let copy_end = copy_end.saturating_sub(2); // ` · ` separator = 3 cols
             let col_start = copy_end.saturating_sub(glyph_w);
             top_spans.push(Span::styled(glyph, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-            top_spans.push(Span::raw("  "));
+            top_spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
             app.info_click.push((area.y, col_start, copy_end, InfoAction::CopyText(copy_text)));
         }
     }
