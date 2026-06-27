@@ -82,8 +82,10 @@ pub(crate) const DESIGN_PREVIEW_LABEL: &str = "preview confirm dialog";
 /// `&AppState` read ends before the caller mutably borrows `app.help_design_click`.
 pub(crate) fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str, Vec<(&'static str, bool)>) {
     use crate::app::{Background, Contrast, SelectionStyle, Theme};
+    // Indices match the settings rows (Theme 20 · Background 21 · Contrast 22 · List selection 23),
+    // so the Design tab's chip clicks reuse `set_setting_option` and hit the right field.
     match row_idx {
-        5 => (
+        20 => (
             "Theme",
             vec![
                 ("auto", app.theme == Theme::Auto),
@@ -91,7 +93,7 @@ pub(crate) fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str
                 ("light", app.theme == Theme::Light),
             ],
         ),
-        6 => (
+        21 => (
             "Background",
             vec![
                 ("normal", app.background == Background::Normal),
@@ -99,7 +101,7 @@ pub(crate) fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str
                 ("terminal", app.background == Background::Terminal),
             ],
         ),
-        7 => (
+        22 => (
             "Contrast",
             vec![
                 ("normal", app.contrast == Contrast::Normal),
@@ -161,7 +163,7 @@ pub(crate) fn design_sections(app: &AppState) -> Vec<DesignSection> {
 
     // Theming radios (Icons live in the Legend tab).
     let mut theming: Vec<(Line<'static>, Option<String>)> = Vec::new();
-    for row_idx in [5usize, 6, 7, 8] {
+    for row_idx in [20usize, 21, 22, 23] {
         let (label, options) = design_radio_data(app, row_idx);
         let underline_idx = radio_underline_idx(app, row_idx);
         let line = settings_row_line(

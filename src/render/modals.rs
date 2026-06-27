@@ -1015,7 +1015,8 @@ pub(crate) const SETTINGS_LABEL_W: u16 = 22;
 /// The option index to underline for a radio row (Theme only): when `auto` is selected, underline
 /// the autodetected option it resolves to (`dark`=1 / `light`=2). `None` for every other row/state.
 pub(crate) fn radio_underline_idx(app: &AppState, row_idx: usize) -> Option<usize> {
-    if row_idx == 5 && app.theme == crate::app::Theme::Auto {
+    // Row 20 is "Theme" (and the Design tab reuses the same index for its Theme radio).
+    if row_idx == 20 && app.theme == crate::app::Theme::Auto {
         Some(if app.auto_dark { 1 } else { 2 })
     } else {
         None
@@ -1334,16 +1335,14 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let (base_width, base_rows) = if tabbed {
         (tab_col_w + 1 + content_w, max_tab_rows.max(SETTINGS_TABS.len() as u16) + 1)
     } else if accordion {
-        // collapse-all button + blank, then per section: a header + (expanded) its rows.
+        // Size to the FULLY-EXPANDED item count (collapse-all button + blank, then every section's
+        // header + its rows) regardless of which sections are currently collapsed. The clamp below
+        // caps this at the available vertical space, so the modal fills the height up to the item
+        // count and — crucially — its outer size never changes as sections fold/unfold (no layout
+        // shift). The content still renders collapse-aware; only the height is collapse-independent.
         let mut rows = 2u16;
-        for (tab_idx, (name, count)) in SETTINGS_TABS.iter().enumerate() {
-            rows += 1;
-            if !app.settings_section_collapsed(tab_idx) {
-                rows += *count as u16;
-                if *name == "General" && app.groups.is_empty() {
-                    rows += 1;
-                }
-            }
+        for (_name, count) in SETTINGS_TABS.iter() {
+            rows += 1 + *count as u16;
         }
         // +1 reserves a right-hand gutter for the scrollbar so the widest row (e.g. Background's
         // "terminal" chip) isn't cropped under it.
@@ -1427,7 +1426,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     // Precomputed (not via `app` inside the closure, which would conflict with the closure's
     // disjoint field borrows): the Theme row's autodetect underline.
-    let theme_underline = radio_underline_idx(app, 5);
+    let theme_underline = radio_underline_idx(app, 20);
     let emoji_icons = app.icon_style == crate::app::IconStyle::Emoji;
     // Precomputed before push_row (its closure borrows app.settings_click, so a `&self` method call
     // mid-loop would conflict): per-section collapse state for the accordion layout.
@@ -1438,7 +1437,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let mut push_row = |row_idx: usize, left_x: u16, row_y: u16, out: &mut Vec<Line>| {
         let (label, options) = &all_rows[row_idx];
         let in_view = row_y < inner.y + inner.height;
-        let underline_idx = if row_idx == 5 { theme_underline } else { None };
+        let underline_idx = if row_idx == 20 { theme_underline } else { None };
         // Hide zeros (row 19) is inert under emoji icons (which always hide zeros).
         let disabled = row_idx == 19 && emoji_icons;
         out.push(settings_row_line(
@@ -1476,7 +1475,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             let (label, options) = &all_rows[row_idx];
             let row_y = inner.y + lines.len() as u16;
             let in_view = row_y < inner.y + inner.height;
-            let underline_idx = if row_idx == 5 { theme_underline } else { None };
+            let underline_idx = if row_idx == 20 { theme_underline } else { None };
             let disabled = row_idx == 19 && emoji_icons;
             lines.push(settings_row_line(
                 row_idx,
@@ -1639,7 +1638,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 }
                 AccItem::Row(row) => {
                     let (label, options) = &all_rows[*row];
-                    let underline_idx = if *row == 5 { theme_underline } else { None };
+                    let underline_idx = if *row == 20 { theme_underline } else { None };
                     let disabled = *row == 19 && emoji_icons;
                     lines.push(settings_row_line(
                         *row,
@@ -1668,23 +1667,93 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             render_scrollbar(frame, app, track, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
         }
     } else {
-        let mut lines: Vec<Line> = Vec::new();
+        // Flat: every section's header + rows in one list. Scroll it (offset + ensure-selected-
+        // visible + a draggable Settings scrollbar) so the content isn't clipped when it overflows a
+        // short modal — mirroring the accordion branch above.
+        enum FlatItem {
+            Blank,
+            Header(usize),
+            Row(usize),
+            GroupsHint,
+        }
+        let groups_empty = app.groups.is_empty();
+        let mut items: Vec<FlatItem> = Vec::new();
         if !app.panel_padding {
-            lines.push(Line::from(String::new()));
+            items.push(FlatItem::Blank);
         }
         let mut row_idx = 0usize;
-        for (tab_idx, (name, count)) in SETTINGS_TABS.iter().enumerate() {
+        for (tab_idx, (_, count)) in SETTINGS_TABS.iter().enumerate() {
             if tab_idx > 0 {
-                lines.push(Line::from(String::new()));
+                items.push(FlatItem::Blank);
             }
-            lines.push(Line::from(Span::styled(format!("  {name}"), section_style)));
+            items.push(FlatItem::Header(tab_idx));
             for _ in 0..*count {
-                let row_y = inner.y + lines.len() as u16;
-                push_row(row_idx, inner.x, row_y, &mut lines);
+                items.push(FlatItem::Row(row_idx));
+                if all_rows[row_idx].0 == "Grouping" && groups_empty {
+                    items.push(FlatItem::GroupsHint);
+                }
                 row_idx += 1;
             }
         }
+        let viewport = inner.height as usize;
+        let max_scroll = items.len().saturating_sub(viewport);
+        let sel_line = items
+            .iter()
+            .position(|item| matches!(item, FlatItem::Row(row) if *row == app.settings_selected));
+        let mut scroll = app.settings_scroll.min(max_scroll);
+        if app.scrollbar_dragging == Some(crate::app::ScrollKind::Settings) {
+            // A scrollbar drag drives the view; sync the selection to the first visible row so the
+            // keyboard selection stays put and the next frame doesn't snap the view back.
+            if let Some(FlatItem::Row(row)) =
+                items.iter().skip(scroll).find(|item| matches!(item, FlatItem::Row(_)))
+            {
+                app.settings_selected = *row;
+            }
+        } else if let Some(sel) = sel_line {
+            if sel < scroll {
+                scroll = sel;
+            } else if viewport > 0 && sel >= scroll + viewport {
+                scroll = sel + 1 - viewport;
+            }
+        }
+        app.settings_scroll = scroll;
+        let mut lines: Vec<Line> = Vec::new();
+        for (offset, item) in items.iter().skip(scroll).take(viewport).enumerate() {
+            let screen_y = inner.y + offset as u16;
+            match item {
+                FlatItem::Blank => lines.push(Line::from(String::new())),
+                FlatItem::Header(tab_idx) => {
+                    let (name, _) = SETTINGS_TABS[*tab_idx];
+                    lines.push(Line::from(Span::styled(format!("  {name}"), section_style)));
+                }
+                FlatItem::Row(row) => {
+                    let (label, options) = &all_rows[*row];
+                    let underline_idx = if *row == 20 { theme_underline } else { None };
+                    let disabled = *row == 19 && emoji_icons;
+                    lines.push(settings_row_line(
+                        *row,
+                        app.settings_selected == *row,
+                        label,
+                        options,
+                        (inner.x, screen_y),
+                        true,
+                        underline_idx,
+                        disabled,
+                        None,
+                        &mut app.settings_click,
+                    ));
+                }
+                FlatItem::GroupsHint => lines.push(Line::from(Span::styled(
+                    "      no groups defined — ~/.config/polygit/groups.json",
+                    Style::default().fg(Color::DarkGray),
+                ))),
+            }
+        }
         frame.render_widget(Paragraph::new(lines), inner);
+        if items.len() > viewport {
+            let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
+            render_scrollbar(frame, app, track, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
+        }
     }
     // The settings hint footer lives on the bottom border (built above); no in-content row.
 }
