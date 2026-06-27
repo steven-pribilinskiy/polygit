@@ -10,14 +10,20 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         return;
     };
     let items = app.dropdown_items();
-    let is_sort = matches!(dropdown.kind, DropdownKind::ListSort | DropdownKind::PageSort);
+    // Single-select dropdowns (sort, status filter) use a `● `/`○ ` radio marker; the multi-toggle
+    // columns dropdown uses `[x] `/`[ ] `.
+    let is_radio = matches!(
+        dropdown.kind,
+        DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ListFilter
+    );
     let title = match dropdown.kind {
         DropdownKind::ListColumns | DropdownKind::PageColumns => " columns ",
         DropdownKind::ListSort | DropdownKind::PageSort => " sort ",
+        DropdownKind::ListFilter => " filter ",
     };
-    // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for sort (`● `) and
-    // 4 for columns (`[x] `), plus the mnemonic key and a space.
-    let marker_w = if is_sort { 2 } else { 4 };
+    // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for a radio (`● `)
+    // and 4 for columns (`[x] `), plus the mnemonic key and a space.
+    let marker_w = if is_radio { 2 } else { 4 };
     let inner_w =
         items.iter().map(|item| item.label.chars().count()).max().unwrap_or(6) + marker_w + 2;
     let width = (inner_w as u16 + 2).clamp(14, area.width.saturating_sub(2).max(14));
@@ -51,7 +57,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         if index as u16 >= body.height {
             break;
         }
-        let marker = if is_sort {
+        let marker = if is_radio {
             if item.on { "● " } else { "○ " }
         } else if item.on {
             "[x] "

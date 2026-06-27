@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use app::{
     point_in, region_hit, AppState, Command as Cmd, ConfirmAction, ConfirmDialog,
     DiffFocus, DiffSource, InfoAction, Leader, PageRow, PageRowKind, Pane,
-    RepoStatus, RightView, SharedRepoState, StatusFilter,
+    RepoStatus, RightView, SharedRepoState,
 };
 use worker::{
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
@@ -529,11 +529,11 @@ fn dispatch_command(
         Cmd::Help => app.open_help(),
         Cmd::OpenPage => app.open_repo_page(),
         Cmd::FilterLeader => {
-            app.pending_leader = if app.pending_leader == Some(Leader::Filter) {
-                None
-            } else {
-                Some(Leader::Filter)
-            };
+            // `f` / clicking the `f by-status` chip opens the status-filter dropdown under the list
+            // header's trigger (the same dropdown UI as columns/sort).
+            if let Some((row, _, end)) = app.list_filter_click {
+                app.open_dropdown(app::DropdownKind::ListFilter, end, row);
+            }
         }
         Cmd::SetFilter(filter) => {
             // Picking a filter applies it and closes the leader (unlike the sticky column menu).
@@ -2355,7 +2355,13 @@ async fn run_event_loop(
 
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        // The list header's `t cols ▾` / `s sort ▾` chips open their dropdowns.
+                        // The list header's `f by-status` / `s sort ▾` / `t cols ▾` chips open dropdowns.
+                        if let Some((row, _, end)) = app.list_filter_click.filter(|&(r, s, e)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.open_dropdown(app::DropdownKind::ListFilter, end, row);
+                            continue;
+                        }
                         if let Some((row, _, end)) = app.list_cols_click.filter(|&(r, s, e)| {
                             mouse.row == r && mouse.column >= s && mouse.column < e
                         }) {
@@ -3608,25 +3614,6 @@ async fn run_event_loop(
                     continue;
                 }
 
-                // `f` filter mode: pick one status filter (a/u/c/s/f/i), then exit. Esc cancels;
-                // any other key just exits without changing the filter.
-                if app.pending_leader == Some(Leader::Filter) {
-                    let picked = match key.code {
-                        KeyCode::Char('a') => Some(StatusFilter::All),
-                        KeyCode::Char('u') => Some(StatusFilter::Updated),
-                        KeyCode::Char('c') => Some(StatusFilter::UpToDate),
-                        KeyCode::Char('s') => Some(StatusFilter::Skipped),
-                        KeyCode::Char('f') => Some(StatusFilter::Failed),
-                        KeyCode::Char('i') => Some(StatusFilter::Issues),
-                        _ => None,
-                    };
-                    if let Some(filter) = picked {
-                        app.set_status_filter(filter);
-                    }
-                    app.pending_leader = None;
-                    continue;
-                }
-
                 // `v` view mode: pick grouped (`g`) or tree (`t`), then exit. Esc/any other
                 // key just closes the menu.
                 if app.pending_leader == Some(Leader::View) {
@@ -3764,9 +3751,11 @@ async fn run_event_loop(
                         }
                     }
 
-                    // `f` leader: arm the status-filter chord (next key picks the filter).
+                    // `f` opens the status-filter dropdown under its header trigger (like `t`/`s`).
                     (KeyCode::Char('f'), _) => {
-                        app.pending_leader = Some(Leader::Filter);
+                        if let Some((row, _, end)) = app.list_filter_click {
+                            app.open_dropdown(app::DropdownKind::ListFilter, end, row);
+                        }
                     }
 
                     // `,` opens the settings modal.

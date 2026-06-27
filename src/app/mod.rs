@@ -372,6 +372,8 @@ pub struct AppState {
     /// The clickable `[cols ▾]` / `[sort ▾]` chips on the list header and the repo-page title bar.
     pub list_cols_click: Option<(u16, u16, u16)>,
     pub list_sort_click: Option<(u16, u16, u16)>,
+    /// The list pane's top-border `f by-status` trigger region (opens the status-filter dropdown).
+    pub list_filter_click: Option<(u16, u16, u16)>,
     pub page_cols_click: Option<(u16, u16, u16)>,
     pub page_sort_click: Option<(u16, u16, u16)>,
     /// Which repo-page branch columns are shown (persisted).
@@ -786,6 +788,7 @@ impl AppState {
             dropdown_item_click: Vec::new(),
             list_cols_click: None,
             list_sort_click: None,
+            list_filter_click: None,
             page_cols_click: None,
             page_sort_click: None,
             repo_page_columns: persisted.repo_page_columns,
