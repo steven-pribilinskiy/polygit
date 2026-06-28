@@ -1940,13 +1940,18 @@ async fn run_event_loop(
                             app.show_settings = false;
                         }
                     }
-                    // The wheel scrolls the settings list by moving the selection (the render keeps
-                    // the selection visible, so a raw scroll offset would just snap back). The drawn
-                    // scrollbar's drag is handled by the generic scrollbar handler above.
-                    let step = wheel_step(mouse.modifiers, 3, 10) as isize;
+                    // The wheel scrolls the container freely (web-app style) — it moves the view
+                    // offset, NOT the selection, and doesn't set `settings_ensure_visible`, so the
+                    // render leaves the view where the wheel put it. A keyboard command re-snaps to
+                    // the selected setting. The drawn scrollbar's drag is the generic handler above.
+                    let step = wheel_step(mouse.modifiers, 3, 10);
                     match mouse.kind {
-                        MouseEventKind::ScrollDown => app.settings_move(step),
-                        MouseEventKind::ScrollUp => app.settings_move(-step),
+                        MouseEventKind::ScrollDown => {
+                            app.settings_scroll = app.settings_scroll.saturating_add(step);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.settings_scroll = app.settings_scroll.saturating_sub(step);
+                        }
                         _ => {}
                     }
                     continue;
@@ -2852,6 +2857,11 @@ async fn run_event_loop(
                 // Settings modal (`,`): j/k move, space/enter toggle, esc/q/, close. Works over
                 // both the main list and the repo page since it's gated before either.
                 if app.show_settings {
+                    // Any keyboard command re-snaps the view to the selected setting on the next
+                    // render (the wheel, handled in the mouse branch, deliberately does not — it
+                    // scrolls the container freely). Mirrors a web app: scroll with the wheel, then
+                    // a key press jumps back to the focused control.
+                    app.settings_ensure_visible = true;
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {

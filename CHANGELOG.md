@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.81.1 — 2026-06-28
+Settings wheel scrolls the container (web-app style), not the selection
+- the mouse wheel now scrolls the settings view **freely without moving the selection** (2.81.0 moved the selection). Scroll away from the selected setting and it stays put off-screen; then any keyboard command (`↑↓` / `←→` / `space` / `enter` / `tab` / …) snaps the view back to it — exactly like a focused control in a web app. (Mirrors the changelog modal's decoupled scroll.)
+
 ## v2.81.0 — 2026-06-28
 Repo-page actions keep the list status in sync; settings wheel + scrollbar-gutter fixes
 - **the list status now stays in sync after a repo-page action** — checking out a branch (or deleting one / discarding / dropping a stash / removing a worktree) re-derives the repo's status from fresh local facts, so a stale pull result (e.g. a `ref gone` whose deleted branch you just switched away from) no longer lingers. The status now reflects the current branch: `dirty` / `no upstream` / `up-to-date` (the Δ column still shows any ahead/behind).
