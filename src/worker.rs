@@ -894,10 +894,37 @@ pub async fn run_diff_modal_file(app_state: Arc<Mutex<AppState>>) {
     }
 }
 
+/// Populate the open branch-checkout picker: fetch + list local/remote branches, then store them
+/// (clearing the loading flag). Stale-guarded so a closed/changed picker is left alone.
+pub async fn run_load_branches(app_state: Arc<Mutex<AppState>>, repo_idx: usize) {
+    let path = {
+        let app = app_state.lock().unwrap();
+        match app.branch_picker.as_ref() {
+            Some(picker) if picker.repo_idx == repo_idx => {
+                app.repos[repo_idx].lock().unwrap().path.clone()
+            }
+            _ => return,
+        }
+    };
+    let branches = crate::git::list_branch_names(&path).await;
+    let mut app = app_state.lock().unwrap();
+    if let Some(picker) = app.branch_picker.as_mut() {
+        if picker.repo_idx == repo_idx {
+            picker.branches = branches;
+            picker.loading = false;
+        }
+    }
+}
+
 /// Check out a branch in a repo's main worktree, set a result banner, and reload its page.
-pub async fn run_checkout(app_state: Arc<Mutex<AppState>>, repo_idx: usize, branch: String) {
+pub async fn run_checkout(
+    app_state: Arc<Mutex<AppState>>,
+    repo_idx: usize,
+    branch: String,
+    allow_dirty: bool,
+) {
     let path = { app_state.lock().unwrap().repos[repo_idx].lock().unwrap().path.clone() };
-    let result = checkout_branch(&path, &branch).await;
+    let result = checkout_branch(&path, &branch, allow_dirty).await;
     // On success, refresh the cached branch + details so the main list reflects the new HEAD
     // (not the branch we were on before). Fetched before taking the locks since it's async.
     let new_details = if result.is_ok() {

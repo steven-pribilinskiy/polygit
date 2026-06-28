@@ -640,7 +640,7 @@
           "right-click"
         ],
         "action": "Open the repo's kebab (⋮) menu",
-        "note": "state-aware actions: copy a cleanup prompt (with all repo facts embedded), run the agent, lazygit, diff, refetch, open remote",
+        "note": "state-aware actions: checkout branch (filterable local+remote picker), copy a cleanup prompt (all repo facts embedded), run the agent, lazygit, diff, refetch, open remote",
         "keywords": [
           "kebab",
           "menu",

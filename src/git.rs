@@ -1495,9 +1495,11 @@ pub async fn list_worktrees(dir: &Path) -> Vec<WorktreeInfo> {
     parse_worktree_porcelain(&String::from_utf8_lossy(&output.stdout), dir)
 }
 
-/// Check out `branch` in the main worktree. Refuses if the tree is dirty.
-pub async fn checkout_branch(dir: &Path, branch: &str) -> Result<(), String> {
-    if is_dirty(dir).await.unwrap_or(false) {
+/// Check out `branch` in the main worktree. Refuses up front if the tree is dirty UNLESS
+/// `allow_dirty` (then git decides — it carries non-conflicting changes over and still errors if a
+/// switch would overwrite local edits, so this is safe-by-default even when forced past the guard).
+pub async fn checkout_branch(dir: &Path, branch: &str, allow_dirty: bool) -> Result<(), String> {
+    if !allow_dirty && is_dirty(dir).await.unwrap_or(false) {
         return Err("working tree has uncommitted changes".to_string());
     }
     let dir_str = dir.to_str().unwrap_or(".");
@@ -1511,6 +1513,48 @@ pub async fn checkout_branch(dir: &Path, branch: &str) -> Result<(), String> {
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
+}
+
+/// List branch names for the checkout picker: a `git fetch` (best-effort) then local + remote
+/// branches (remote `origin/x` shown as `x`), deduped, with the current branch dropped. Sorted with
+/// the conventional bases first.
+pub async fn list_branch_names(dir: &Path) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    // Best-effort refresh of remote refs; ignore failures (offline / no remote).
+    let _ = Command::new("git").args(["-C", dir_str, "fetch", "--quiet", "--all"]).output().await;
+    let current = get_branch(dir).await.unwrap_or_default();
+    let output = match Command::new("git")
+        .args([
+            "-C", dir_str, "for-each-ref", "--format=%(refname:short)",
+            "refs/heads", "refs/remotes",
+        ])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut names: Vec<String> = Vec::new();
+    for raw in String::from_utf8_lossy(&output.stdout).lines() {
+        let name = raw.strip_prefix("origin/").unwrap_or(raw).trim();
+        if name.is_empty() || name == "HEAD" || name == current {
+            continue;
+        }
+        if seen.insert(name.to_string()) {
+            names.push(name.to_string());
+        }
+    }
+    names.sort_by_key(|name| {
+        let rank = match name.as_str() {
+            "main" => 0,
+            "master" => 1,
+            "dev" => 2,
+            _ => 3,
+        };
+        (rank, name.to_lowercase())
+    });
+    names
 }
 
 /// Delete `branch`: `git branch -d` (safe, refuses unmerged) or `-D` (force) when `force`.

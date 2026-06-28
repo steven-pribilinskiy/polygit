@@ -728,6 +728,8 @@ impl Default for RepoPageColumns {
 /// (e.g. a stash-cleanup prompt only appears when there are stashes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KebabAction {
+    /// Check out a different branch (opens the filterable branch picker).
+    Checkout,
     /// Copy a state-aware cleanup prompt (all repo facts embedded) for an AI agent.
     CopyCleanupPrompt,
     /// Toggle the "wrap the copied prompt in `cd <repo> && claude '<prompt>'`" checkbox.
@@ -781,6 +783,33 @@ pub struct RepoPageStashColumns {
 impl Default for RepoPageStashColumns {
     fn default() -> Self {
         Self { age: true, stats: true }
+    }
+}
+
+/// The open branch-checkout picker (from a repo's kebab menu): a filterable list of local + remote
+/// branches; selecting one checks it out (with a dirty-tree confirmation when the tree isn't clean).
+#[derive(Debug, Clone)]
+pub struct BranchPicker {
+    pub repo_idx: usize,
+    /// All candidate branch names (local + remote, deduped); `None`/empty while `loading`.
+    pub branches: Vec<String>,
+    /// Live substring filter (typed into the picker).
+    pub filter: String,
+    /// Highlighted index into the *filtered* list.
+    pub selected: usize,
+    /// True while the async `git fetch` + branch list is in flight.
+    pub loading: bool,
+}
+
+impl BranchPicker {
+    /// The branches matching the current filter (case-insensitive substring), in list order.
+    pub fn filtered(&self) -> Vec<&str> {
+        let needle = self.filter.to_lowercase();
+        self.branches
+            .iter()
+            .filter(|name| needle.is_empty() || name.to_lowercase().contains(&needle))
+            .map(String::as_str)
+            .collect()
     }
 }
 
@@ -2041,6 +2070,8 @@ pub enum ConfirmAction {
     DropStash { repo_idx: usize, index: usize },
     RemoveWorktree { repo_idx: usize, path: PathBuf, force: bool },
     DiscardChanges { repo_idx: usize, path: PathBuf },
+    /// Check out `branch` despite a dirty working tree (confirmed past the dirty guard).
+    CheckoutBranch { repo_idx: usize, branch: String },
     /// Reset every settings-modal preference to its default.
     ResetSettings,
     /// Download + install a specific released version over the running binary, then auto-reload.

@@ -426,6 +426,12 @@ pub struct AppState {
     pub base_picker_close_click: Option<(u16, u16, u16)>,
     /// Base-picker option rows: (screen row, option index — 0 = detected, then candidates).
     pub base_picker_click: Vec<(u16, usize)>,
+    /// The branch-checkout picker (kebab → "Checkout branch…"), when open.
+    pub branch_picker: Option<BranchPicker>,
+    pub branch_picker_area: Rect,
+    pub branch_picker_close_click: Option<(u16, u16, u16)>,
+    /// Branch-picker rows: (screen row, index into the *filtered* branch list).
+    pub branch_picker_click: Vec<(u16, usize)>,
     /// The fzf-style finder overlay (`P`), when open. Searches all repos to jump the selection.
     pub finder: Option<tui_pick::finder::FinderState>,
     /// Shared goto-repo usage history, consulted for recent/most-used sort and appended on jump.
@@ -904,6 +910,10 @@ impl AppState {
             base_picker_area: Rect::default(),
             base_picker_close_click: None,
             base_picker_click: Vec::new(),
+            branch_picker: None,
+            branch_picker_area: Rect::default(),
+            branch_picker_close_click: None,
+            branch_picker_click: Vec::new(),
             finder: None,
             finder_history: tui_pick::History::load_default(),
             finder_area: Rect::default(),
