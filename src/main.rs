@@ -99,8 +99,8 @@ struct Cli {
     #[arg(long)]
     no_worktrees: bool,
 
-    /// Per-pull timeout in seconds (default: 30)
-    #[arg(long, env = "PULL_TIMEOUT", default_value = "30")]
+    /// Per-pull timeout in seconds (default: 10)
+    #[arg(long, env = "PULL_TIMEOUT", default_value = "10")]
     timeout: u64,
 
     /// Emit a per-repo timing report (slowest first) after the run
@@ -1211,11 +1211,10 @@ async fn run_event_loop(
 
         // Process retry queue
         if !retry_queue.is_empty() {
-            let (control, max_jobs, icon_style) = {
+            let (control, max_jobs, icon_style, timeout_secs) = {
                 let app = app_state.lock().unwrap();
-                (app.throttle.clone(), app.max_jobs, app.icon_style)
+                (app.throttle.clone(), app.max_jobs, app.icon_style, app.discovery_timeout_secs)
             };
-            let timeout_secs = 30u64;
 
             // A fresh batch of work is starting: restart the header timer and re-arm the
             // all-done edge so it freezes again once this batch completes.
