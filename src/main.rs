@@ -2201,7 +2201,8 @@ async fn run_event_loop(
                                     mouse.row == r && mouse.column >= s && mouse.column < e
                                 })
                             {
-                                app.open_dropdown(app::DropdownKind::PageColumns, end, row);
+                                let kind = app.repo_page_cols_dropdown_kind();
+                                app.open_dropdown(kind, end, row);
                             } else if let Some((row, _, end)) =
                                 app.page_sort_click.filter(|&(r, s, e)| {
                                     mouse.row == r && mouse.column >= s && mouse.column < e
@@ -3452,7 +3453,8 @@ async fn run_event_loop(
                         // `t` / `s` open the columns / sort dropdown (anchored under their chip).
                         KeyCode::Char('t') => {
                             if let Some((row, _, end)) = app.page_cols_click {
-                                app.open_dropdown(app::DropdownKind::PageColumns, end, row);
+                                let kind = app.repo_page_cols_dropdown_kind();
+                                app.open_dropdown(kind, end, row);
                             }
                         }
                         KeyCode::Char('s') => {

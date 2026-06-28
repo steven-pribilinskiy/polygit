@@ -1032,6 +1032,16 @@ impl AppState {
         self.repo_page_tabbed_override.unwrap_or(auto)
     }
 
+    /// Which columns dropdown the repo page's `t cols ▾` opens: the Stashes tab has its own
+    /// (StashColumns); every other tab uses the branch-column dropdown (PageColumns).
+    pub fn repo_page_cols_dropdown_kind(&self) -> DropdownKind {
+        if self.repo_page_tabbed() && self.repo_page_tab == RepoTab::Stashes {
+            DropdownKind::StashColumns
+        } else {
+            DropdownKind::PageColumns
+        }
+    }
+
     /// Switch the active repo-page tab, resetting the selection to its first row.
     pub fn repo_page_select_tab(&mut self, tab: RepoTab) {
         self.repo_page_tab = tab;

@@ -755,31 +755,44 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         max_button_spans(app, Pane::RepoPage, area.y, close_region.1.saturating_sub(sep_w));
     let max_start = after_max + 1;
     let sep = || Span::styled(" · ", label_style);
-    // The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (shared by the
-    // worktrees rows). The Commits and Stashes tabs have their own fixed independent layouts that
-    // those branch columns/sorts don't touch, so hide the triggers there (and `None` the click
-    // regions, which also disables the `t`/`s` keys, since they open the dropdown only when set).
-    let show_col_triggers = !(tabbed
+    // `t cols ▾` shows on the branch layout AND the Stashes tab (each has its own columns dropdown);
+    // it's hidden only on Commits (fixed layout). `s sort ▾` applies to the branch columns only, so
+    // it's hidden on both Stashes and Commits. `None`ing a click region also disables its key.
+    let show_cols = !(tabbed && active_tab == crate::app::RepoTab::Commits);
+    let show_sort = !(tabbed
         && matches!(active_tab, crate::app::RepoTab::Commits | crate::app::RepoTab::Stashes));
     let mut title_spans: Vec<Span> = Vec::new();
-    if show_col_triggers {
-        let sort_end = max_start.saturating_sub(sep_w);
+    // Compute regions right-to-left from the max-button group: sort (rightmost, if shown) then cols.
+    let mut edge = max_start.saturating_sub(sep_w);
+    if show_sort {
+        let sort_end = edge;
         let sort_start = sort_end.saturating_sub(sort_text_len as u16);
-        let cols_end = sort_start.saturating_sub(sep_w);
-        let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
         app.page_sort_click = Some((area.y, sort_start, sort_end));
+        edge = sort_start.saturating_sub(sep_w);
+    } else {
+        app.page_sort_click = None;
+    }
+    if show_cols {
+        let cols_end = edge;
+        let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
         app.page_cols_click = Some((area.y, cols_start, cols_end));
+    } else {
+        app.page_cols_click = None;
+    }
+    // Display order (left→right): cols, then sort, then the max group.
+    if show_cols {
         title_spans.extend([
             Span::styled("t", key_style),
             Span::styled(" cols ▾", label_style),
             sep(),
+        ]);
+    }
+    if show_sort {
+        title_spans.extend([
             Span::styled("s", key_style),
             Span::styled(sort_label.clone(), label_style),
             sep(),
         ]);
-    } else {
-        app.page_sort_click = None;
-        app.page_cols_click = None;
     }
     title_spans.extend([
         max_spans[0].clone(),
@@ -1193,42 +1206,56 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             }
             None => "…".to_string(),
         };
+        // age + stats are toggleable (the `t cols ▾` dropdown on the Stashes tab); ref + message
+        // always show. A hidden column reclaims its width for the message.
+        let show_age = app.repo_page_stash_columns.age;
+        let show_stats = app.repo_page_stash_columns.stats;
         let stash_rows = || rows.iter().filter(|row| row.kind == PageRowKind::Stash);
         let ref_w = stash_rows()
             .map(|row| format!("stash@{{{}}}", row.stash_index.unwrap_or(0)).len())
             .max()
             .unwrap_or(10)
             .clamp(8, 16);
-        let age_w = stash_rows()
-            .map(|row| UnicodeWidthStr::width(row.last_commit_rel.as_str()))
-            .max()
-            .unwrap_or(0)
-            .clamp(4, 16);
-        let stats_w = stash_rows()
-            .map(|row| UnicodeWidthStr::width(stats_text(row).as_str()))
-            .max()
-            .unwrap_or(8)
-            .clamp(4, 24);
-        let used = 2 + ref_w + 2 + age_w + 2 + stats_w + 2;
+        let age_w = if show_age {
+            stash_rows()
+                .map(|row| UnicodeWidthStr::width(row.last_commit_rel.as_str()))
+                .max()
+                .unwrap_or(0)
+                .clamp(4, 16)
+        } else {
+            0
+        };
+        let stats_w = if show_stats {
+            stash_rows()
+                .map(|row| UnicodeWidthStr::width(stats_text(row).as_str()))
+                .max()
+                .unwrap_or(8)
+                .clamp(4, 24)
+        } else {
+            0
+        };
+        let used = 2 + ref_w
+            + if show_age { 2 + age_w } else { 0 }
+            + if show_stats { 2 + stats_w } else { 0 }
+            + 2;
         let subject_w = (inner.width as usize).saturating_sub(used).max(10);
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Stash {
                 continue;
             }
             let stash_ref = format!("stash@{{{}}}", row.stash_index.unwrap_or(0));
-            items.push((
-                Line::from(vec![
-                    Span::styled(
-                        format!("  {:<ref_w$}", truncate_str(&stash_ref, ref_w)),
-                        Style::default().fg(Color::Magenta),
-                    ),
-                    Span::styled(format!("  {:<age_w$}", truncate_str(&row.last_commit_rel, age_w)), label),
-                    Span::styled(format!("  {:<stats_w$}", truncate_str(&stats_text(row), stats_w)), label),
-                    Span::raw(format!("  {}", truncate_str(&row.branch, subject_w))),
-                ]),
-                Some(sel_index),
-                None,
-            ));
+            let mut spans = vec![Span::styled(
+                format!("  {:<ref_w$}", truncate_str(&stash_ref, ref_w)),
+                Style::default().fg(Color::Magenta),
+            )];
+            if show_age {
+                spans.push(Span::styled(format!("  {:<age_w$}", truncate_str(&row.last_commit_rel, age_w)), label));
+            }
+            if show_stats {
+                spans.push(Span::styled(format!("  {:<stats_w$}", truncate_str(&stats_text(row), stats_w)), label));
+            }
+            spans.push(Span::raw(format!("  {}", truncate_str(&row.branch, subject_w))));
+            items.push((Line::from(spans), Some(sel_index), None));
         }
     }
 

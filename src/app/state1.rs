@@ -340,6 +340,7 @@ impl AppState {
             },
             branch_check: self.branch_check,
             repo_page_columns: self.repo_page_columns,
+            repo_page_stash_columns: self.repo_page_stash_columns,
             repo_page_info: self.repo_page_info,
             base_overrides: self.base_overrides.clone(),
             auto_pull_on_launch: self.auto_pull_on_launch,

@@ -31,7 +31,9 @@ appear when there's something to list.
 - **`≡ STASHES`** — every stash entry in its **own independent columns** (a stash has no
   upstream / ahead-behind / base / PR): `stash@{N}` · **age** (relative creation time, e.g.
   "3 days ago") · change stats (`+A ~M -D  Σtotal`, from `git stash show`, loaded lazily) · message.
-  The info panel (`i`) adds a **created** row for the selected stash.
+  The **age** and **stats** columns are toggleable from the Stashes tab's own **`t cols ▾`**
+  dropdown (the ref + message always show); hiding one gives the message its width. The info
+  panel (`i`) adds a **created** row for the selected stash.
 - **`◉ COMMITS`** — recent commits: short sha · relative date · author · subject. The **author**
   column grows to the longest name (never truncated) and the **subject** fills the remaining width.
   Commit rows are selectable / hoverable / clickable like the other sections — **`Enter` (or a
@@ -47,9 +49,10 @@ Press `t` (or click the **`t cols ▾`** title-bar trigger) to open the columns 
 pick with the mouse, the `↑↓` arrows + `Enter`, or a row's mnemonic key — `b` ahead/behind, `y` dirty,
 `a` added, `m` modified, `d` deleted, `c` total, `u` upstream, `f` base, `g` age, `r` pr, `s` subject.
 Sorting works the same way via `s` (or the **`s sort ▾`** trigger), or by clicking a column header.
-The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (Branches, Worktrees);
-they're **hidden on the Commits and Stashes tabs**, which have their own fixed independent layouts.
-When **maximized** (flat), the page stacks every section, so the triggers stay.
+The `s sort ▾` trigger applies to the branch-column layout (Branches, Worktrees) and is hidden on
+the Commits and Stashes tabs. The `t cols ▾` trigger shows on the **Stashes** tab too — there it
+opens the stash columns dropdown (age / stats) instead of the branch columns — and is hidden only on
+the Commits tab (fixed layout). When **maximized** (flat), the page stacks every section.
 The **pr** column shows the current branch's pull request — open, merged, or closed (a clickable
 `#N`, via `gh`) on the HEAD row, blank on the others. Clicking it opens the [PR viewer
 modal](#pr-viewer-modal). The added/modified/deleted counts are each branch's changes vs the merge-base with the

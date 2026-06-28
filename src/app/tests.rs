@@ -439,6 +439,25 @@
     // differs) is empty. Catches `apply_settings_reset` / `settings_default_option` drifting from the
     // real field defaults (e.g. when a default flips and one of the two tables isn't updated).
     #[test]
+    fn stash_columns_default_on_and_toggle() {
+        use crate::app::{DropdownKind, RepoPageStashColumn};
+        let mut state = state_with(&[RepoStatus::UpToDate]);
+        // Both optional Stashes-tab columns default on.
+        assert!(state.repo_page_stash_columns.age);
+        assert!(state.repo_page_stash_columns.stats);
+        state.toggle_repo_page_stash_column(RepoPageStashColumn::Age);
+        assert!(!state.repo_page_stash_columns.age);
+        assert!(state.repo_page_stash_columns.stats);
+        // The StashColumns dropdown lists exactly the two toggleable columns.
+        state.open_dropdown(DropdownKind::StashColumns, 0, 0);
+        assert_eq!(state.dropdown_len(), 2);
+        let items = state.dropdown_items();
+        assert_eq!(items.len(), 2);
+        assert!(!items[0].on, "age now off"); // age is the first row
+        assert!(items[1].on, "stats still on");
+    }
+
+    #[test]
     fn reset_reaches_defaults_and_plan_is_empty() {
         let mut state = state_with(&[RepoStatus::UpToDate]);
         // Flip a bunch of settings off-default first.

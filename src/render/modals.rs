@@ -17,7 +17,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ListFilter
     );
     let title = match dropdown.kind {
-        DropdownKind::ListColumns | DropdownKind::PageColumns => " columns ",
+        DropdownKind::ListColumns | DropdownKind::PageColumns | DropdownKind::StashColumns => " columns ",
         DropdownKind::ListSort | DropdownKind::PageSort => " sort ",
         DropdownKind::ListFilter => " filter ",
     };
