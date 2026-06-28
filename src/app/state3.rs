@@ -915,8 +915,32 @@ impl AppState {
                 base_is_override: false,
             });
         }
-        // Sort the branch and worktree sections independently by the active column (stashes keep
-        // their natural recency order). `None` leaves git's order (HEAD first).
+        for commit in &page.commits {
+            rows.push(PageRow {
+                kind: PageRowKind::Commit,
+                branch: String::new(),
+                path: repo_path.clone(),
+                deletable: false,
+                is_head: false,
+                dirty: false,
+                dirty_count: 0,
+                stash_index: None,
+                ahead: None,
+                behind: None,
+                upstream: None,
+                last_commit_rel: commit.rel_date.clone(),
+                last_commit_secs: 0,
+                subject: commit.subject.clone(),
+                stats: None,
+                commit_sha: commit.sha.clone(),
+                author: commit.author.clone(),
+                merge_base_short: None,
+                base: None,
+                base_is_override: false,
+            });
+        }
+        // Sort the branch and worktree sections independently by the active column (stashes +
+        // commits keep their natural recency order). `None` leaves git's order (HEAD first).
         if let Some(sort) = self.repo_page_sort {
             let dir = self.repo_page_sort_dir;
             let branch_count = page.branches.len();
@@ -1129,6 +1153,11 @@ impl AppState {
             PageRowKind::Branch | PageRowKind::Worktree => Some(DiffSource::Branch {
                 path: row.path,
                 name: row.branch,
+            }),
+            PageRowKind::Commit => Some(DiffSource::Commit {
+                path: row.path,
+                sha: row.commit_sha,
+                label: row.subject,
             }),
         }
     }

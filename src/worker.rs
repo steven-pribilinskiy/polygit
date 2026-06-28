@@ -13,7 +13,8 @@ use crate::app::{
 };
 use crate::git::{
     base_file_list, base_merge_base, branch_diff_stats, branch_file_diff, branch_file_list,
-    checkout_branch, classify_failure, classify_pull_output, collect_pull_result,
+    checkout_branch, classify_failure, classify_pull_output, collect_pull_result, commit_file_diff,
+    commit_file_list,
     default_base_branch, delete_branch, dirty_count,
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
@@ -758,6 +759,9 @@ fn same_diff_source(a: &DiffSource, b: &DiffSource) -> bool {
     ) || matches!(
         (a, b),
         (DiffSource::Branch { name: x, .. }, DiffSource::Branch { name: y, .. }) if x == y
+    ) || matches!(
+        (a, b),
+        (DiffSource::Commit { sha: x, .. }, DiffSource::Commit { sha: y, .. }) if x == y
     )
 }
 
@@ -778,6 +782,7 @@ pub async fn run_diff_modal(app_state: Arc<Mutex<AppState>>) {
             DiffMode::BaseBranch => base_file_list(path).await,
         },
         DiffSource::Branch { path, name } => branch_file_list(path, name).await,
+        DiffSource::Commit { path, sha, .. } => commit_file_list(path, sha).await,
     };
 
     {
@@ -834,6 +839,7 @@ pub async fn run_diff_modal_file(app_state: Arc<Mutex<AppState>>) {
             }
         },
         DiffSource::Branch { path, name } => branch_file_diff(path, name, &file.path).await,
+        DiffSource::Commit { path, sha, .. } => commit_file_diff(path, sha, &file.path).await,
     };
 
     let mut app = app_state.lock().unwrap();
@@ -1058,6 +1064,7 @@ pub async fn run_pull_branch(app_state: Arc<Mutex<AppState>>, repo_idx: usize, r
 
     let result = match row.kind {
         PageRowKind::Stash => Err("cannot pull a stash".to_string()),
+        PageRowKind::Commit => Err("cannot pull a commit".to_string()),
         PageRowKind::Worktree => pull_ff_only(&row.path).await,
         PageRowKind::Branch => {
             if row.is_head {

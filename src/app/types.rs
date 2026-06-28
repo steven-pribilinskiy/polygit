@@ -292,6 +292,8 @@ pub enum DiffSource {
     Dirty { path: PathBuf, name: String },
     /// A clean branch — its diff vs the base branch (the changes the branch introduces).
     Branch { path: PathBuf, name: String },
+    /// A single commit — `git show <sha>` (the changes that commit introduced).
+    Commit { path: PathBuf, sha: String, label: String },
 }
 
 /// One changed file shown in the diff modal's file-list panel.
@@ -447,6 +449,7 @@ pub enum PageRowKind {
     Branch,
     Worktree,
     Stash,
+    Commit,
 }
 
 /// A flattened, selectable repo-page row carrying everything render + actions need.
@@ -494,6 +497,7 @@ impl PageRow {
             PageRowKind::Worktree => Some("remove"),
             PageRowKind::Branch if self.is_head => self.dirty.then_some("discard"),
             PageRowKind::Branch => Some("delete"),
+            PageRowKind::Commit => None, // commits are read-only — `d` does nothing
         }
     }
 }
@@ -1336,13 +1340,13 @@ pub enum RepoTab {
 }
 
 impl RepoTab {
-    /// The page-row kind this tab filters to, or `None` for Commits (rendered separately).
+    /// The page-row kind this tab filters to.
     pub fn row_kind(self) -> Option<PageRowKind> {
         match self {
             RepoTab::Branches => Some(PageRowKind::Branch),
             RepoTab::Worktrees => Some(PageRowKind::Worktree),
             RepoTab::Stashes => Some(PageRowKind::Stash),
-            RepoTab::Commits => None,
+            RepoTab::Commits => Some(PageRowKind::Commit),
         }
     }
 }
