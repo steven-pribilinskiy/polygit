@@ -638,6 +638,13 @@ pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, O
         ("y".to_string(), key, Some(HintKey::Char('y'))),
         (" copy".to_string(), hint, Some(HintKey::Char('y'))),
         sep(),
+        ("v".to_string(), key, Some(HintKey::Char('v'))),
+        (
+            if app.repo_page_tabbed() { " flat".to_string() } else { " tabbed".to_string() },
+            hint,
+            Some(HintKey::Char('v')),
+        ),
+        sep(),
         ("?".to_string(), key, Some(HintKey::Char('?'))),
         (" help".to_string(), hint, Some(HintKey::Char('?'))),
         sep(),
