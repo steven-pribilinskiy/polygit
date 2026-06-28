@@ -91,7 +91,7 @@ PULL_JOBS=8 polygit [DIR]
 polygit --depth 3 [DIR]
 polygit --no-recursive [DIR]
 
-# Custom timeout per pull (default: 30s)
+# Custom timeout per pull (default: 10s)
 polygit --timeout 60 [DIR]
 
 # Skip worktree discovery

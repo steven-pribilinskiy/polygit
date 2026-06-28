@@ -24,7 +24,7 @@ found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level sc
 | `-j`, `--jobs <N>` | `PULL_JOBS` | `nproc` | Maximum concurrent pulls. Reduced automatically when a remote throttles, restored when it's quiet. |
 | `--depth <N>` | | `16` | Maximum directory depth to scan (`1` = immediate subdirs only). |
 | `--no-recursive` | | off | Scan only the immediate subdirectories (same as `--depth 1`). |
-| `--timeout <SECS>` | `PULL_TIMEOUT` | `30` | Per-pull timeout in seconds. |
+| `--timeout <SECS>` | `PULL_TIMEOUT` | `10` | Per-pull timeout in seconds. |
 | `--no-tui` | | off | Force plain streaming output (no TUI). |
 | `--no-worktrees` | | off | Skip `.worktrees/*/.git` discovery. |
 | `--profile` | | off | Emit a per-repo timing report (slowest first) after the run. |

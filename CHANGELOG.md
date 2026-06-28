@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.87.0 — 2026-06-28
+Pull timeout default 30s → 10s; the retry queue now honors it too
+- the per-pull timeout default is now **10s** (was 30s) — override with `--timeout S` / `PULL_TIMEOUT`.
+- fixed: the **retry queue** was hardcoded to a 30s timeout regardless of `--timeout`; it now uses the configured value like the initial pull and refetch.
+
 ## v2.86.3 — 2026-06-28
 Pane top-border buttons are clickable again (the splitter no longer steals the click)
 - clicking a pane's top-border button — the copy `📋`, the maximize `m▢`, or the repo page's `t cols ▾` / `s sort ▾` — started a **splitter drag** instead: those borders double as resize handles, and only the repo-page `esc`/maximize were excluded from the grab. The splitter grab (the dock boundary, the info/result split, and the list│preview divider) now yields to **every** top-border button, so the buttons sit above the splitter as expected.
