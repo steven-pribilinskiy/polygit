@@ -928,14 +928,18 @@ impl AppState {
             rows[..branch_count].sort_by(order);
             rows[branch_count..branch_count + worktree_count].sort_by(order);
         }
-        // Tabbed mode: keep only the active tab's rows (so selection / clicks / nav all scope to
-        // it). Computed from the locked `page` to avoid re-locking via the public helpers. The
-        // Commits tab has no PageRows (it's rendered separately), so it filters to empty.
+        // Tabbed mode ONLY: keep just the active tab's rows (so selection / clicks / nav scope to
+        // it). When maximized the page is a single stacked view of every section, so it must keep
+        // ALL rows — mirror `repo_page_tabbed`'s condition (which excludes maximized) inline here,
+        // computed from the locked `page` + the lock-free `maximized` field to avoid re-locking.
         let present = u8::from(!page.branches.is_empty())
             + u8::from(!page.worktrees.is_empty())
             + u8::from(!page.stashes.is_empty())
             + u8::from(!page.commits.is_empty());
-        if self.repo_page_tabs == RepoTabsMode::Auto && present >= 2 {
+        if self.maximized != Some(Pane::RepoPage)
+            && self.repo_page_tabs == RepoTabsMode::Auto
+            && present >= 2
+        {
             match self.repo_page_tab.row_kind() {
                 Some(kind) => rows.retain(|row| row.kind == kind),
                 None => rows.clear(),

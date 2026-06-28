@@ -613,10 +613,9 @@ pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, O
         footer_segments.push(("d".to_string(), key, Some(HintKey::Char('d'))));
         footer_segments.push((format!(" {action}"), hint, Some(HintKey::Char('d'))));
     }
+    // `t cols` and `m maximize/restore` are intentionally NOT in the footer — they live on the
+    // page's top border (`t cols ▾` / `m▢`), so repeating them here is redundant.
     footer_segments.extend([
-        sep(),
-        ("t".to_string(), key, Some(HintKey::Char('t'))),
-        (" cols".to_string(), hint, Some(HintKey::Char('t'))),
         sep(),
         ("i".to_string(), key, Some(HintKey::Char('i'))),
         (" info".to_string(), hint, Some(HintKey::Char('i'))),
@@ -626,13 +625,6 @@ pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, O
         sep(),
         ("?".to_string(), key, Some(HintKey::Char('?'))),
         (" help".to_string(), hint, Some(HintKey::Char('?'))),
-        sep(),
-        ("m".to_string(), key, Some(HintKey::Char('m'))),
-        (
-            if app.maximized == Some(Pane::RepoPage) { " restore".to_string() } else { " maximize".to_string() },
-            hint,
-            Some(HintKey::Char('m')),
-        ),
         sep(),
         ("esc".to_string(), key, Some(HintKey::Esc)),
         (" back".to_string(), hint, Some(HintKey::Esc)),
@@ -709,34 +701,50 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         None => " sort ▾".to_string(),
     };
     let sort_text_len = 1 + sort_label.chars().count();
+    let sep_w = 3u16; // " · " between every top-border item
     let right_end = area.x + area.width.saturating_sub(1);
-    // Close button (rightmost), then maximize/restore to its left.
-    let (close_spans, close_region, after_close) =
+    // Close button (rightmost), then maximize/restore a ` · ` to its left.
+    let (close_spans, close_region, _) =
         window_button("esc", app.icons().close, area.y, right_end);
     app.repo_page_back_click = Some(close_region);
     app.repo_page_window_click = None;
-    let (max_spans, after_max) = max_button_spans(app, Pane::RepoPage, area.y, after_close);
-    // The `t cols ▾` / `s sort ▾` triggers sit left of the window controls.
-    let sort_end = after_max;
-    let sort_start = sort_end.saturating_sub(sort_text_len as u16);
-    let cols_end = sort_start.saturating_sub(1);
-    let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
-    app.page_sort_click = Some((area.y, sort_start, sort_end));
-    app.page_cols_click = Some((area.y, cols_start, cols_end));
-    let title_top = Line::from(vec![
-        Span::styled("t", key_style),
-        Span::styled(" cols ▾", label_style),
-        Span::raw(" "),
-        Span::styled("s", key_style),
-        Span::styled(sort_label.clone(), label_style),
-        Span::raw(" "),
+    let (max_spans, after_max) =
+        max_button_spans(app, Pane::RepoPage, area.y, close_region.1.saturating_sub(sep_w));
+    let max_start = after_max + 1;
+    let sep = || Span::styled(" · ", label_style);
+    // The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (also shared by the
+    // worktrees/stashes rows). The Commits tab uses a fixed sha·date·author·subject layout that
+    // those columns/sorts don't touch, so hide the triggers there (and `None` the click regions,
+    // which also disables the `t`/`s` keys, since they open the dropdown only when the region is set).
+    let show_col_triggers = !(tabbed && active_tab == crate::app::RepoTab::Commits);
+    let mut title_spans: Vec<Span> = Vec::new();
+    if show_col_triggers {
+        let sort_end = max_start.saturating_sub(sep_w);
+        let sort_start = sort_end.saturating_sub(sort_text_len as u16);
+        let cols_end = sort_start.saturating_sub(sep_w);
+        let cols_start = cols_end.saturating_sub(cols_text.chars().count() as u16);
+        app.page_sort_click = Some((area.y, sort_start, sort_end));
+        app.page_cols_click = Some((area.y, cols_start, cols_end));
+        title_spans.extend([
+            Span::styled("t", key_style),
+            Span::styled(" cols ▾", label_style),
+            sep(),
+            Span::styled("s", key_style),
+            Span::styled(sort_label.clone(), label_style),
+            sep(),
+        ]);
+    } else {
+        app.page_sort_click = None;
+        app.page_cols_click = None;
+    }
+    title_spans.extend([
         max_spans[0].clone(),
         max_spans[1].clone(),
-        Span::raw(" "),
+        sep(),
         close_spans[0].clone(),
         close_spans[1].clone(),
-    ])
-    .right_aligned();
+    ]);
+    let title_top = Line::from(title_spans).right_aligned();
     // Focused when restored and panel [4] holds focus, or always when maximized (it's the only pane).
     let focused = (app.maximized == Some(Pane::RepoPage)) || app.focus == Pane::RepoPage;
     let modal_open = app.any_modal_open();
@@ -1148,21 +1156,40 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         }
     }
 
-    // Commits tab: a read-only list of recent commits (sha · date · author · subject). Rendered
-    // here (not via the row machinery — commits aren't PageRows).
-    if tabbed && active_tab == crate::app::RepoTab::Commits {
+    // Commits: a read-only list (sha · date · author · subject). Rendered here (not via the row
+    // machinery — commits aren't PageRows): on the Commits tab, and stacked under its own header in
+    // the maximized single view.
+    let show_commits = full_commits > 0
+        && (!tabbed || active_tab == crate::app::RepoTab::Commits);
+    if show_commits {
         let commits = app
             .repos
             .get(idx)
             .and_then(|repo| repo.lock().unwrap().page.as_ref().map(|page| page.commits.clone()))
             .unwrap_or_default();
+        if !tabbed {
+            items.push((Line::from(String::new()), None, None));
+            items.push(section_header("\u{25b4}", Color::Yellow, format!("COMMITS ({full_commits})")));
+        }
+        // The author column grows to the longest name (not truncated to a fixed width); the subject
+        // then fills whatever horizontal space is left.
+        let sha_w = 9usize;
+        let age_w =
+            commits.iter().map(|c| UnicodeWidthStr::width(c.rel_date.as_str())).max().unwrap_or(10).clamp(8, 16);
+        let author_w =
+            commits.iter().map(|c| UnicodeWidthStr::width(c.author.as_str())).max().unwrap_or(10).clamp(6, 40);
+        let used = 2 + sha_w + 2 + age_w + 2 + author_w + 2;
+        let subject_w = (inner.width as usize).saturating_sub(used).max(10);
         for commit in &commits {
             items.push((
                 Line::from(vec![
-                    Span::styled(format!("  {:<10}", commit.sha), Style::default().fg(Color::Yellow)),
-                    Span::styled(format!("{:<16}", truncate_str(&commit.rel_date, 15)), label),
-                    Span::styled(format!("{:<18}", truncate_str(&commit.author, 17)), cyan),
-                    Span::raw(truncate_str(&commit.subject, 60)),
+                    Span::styled(
+                        format!("  {:<sha_w$}", truncate_str(&commit.sha, sha_w)),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(format!("  {:<age_w$}", truncate_str(&commit.rel_date, age_w)), label),
+                    Span::styled(format!("  {:<author_w$}", truncate_str(&commit.author, author_w)), cyan),
+                    Span::raw(format!("  {}", truncate_str(&commit.subject, subject_w))),
                 ]),
                 None,
                 None,

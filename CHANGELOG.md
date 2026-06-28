@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.83.0 — 2026-06-28
+Repo page: fix the maximized view, the commit columns, and tab-aware cols/sort
+- **the maximized repo page was broken** — it showed only the active tab's rows (e.g. just Branches) instead of every section stacked. The active-tab row filter now applies only in tabbed mode, and the **Commits section renders stacked under its own header** in the maximized single view too.
+- **the Commits list's author column now grows to the longest name** (it was truncated to ~17 chars), and the **subject fills the remaining width**.
+- **the `t cols ▾` / `s sort ▾` triggers are now hidden on the Commits tab** — its `sha·date·author·subject` layout doesn't use the branch columns/sorts (the dropdown was showing irrelevant branch columns there). They stay on Branches / Worktrees / Stashes and in the maximized view.
+- the repo-page top border now separates its items with `·` (`t cols ▾ · s sort ▾ · m▢ · esc✕`), and the redundant `t cols` / `m maximize` chips were removed from the footer (they live on the top border).
+
 ## v2.82.1 — 2026-06-28
 Accordion: ←-collapse always lands a visible focus; clearer focused-header band
 - collapsing a section with `←` while focused on one of its **rows** used to leave the selection on a now-hidden row, so nothing read as focused — it was unclear what happened. The focus now moves to the section **header** on collapse, so a `←` always lands somewhere visible.
