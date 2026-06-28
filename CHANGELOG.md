@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.86.2 — 2026-06-28
+Opening a merge commit's diff no longer flashes shut
+- a **merge commit** showed nothing for `git show --name-status` (the default combined `--cc` diff is empty for a clean merge), so the diff modal opened with an empty file list and immediately closed with a "no changes" toast — a flash. Commit diffs now use **`--first-parent`**, so a merge shows the files it brought in vs its first parent (and normal commits are unaffected).
+
 ## v2.86.1 — 2026-06-28
 Stashes get their own independent columns (no PR / branch columns)
 - the Stashes section/tab rendered through the branch column system, so it showed columns a stash can't have — upstream (`no-up`), ahead/behind, base, and **pr**. Stashes now have their **own independent layout** like commits: `stash@{N}` · change stats (`+A ~M -D  Σtotal`) · message. The `t cols ▾` / `s sort ▾` triggers are hidden on the Stashes tab too (they only apply to the branch-column Branches/Worktrees views).
