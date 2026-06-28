@@ -587,11 +587,12 @@ pub(crate) fn build_info_lines(
         }
     }
 
-    // Pull Request — the open PR for the current branch (via `gh`), clickable to the PR on the
-    // remote. Shown only when one is actually available — no in-flight "checking…" placeholder, so
-    // the line just appears once a PR resolves instead of flipping a placeholder (which shifted the
-    // rows below it). Repos with no PR never render this line.
-    if let Some(pr) = state.pr.as_ref().filter(|pr| pr.shown(app.show_merged_prs)) {
+    // Pull Request — the PR for the current branch (via `gh`), clickable to the PR on the remote.
+    // The info panel always shows it when available, in any state (open/merged/closed) — the state
+    // badge below says which. The "Merged PRs" setting gates only the dense list column, not this
+    // detail view. No in-flight "checking…" placeholder either: the line just appears once a PR
+    // resolves instead of flipping a placeholder (which shifted the rows below it).
+    if let Some(pr) = state.pr.as_ref() {
         let text = format!("#{} {}", pr.number, pr.title);
         push_link(&mut lines, &mut clicks, "Pull Request", &text, &pr.url);
         // Sub-line: a colored state badge (open/merged/closed) + a dim "checked … ago" (per-entry

@@ -665,12 +665,12 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             fetched,
             fetch_error,
             state.pull_loading,
-            // The current branch's PR (for the `pr` column on the HEAD row). Merged/closed only
-            // when the "Merged PRs" setting is on.
+            // The current branch's PR, shown on the HEAD row. This is a single-repo detail view, so
+            // it always shows the PR when available, in any state — the "Merged PRs" setting gates
+            // only the dense list column.
             state
                 .pr
                 .as_ref()
-                .filter(|pr| pr.shown(app.show_merged_prs))
                 .map(|pr| (format!("#{}", pr.number), pr.url.clone())),
         )
     };
@@ -1182,7 +1182,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             let (base, pr) = {
                 let state = app.repos[idx].lock().unwrap();
                 let base = state.page.as_ref().and_then(|page| page.base_branch.clone());
-                (base, state.pr.clone().filter(|pr| pr.shown(app.show_merged_prs)))
+                (base, state.pr.clone())
             };
             build_repo_page_info_lines(row, base.as_deref(), pr.as_ref())
         })

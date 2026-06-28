@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.79.2 — 2026-06-28
+Fix every settings tooltip (stale indices), and scope "Merged PRs" to the list column
+- **the settings tooltips were all wrong** in every layout (tabbed / accordion / flat) — the tip table was keyed by the *pre-alphabetical-reorder* row indices, so e.g. hovering "Merged PRs" showed the changed-row-flash description. Re-keyed the whole table to the current `SETTINGS_LABELS` order and added the missing Agent / Merged PRs tips.
+- **the "Merged PRs" setting now gates only the dense list PR column.** The single-repo detail views (info panel, repo page HEAD row + info panel) always show the current branch's PR when available, in any state — so a merged PR (e.g. the one that just deleted your upstream) always shows where you're looking at one repo. Detection was never the issue; `gh` finds merged PRs fine.
+
 ## v2.79.1 — 2026-06-28
 Info-panel copy glyph in emoji mode, no PR "checking…" flicker, clearer reset tooltip
 - **the info panel's inline copy buttons now follow the icon set** — they showed a hardcoded Unicode `⧉` even in emoji mode; they render `📋` now, and the click region + spacing are width-aware so the 2-cell emoji stays aligned.

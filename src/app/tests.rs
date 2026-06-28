@@ -182,6 +182,9 @@
         state.auto_pull_suppressed = false;
         // Tooltip prefs also persist — pin them to the all-on default for hermetic settings tests.
         state.tooltips = crate::app::TooltipPrefs::default();
+        // The "Merged PRs" toggle persists too — pin it off (default) so the PR settings tests are
+        // hermetic regardless of what's enabled in the real state.json.
+        state.show_merged_prs = false;
         // Design System tab layout persists too — pin it for hermetic help tests.
         state.design_layout = crate::app::DesignLayout::Flat;
         state.design_section = 0;
