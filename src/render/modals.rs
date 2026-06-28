@@ -2371,18 +2371,39 @@ pub(crate) fn render_kebab(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .get(menu.repo_idx)
         .map(|repo| repo.lock().unwrap().name.clone())
         .unwrap_or_default();
-    let pad = if app.panel_padding { 2 } else { 0 };
-    let label_w = menu.items.iter().map(|item| item.label.chars().count()).max().unwrap_or(20);
-    let width = ((label_w + 6) as u16 + pad).clamp(28, area.width.saturating_sub(2).max(28));
-    let content_rows = usize::from(!app.panel_padding) + menu.items.len() + 2;
-    let height = (content_rows as u16 + 2 + pad).min(area.height.saturating_sub(2).max(6));
-    let modal = centered_rect(width, height, area);
+    // Dividers group the actions like a real menu: after the repo group (… Checkout) and after the
+    // copy-prompt group (… the session-prefix checkbox). Keyed by action so they track reordering.
+    let divider_after = |action: crate::app::KebabAction| {
+        matches!(
+            action,
+            crate::app::KebabAction::Checkout | crate::app::KebabAction::ToggleSessionPrefix
+        )
+    };
+    let divider_count =
+        menu.items.iter().filter(|item| divider_after(item.action)).count() as u16;
+
+    let label_w = menu.items.iter().map(|item| item.label.chars().count() + 5).max().unwrap_or(20);
+    let title = format!(" ⋮ {} ", truncate_str(&name, 24));
+    let width = (label_w as u16 + 2)
+        .max(title.chars().count() as u16 + 2)
+        .clamp(20, area.width.saturating_sub(2).max(20));
+    // items + dividers + a hint footer row + the 2 border rows.
+    let height = (menu.items.len() as u16 + divider_count + 1 + 2)
+        .min(area.height.saturating_sub(1).max(4));
+
+    // Position like a header dropdown: right edge aligned under the `⋮` button (opening leftward),
+    // and clamped so the whole menu stays inside the viewport (never cropped at the bottom).
+    let x = menu.anchor_right.saturating_sub(width).clamp(area.x, area.x + area.width.saturating_sub(width));
+    let y = menu
+        .anchor_row
+        .min((area.y + area.height).saturating_sub(height))
+        .max(area.y);
+    let modal = Rect { x, y, width, height };
+
     let (close_line, close_click) = modal_close_button(modal);
-    let title = format!(" ⋮ {} ", truncate_str(&name, 28));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
         .title_top(close_line);
@@ -2394,43 +2415,42 @@ pub(crate) fn render_kebab(frame: &mut Frame, app: &mut AppState, area: Rect) {
     app.kebab_close_click = close_click;
     app.kebab_click.clear();
 
+    let dim = Style::default().fg(Color::DarkGray);
     let mut lines: Vec<Line> = Vec::new();
-    if !app.panel_padding {
-        lines.push(Line::from(String::new()));
-    }
     for (index, item) in menu.items.iter().enumerate() {
         let row_y = inner.y + lines.len() as u16;
         if item.enabled && row_y < inner.y + inner.height {
             app.kebab_click.push((row_y, index));
         }
         let selected = index == menu.selected;
-        let cursor = if selected { "> " } else { "  " };
         let style = if !item.enabled {
-            Style::default().fg(Color::DarkGray)
+            dim
         } else if selected {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
         };
-        let mut spans = vec![Span::styled(format!("  {cursor}{}", item.label), style)];
+        let cursor = if selected { "▸ " } else { "  " };
+        let mut spans = vec![Span::styled(format!(" {cursor}{}", item.label), style)];
         if let Some(hint) = &item.hint {
-            spans.push(Span::styled(format!("  {hint}"), Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(format!("  {hint}"), if selected { style } else { dim }));
         }
         lines.push(Line::from(spans));
+        if divider_after(item.action) {
+            lines.push(Line::from(Span::styled("\u{2500}".repeat(inner.width as usize), dim)));
+        }
     }
-    lines.push(Line::from(String::new()));
     let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let footer_hint = Style::default().fg(Color::DarkGray);
     let footer_row = inner.y + lines.len() as u16;
     lines.push(build_hint_footer(
         vec![
-            ("  ".to_string(), footer_hint, None),
+            (" ".to_string(), dim, None),
             ("↑↓".to_string(), footer_key, None),
-            (" move · ".to_string(), footer_hint, None),
+            (" move · ".to_string(), dim, None),
             ("enter".to_string(), footer_key, Some(HintKey::Enter)),
-            (" run · ".to_string(), footer_hint, Some(HintKey::Enter)),
+            (" run · ".to_string(), dim, Some(HintKey::Enter)),
             ("esc".to_string(), footer_key, Some(HintKey::Esc)),
-            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
+            (" close".to_string(), dim, Some(HintKey::Esc)),
         ],
         inner.x,
         footer_row,

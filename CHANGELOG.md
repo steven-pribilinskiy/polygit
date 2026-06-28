@@ -3,6 +3,16 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.99.0 — 2026-06-28
+Kebab menu looks like a dropdown; help lists favorites + the kebab menu
+- the kebab (`⋮`) menu now renders like the header dropdowns: **anchored under the `⋮` button**
+  (right-aligned, opening leftward), **dividers** between groups (repo actions · the cleanup-prompt
+  group · launch/git actions), a `▸` selection marker, and it **clamps to the viewport** so it's
+  never cropped off the bottom.
+- the **`?` help → Hotkeys** list (a curated list separate from the keymap data) now includes the
+  **Favorites & menu** section — `.` open the kebab menu, `b` favorite, `B` favorites-first — and the
+  Find & sort entries note the new **favorites** filter + **favorite** sort.
+
 ## v2.98.1 — 2026-06-28
 Hover-reveal kebab button + favorite star
 - the repo list's **rightmost column** now shows a **`⋮` kebab button on the hovered row** — click

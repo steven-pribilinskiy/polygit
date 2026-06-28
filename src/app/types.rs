@@ -764,6 +764,10 @@ pub struct KebabMenu {
     pub repo_idx: usize,
     pub items: Vec<KebabItem>,
     pub selected: usize,
+    /// The `⋮` trigger's screen row + right column — the menu anchors right-aligned to it (opening
+    /// leftward), like the header dropdowns, and clamps to the viewport so it never crops.
+    pub anchor_row: u16,
+    pub anchor_right: u16,
 }
 
 /// A toggleable column on the repo page's **Stashes** tab. A stash has its own independent columns
