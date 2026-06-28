@@ -637,7 +637,7 @@
       {
         "keys": [
           ".",
-          "right-click"
+          "⋮ on hover"
         ],
         "action": "Open the repo's kebab (⋮) menu",
         "note": "state-aware actions: checkout branch (filterable local+remote picker), copy a cleanup prompt (all repo facts embedded), run the agent, lazygit, diff, refetch, open remote",
