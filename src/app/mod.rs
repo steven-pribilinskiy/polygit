@@ -404,6 +404,8 @@ pub struct AppState {
     pub dropdown_area: Rect,
     pub dropdown_close_click: Option<(u16, u16, u16)>,
     pub dropdown_item_click: Vec<(u16, u16, u16, usize)>,
+    /// Columns-dropdown footer buttons (select/deselect-all, reset): `(row, col_start, col_end, action)`.
+    pub dropdown_action_click: Vec<(u16, u16, u16, DropdownColAction)>,
     /// The clickable `[cols ▾]` / `[sort ▾]` chips on the list header and the repo-page title bar.
     pub list_cols_click: Option<(u16, u16, u16)>,
     pub list_sort_click: Option<(u16, u16, u16)>,
@@ -899,6 +901,7 @@ impl AppState {
             dropdown_area: Rect::default(),
             dropdown_close_click: None,
             dropdown_item_click: Vec::new(),
+            dropdown_action_click: Vec::new(),
             list_cols_click: None,
             list_sort_click: None,
             list_filter_click: None,

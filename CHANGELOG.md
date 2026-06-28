@@ -3,6 +3,15 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.98.0 — 2026-06-28
+Columns dropdowns: select/deselect-all + reset buttons
+- every **columns** dropdown (list, repo-page, stashes) now has a footer below its items: a divider,
+  a dynamic **`* select all` / `* deselect all`** button (label follows the current selection), and a
+  **`0 reset`** button (back to defaults). Keyboard (`*` / `0`), clickable, and hover-highlighted.
+- note: the **pulled** / **changed** columns stay dim + inert until a pull actually lands a delta
+  this session (they'd be empty otherwise — the same auto-hide behavior as worktrees/branches/
+  stashes). **`* select all`** force-enables them anyway if you want the columns shown regardless.
+
 ## v2.97.0 — 2026-06-28
 Favorites fixed + sortable + filterable; "Last pull" summary pinned to the list footer
 - **fixed** the favorite (★) column — it was keyed by `rel_path` while favorites are stored by

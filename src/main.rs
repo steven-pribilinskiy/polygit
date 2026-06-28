@@ -1948,10 +1948,19 @@ async fn run_event_loop(
                         MouseEventKind::ScrollDown => app.dropdown_move(1),
                         MouseEventKind::ScrollUp => app.dropdown_move(-1),
                         MouseEventKind::Down(MouseButton::Left) => {
+                            let action = app
+                                .dropdown_action_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(_, _, _, action)| action);
                             if region_hit(app.dropdown_close_click, mouse.column, mouse.row)
                                 || !point_in(app.dropdown_area, mouse.column, mouse.row)
                             {
                                 app.close_dropdown();
+                            } else if let Some(action) = action {
+                                app.dropdown_run_action(action); // select/deselect-all or reset
                             } else if let Some(&(_, _, _, index)) = app
                                 .dropdown_item_click
                                 .iter()
@@ -3102,6 +3111,17 @@ async fn run_event_loop(
                                     app.close_dropdown();
                                 }
                             }
+                        }
+                        // Columns-dropdown footer buttons: `*` select/deselect-all, `0` reset.
+                        KeyCode::Char('*')
+                            if app.dropdown.is_some_and(|dropdown| dropdown.kind.is_columns()) =>
+                        {
+                            app.dropdown_run_action(app::DropdownColAction::ToggleAll);
+                        }
+                        KeyCode::Char('0')
+                            if app.dropdown.is_some_and(|dropdown| dropdown.kind.is_columns()) =>
+                        {
+                            app.dropdown_run_action(app::DropdownColAction::Reset);
                         }
                         // A mnemonic letter picks its item directly (no modifiers).
                         KeyCode::Char(ch)

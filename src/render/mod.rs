@@ -199,6 +199,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             app.dropdown_item_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.dropdown_action_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.dropdown_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
