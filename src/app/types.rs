@@ -135,6 +135,15 @@ pub struct PrInfo {
     pub state: PrState,
 }
 
+/// The full data for the PR viewer modal: the title, the remote URL (for "open in browser"), and a
+/// single assembled markdown document (metadata header + description + every review and comment).
+#[derive(Debug, Clone, Default)]
+pub struct PrView {
+    pub title: String,
+    pub url: String,
+    pub markdown: String,
+}
+
 impl PrInfo {
     /// Whether to surface this PR given the "Merged PRs" setting. Open PRs always show; merged and
     /// closed PRs show only when `show_merged` is on (the setting is off by default). Detection
@@ -1507,6 +1516,8 @@ impl Background {
 pub enum InfoAction {
     /// Open a URL in the browser (clickable branch / commit / remote link).
     OpenUrl(String),
+    /// Open the selected repo's pull request in the PR viewer modal (the "Pull Request" value).
+    OpenPr,
     /// Copy text to the clipboard (a `⧉` button or a value).
     CopyText(String),
     /// Expand/collapse a truncated field, keyed by its label (e.g. "Path").
@@ -1551,6 +1562,8 @@ pub struct IconSet {
     pub close: &'static str,
     /// Copy-to-clipboard button glyph (the result pane's log-copy button).
     pub copy: &'static str,
+    /// External-link button glyph (open-in-browser; e.g. the info-panel PR's GitHub button).
+    pub external: &'static str,
 }
 
 // Status glyphs are drawn from Geometric Shapes (U+25xx), which terminal fonts like Cascadia Code
@@ -1588,6 +1601,7 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     restore: "▣",
     close: "✕",
     copy: "⧉",
+    external: "↗",
 };
 
 pub static EMOJI_ICONS: IconSet = IconSet {
@@ -1631,6 +1645,7 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     restore: "🗗",
     close: "❌",
     copy: "📋",
+    external: "🔗",
 };
 
 /// A mouse-clickable command region in the status bar (rebuilt each render).
@@ -1766,6 +1781,7 @@ pub enum ScrollKind {
     Settings,
     Changelog,
     BuildInfo,
+    PrModal,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.

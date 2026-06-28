@@ -50,7 +50,8 @@ The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (Bran
 they're **hidden on the Commits and Stashes tabs**, which have their own fixed independent layouts.
 When **maximized** (flat), the page stacks every section, so the triggers stay.
 The **pr** column shows the current branch's pull request — open, merged, or closed (a clickable
-`#N`, via `gh`) on the HEAD row, blank on the others. The added/modified/deleted counts are each branch's changes vs the merge-base with the
+`#N`, via `gh`) on the HEAD row, blank on the others. Clicking it opens the [PR viewer
+modal](#pr-viewer-modal). The added/modified/deleted counts are each branch's changes vs the merge-base with the
 repo's default branch, computed in the background (cells show `…` until ready). A column every
 branch leaves empty auto-hides and its dropdown row goes dim and inert. Choices persist across runs.
 The page distributes its width across the visible columns — hiding columns reclaims that space
@@ -59,7 +60,8 @@ for the **branch** and **subject** text columns (they expand to fill it instead 
 `i` toggles a bottom **info panel** detailing the selected row: branch, upstream, base branch
 plus merge-base sha, ahead/behind, change stats, and the tip commit (sha · author · date ·
 subject). On the HEAD row it also shows the **pull request** (`#N (state) title`) when the current
-branch has one (via `gh`) — open, merged, or closed. For a worktree it adds the path; for a stash, the stash ref and label.
+branch has one (via `gh`) — open, merged, or closed; clicking it opens the [PR viewer
+modal](#pr-viewer-modal). For a worktree it adds the path; for a stash, the stash ref and label.
 Persisted.
 
 ## Acting on a row
@@ -134,3 +136,17 @@ untracked); a **dirty row** lists uncommitted changes, and `t` toggles between *
 Inside the modal, `d`
 discards (current branch), removes (worktree), or drops (stash) — same confirm as the
 page. `Esc` or `q` closes it.
+
+## PR viewer modal
+
+Clicking a pull-request link — the **Pull Request** row in the info panel, the repo page's
+HEAD-branch `#N`, or a **PRs** cell in the list — opens a centered modal (same dimensions as the
+diff modal) that loads the full pull request via `gh pr view` and renders it as markdown.
+
+It shows the title, state, base ← head branches, author, date, `+adds −dels`, labels, the full
+description, and **every review and comment** (separated by rules). Markdown is rendered inline:
+headings, bullet lists, blockquotes, horizontal rules, and links.
+
+Scroll with `j`/`k` (or `↑`/`↓`), `g`/`G` for top/bottom, `PgUp`/`PgDn` to page, or the mouse
+wheel; drag the scrollbar to jump. `o` opens the PR in your browser. `Esc`/`q`, the `[x]` button,
+or a click outside the modal closes it.

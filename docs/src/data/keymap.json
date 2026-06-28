@@ -924,5 +924,67 @@
         "action": "Close the modal"
       }
     ]
+  },
+  {
+    "id": "pr",
+    "title": "PR viewer modal",
+    "blurb": "A centered overlay (diff-modal dimensions) showing a pull request — title, state, branches, author, +/− stats, labels, description, and every review/comment — rendered as markdown. Opens by clicking a PR link (info panel, repo-page HEAD #N, or a list PRs cell).",
+    "bindings": [
+      {
+        "keys": [
+          "j",
+          "k",
+          "↑",
+          "↓"
+        ],
+        "action": "Scroll the PR",
+        "keywords": [
+          "scroll",
+          "up",
+          "down"
+        ]
+      },
+      {
+        "keys": [
+          "g",
+          "G",
+          "Home",
+          "End"
+        ],
+        "action": "Jump to top / bottom"
+      },
+      {
+        "keys": [
+          "PgUp",
+          "PgDn"
+        ],
+        "action": "Page up / down"
+      },
+      {
+        "keys": [
+          "wheel"
+        ],
+        "action": "Scroll the PR",
+        "note": "drag the scrollbar to jump"
+      },
+      {
+        "keys": [
+          "o"
+        ],
+        "action": "Open the PR in your browser",
+        "keywords": [
+          "open",
+          "github"
+        ]
+      },
+      {
+        "keys": [
+          "Esc",
+          "q"
+        ],
+        "action": "Close the modal",
+        "note": "the [x] button or a click outside also closes"
+      }
+    ]
   }
 ]

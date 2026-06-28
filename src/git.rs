@@ -841,6 +841,98 @@ pub async fn branch_file_diff(dir: &Path, branch: &str, path: &str) -> Vec<Strin
     run_diff(&["-C", dir_str, "diff", "--color=always", &merge_base, branch, "--", path]).await
 }
 
+/// Fetch a PR's full data via `gh pr view <number> --json …` and assemble it into one markdown
+/// document for the PR viewer modal: a metadata header, the description, then every review and
+/// comment. Returns `None` when `gh` fails / isn't a GitHub repo.
+pub async fn pr_view(dir: &Path, number: u32) -> Option<crate::app::PrView> {
+    // `gh` has no `-C` flag (that's git-only); scope it to the repo via `.current_dir`.
+    let output = Command::new("gh")
+        .args([
+            "pr", "view", &number.to_string(), "--json",
+            "title,number,state,author,body,baseRefName,headRefName,labels,comments,reviews,createdAt,additions,deletions,url",
+        ])
+        .current_dir(dir)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let string = |key: &str| json.get(key).and_then(|value| value.as_str()).unwrap_or("").to_string();
+    let int = |key: &str| json.get(key).and_then(|value| value.as_i64()).unwrap_or(0);
+    let login = |value: &serde_json::Value| {
+        value
+            .get("author")
+            .and_then(|author| author.get("login").or_else(|| author.get("name")))
+            .and_then(|login| login.as_str())
+            .unwrap_or("?")
+            .to_string()
+    };
+    let day = |stamp: &str| stamp.split('T').next().unwrap_or(stamp).to_string();
+
+    let title = string("title");
+    let url = string("url");
+    let labels: Vec<String> = json
+        .get("labels")
+        .and_then(|value| value.as_array())
+        .map(|arr| {
+            arr.iter().filter_map(|label| label.get("name").and_then(|name| name.as_str()).map(str::to_string)).collect()
+        })
+        .unwrap_or_default();
+
+    let mut md = String::new();
+    md.push_str(&format!("# {title}\n\n"));
+    md.push_str(&format!(
+        "**#{}** · {} · `{}` → `{}` · @{} · {}\n",
+        int("number"),
+        string("state").to_lowercase(),
+        string("headRefName"),
+        string("baseRefName"),
+        login(&json),
+        day(&string("createdAt")),
+    ));
+    md.push_str(&format!("`+{} −{}`", int("additions"), int("deletions")));
+    if !labels.is_empty() {
+        md.push_str(&format!("  ·  labels: {}", labels.join(", ")));
+    }
+    md.push_str("\n\n");
+    let body = string("body");
+    md.push_str(if body.trim().is_empty() { "_No description._" } else { body.trim() });
+    md.push('\n');
+
+    if let Some(reviews) = json.get("reviews").and_then(|value| value.as_array()) {
+        for review in reviews {
+            let body = review.get("body").and_then(|value| value.as_str()).unwrap_or("").trim();
+            let state = review.get("state").and_then(|value| value.as_str()).unwrap_or("");
+            if body.is_empty() && state.is_empty() {
+                continue;
+            }
+            md.push_str(&format!(
+                "\n---\n\n### @{} — review: {}\n\n",
+                login(review),
+                state.to_lowercase()
+            ));
+            md.push_str(if body.is_empty() { "_(no comment)_" } else { body });
+            md.push('\n');
+        }
+    }
+    if let Some(comments) = json.get("comments").and_then(|value| value.as_array()) {
+        for comment in comments {
+            let body = comment.get("body").and_then(|value| value.as_str()).unwrap_or("").trim();
+            if body.is_empty() {
+                continue;
+            }
+            let when = day(comment.get("createdAt").and_then(|value| value.as_str()).unwrap_or(""));
+            md.push_str(&format!("\n---\n\n### @{} commented · {when}\n\n", login(comment)));
+            md.push_str(body);
+            md.push('\n');
+        }
+    }
+
+    Some(crate::app::PrView { title, url, markdown: md })
+}
+
 /// The files a single commit touched, parsed into entries. `--first-parent` so a MERGE commit
 /// shows the files it brought in vs its first parent (the default combined `--cc` diff is empty for
 /// a clean merge, which would otherwise list nothing).

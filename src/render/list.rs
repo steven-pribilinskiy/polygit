@@ -527,15 +527,15 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
             let mut clicks = Vec::new();
             for (visible, row) in rows.iter().skip(offset).take(height).enumerate() {
                 if let ListRow::Repo { repo_idx, .. } = *row {
-                    let url = app.repos[repo_idx]
+                    let has_pr = app.repos[repo_idx]
                         .lock()
                         .unwrap()
                         .pr
                         .as_ref()
-                        .filter(|pr| pr.shown(show_merged_prs))
-                        .map(|pr| pr.url.clone());
-                    if let Some(url) = url {
-                        clicks.push((rows_area.y + visible as u16, start, end, url));
+                        .is_some_and(|pr| pr.shown(show_merged_prs));
+                    if has_pr {
+                        // Carry the repo index; clicking opens the PR viewer modal for it.
+                        clicks.push((rows_area.y + visible as u16, start, end, repo_idx));
                     }
                 }
             }

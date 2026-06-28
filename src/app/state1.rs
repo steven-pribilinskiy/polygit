@@ -1116,6 +1116,12 @@ impl AppState {
                 self.build_info_scroll = value;
                 false
             }
+            ScrollKind::PrModal => {
+                if let Some(modal) = self.pr_modal.as_mut() {
+                    modal.scroll = value;
+                }
+                false
+            }
         }
     }
 
