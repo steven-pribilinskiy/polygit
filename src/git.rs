@@ -841,6 +841,26 @@ pub async fn branch_file_diff(dir: &Path, branch: &str, path: &str) -> Vec<Strin
     run_diff(&["-C", dir_str, "diff", "--color=always", &merge_base, branch, "--", path]).await
 }
 
+/// The files a single commit touched (`git show --name-status`, no message), parsed into entries.
+pub async fn commit_file_list(dir: &Path, sha: &str) -> Vec<DiffFile> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "show", "--name-status", "--format=", sha])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    parse_name_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// The diff a single commit introduced for one file (`git show <sha> -- <path>`, no message).
+pub async fn commit_file_diff(dir: &Path, sha: &str, path: &str) -> Vec<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    run_diff(&["-C", dir_str, "show", "--color=always", "--format=", sha, "--", path]).await
+}
+
 /// Count `--name-status` lines into (added, modified, deleted): A and untracked `?` are added,
 /// D is deleted, and M/T plus renames/copies (R*/C*) count as modified. Pure for unit tests.
 pub fn count_name_status(stdout: &str) -> (u32, u32, u32) {

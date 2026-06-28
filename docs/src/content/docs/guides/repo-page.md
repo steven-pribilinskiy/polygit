@@ -29,9 +29,10 @@ appear when there's something to list.
 - **`⑂ WORKTREES`** — each linked worktree's branch and path.
 - **`≡ STASHES`** — every stash entry, with its own **added / modified / deleted / total** change
   counts (from `git stash show`, loaded lazily) shown in the same columns as branches.
-- **`▴ COMMITS`** — a read-only list of recent commits: short sha · relative date · author ·
-  subject. The **author** column grows to the longest name (never truncated) and the **subject**
-  fills the remaining width.
+- **`◉ COMMITS`** — recent commits: short sha · relative date · author · subject. The **author**
+  column grows to the longest name (never truncated) and the **subject** fills the remaining width.
+  Commit rows are selectable / hoverable / clickable like the other sections — **`Enter` (or a
+  double-click) opens that commit's diff** (`git show`).
 
 A red `●` marks any branch or worktree with uncommitted changes; count cells show a dim zero
 rather than a blank. The result of an action (e.g. "Dropped stash@{0}") and any fetch error

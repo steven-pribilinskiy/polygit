@@ -635,6 +635,8 @@ fn confirm_for_row(repo_idx: usize, row: &PageRow) -> Option<ConfirmDialog> {
     match row.kind {
         // Stash drops are routed through run_prepare_drop_stash (to list the stash's files).
         PageRowKind::Stash => None,
+        // Commits are read-only — nothing to delete/discard.
+        PageRowKind::Commit => None,
         PageRowKind::Worktree => {
             let mut message = format!("Remove worktree {}?", row.path.display());
             if row.dirty {
@@ -3254,7 +3256,8 @@ async fn run_event_loop(
                                                     true,
                                                 ));
                                             }
-                                            DiffSource::Branch { .. } => {}
+                                            // Branches & commits are read-only here — `d` is a no-op.
+                                            DiffSource::Branch { .. } | DiffSource::Commit { .. } => {}
                                         }
                                     }
                                 }

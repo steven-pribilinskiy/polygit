@@ -66,7 +66,7 @@ pub(crate) fn diff_modal_footer(
     let delete_label = match source {
         DiffSource::Stash { .. } => Some(" drop"),
         DiffSource::Dirty { .. } => Some(" discard/remove"),
-        DiffSource::Branch { .. } => None,
+        DiffSource::Branch { .. } | DiffSource::Commit { .. } => None,
     };
     if let Some(label) = delete_label {
         seg.push(sep.clone());
@@ -270,6 +270,9 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
                 format!(" {name} · {mode} ")
             }
             DiffSource::Branch { name, .. } => format!(" {name} · vs base branch "),
+            DiffSource::Commit { sha, label, .. } => {
+                format!(" {} · {} ", &sha[..sha.len().min(9)], truncate_str(label, 50))
+            }
         };
         let footer = diff_modal_footer(&modal.source, modal.focus, modal.chips_active(), modal.view);
         (
@@ -579,6 +582,18 @@ pub(crate) fn build_repo_page_info_lines(
             }
             if row.dirty_count > 0 {
                 lines.push(pair("uncommitted", format!("{} file(s)", row.dirty_count)));
+            }
+        }
+        PageRowKind::Commit => {
+            lines.push(pair("commit", row.commit_sha.clone()));
+            if !row.author.is_empty() {
+                lines.push(pair("author", row.author.clone()));
+            }
+            if !row.last_commit_rel.is_empty() {
+                lines.push(pair("date", row.last_commit_rel.clone()));
+            }
+            if !row.subject.is_empty() {
+                lines.push(pair("subject", truncate_str(&row.subject, 60)));
             }
         }
     }
@@ -1156,42 +1171,45 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         }
     }
 
-    // Commits: a read-only list (sha · date · author · subject). Rendered here (not via the row
-    // machinery — commits aren't PageRows): on the Commits tab, and stacked under its own header in
-    // the maximized single view.
-    let show_commits = full_commits > 0
-        && (!tabbed || active_tab == crate::app::RepoTab::Commits);
-    if show_commits {
-        let commits = app
-            .repos
-            .get(idx)
-            .and_then(|repo| repo.lock().unwrap().page.as_ref().map(|page| page.commits.clone()))
-            .unwrap_or_default();
+    // Commits: sha · date · author · subject, rendered through the row machinery so each commit is
+    // selectable / hoverable / clickable (like worktrees & stashes) — `Enter` opens its diff. Shown
+    // on the Commits tab and stacked under its own header in the maximized single view.
+    let render_commits =
+        full_commits > 0 && (!tabbed || active_tab == crate::app::RepoTab::Commits);
+    if render_commits {
         if !tabbed {
             items.push((Line::from(String::new()), None, None));
             items.push(section_header(icons.commits, Color::Yellow, format!("COMMITS ({full_commits})")));
         }
         // The author column grows to the longest name (not truncated to a fixed width); the subject
         // then fills whatever horizontal space is left.
+        let commit_width = |get: fn(&PageRow) -> &str| {
+            rows.iter()
+                .filter(|row| row.kind == PageRowKind::Commit)
+                .map(|row| UnicodeWidthStr::width(get(row)))
+                .max()
+                .unwrap_or(10)
+        };
         let sha_w = 9usize;
-        let age_w =
-            commits.iter().map(|c| UnicodeWidthStr::width(c.rel_date.as_str())).max().unwrap_or(10).clamp(8, 16);
-        let author_w =
-            commits.iter().map(|c| UnicodeWidthStr::width(c.author.as_str())).max().unwrap_or(10).clamp(6, 40);
+        let age_w = commit_width(|row| row.last_commit_rel.as_str()).clamp(8, 16);
+        let author_w = commit_width(|row| row.author.as_str()).clamp(6, 40);
         let used = 2 + sha_w + 2 + age_w + 2 + author_w + 2;
         let subject_w = (inner.width as usize).saturating_sub(used).max(10);
-        for commit in &commits {
+        for (sel_index, row) in rows.iter().enumerate() {
+            if row.kind != PageRowKind::Commit {
+                continue;
+            }
             items.push((
                 Line::from(vec![
                     Span::styled(
-                        format!("  {:<sha_w$}", truncate_str(&commit.sha, sha_w)),
+                        format!("  {:<sha_w$}", truncate_str(&row.commit_sha, sha_w)),
                         Style::default().fg(Color::Yellow),
                     ),
-                    Span::styled(format!("  {:<age_w$}", truncate_str(&commit.rel_date, age_w)), label),
-                    Span::styled(format!("  {:<author_w$}", truncate_str(&commit.author, author_w)), cyan),
-                    Span::raw(format!("  {}", truncate_str(&commit.subject, subject_w))),
+                    Span::styled(format!("  {:<age_w$}", truncate_str(&row.last_commit_rel, age_w)), label),
+                    Span::styled(format!("  {:<author_w$}", truncate_str(&row.author, author_w)), cyan),
+                    Span::raw(format!("  {}", truncate_str(&row.subject, subject_w))),
                 ]),
-                None,
+                Some(sel_index),
                 None,
             ));
         }
