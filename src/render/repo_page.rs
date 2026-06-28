@@ -744,11 +744,12 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         max_button_spans(app, Pane::RepoPage, area.y, close_region.1.saturating_sub(sep_w));
     let max_start = after_max + 1;
     let sep = || Span::styled(" · ", label_style);
-    // The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (also shared by the
-    // worktrees/stashes rows). The Commits tab uses a fixed sha·date·author·subject layout that
-    // those columns/sorts don't touch, so hide the triggers there (and `None` the click regions,
-    // which also disables the `t`/`s` keys, since they open the dropdown only when the region is set).
-    let show_col_triggers = !(tabbed && active_tab == crate::app::RepoTab::Commits);
+    // The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (shared by the
+    // worktrees rows). The Commits and Stashes tabs have their own fixed independent layouts that
+    // those branch columns/sorts don't touch, so hide the triggers there (and `None` the click
+    // regions, which also disables the `t`/`s` keys, since they open the dropdown only when set).
+    let show_col_triggers = !(tabbed
+        && matches!(active_tab, crate::app::RepoTab::Commits | crate::app::RepoTab::Stashes));
     let mut title_spans: Vec<Span> = Vec::new();
     if show_col_triggers {
         let sort_end = max_start.saturating_sub(sep_w);
@@ -1172,35 +1173,45 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
                 format!("STASHES ({full_stashes})"),
             ));
         }
+        // Stashes have their OWN columns (a stash has no upstream / ahead-behind / base / PR): the
+        // `stash@{N}` ref, its change stats (added/modified/deleted/total from `git stash show`),
+        // and the stash message. The ref column grows to its longest entry; the message fills.
+        let stats_text = |row: &PageRow| match row.stats {
+            Some(stats) => {
+                format!("+{} ~{} -{}  Σ{}", stats.added, stats.modified, stats.deleted, stats.total())
+            }
+            None => "…".to_string(),
+        };
+        let stash_rows = || rows.iter().filter(|row| row.kind == PageRowKind::Stash);
+        let ref_w = stash_rows()
+            .map(|row| format!("stash@{{{}}}", row.stash_index.unwrap_or(0)).len())
+            .max()
+            .unwrap_or(10)
+            .clamp(8, 16);
+        let stats_w = stash_rows()
+            .map(|row| UnicodeWidthStr::width(stats_text(row).as_str()))
+            .max()
+            .unwrap_or(8)
+            .clamp(4, 24);
+        let used = 2 + ref_w + 2 + stats_w + 2;
+        let subject_w = (inner.width as usize).saturating_sub(used).max(10);
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Stash {
                 continue;
             }
-            // Stash rows flow through the same column system as branches: a `stash@{N}` name, the
-            // change stats (added/modified/deleted/total, from `git stash show`), and the stash
-            // label as the subject. Branch-only columns (ahead/behind, dirty, upstream, base, age)
-            // stay blank, and the base cell isn't clickable.
             let stash_ref = format!("stash@{{{}}}", row.stash_index.unwrap_or(0));
-            let name_span = Span::styled(
-                format!("  {:<name_pad$}", truncate_str(&stash_ref, name_pad)),
-                Style::default().fg(Color::Magenta),
-            );
-            let (cells, _, _) = data_cells(
+            items.push((
+                Line::from(vec![
+                    Span::styled(
+                        format!("  {:<ref_w$}", truncate_str(&stash_ref, ref_w)),
+                        Style::default().fg(Color::Magenta),
+                    ),
+                    Span::styled(format!("  {:<stats_w$}", truncate_str(&stats_text(row), stats_w)), label),
+                    Span::raw(format!("  {}", truncate_str(&row.branch, subject_w))),
+                ]),
+                Some(sel_index),
                 None,
-                None,
-                row.stats,
-                None,
-                "",
-                "",
-                false,
-                false,
-                None,
-                "",
-                &row.branch,
-            );
-            let mut line_spans = vec![name_span];
-            line_spans.extend(cells);
-            items.push((Line::from(line_spans), Some(sel_index), None));
+            ));
         }
     }
 
