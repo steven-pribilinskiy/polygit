@@ -212,6 +212,10 @@ pub struct AppState {
     /// In the maximized repo page, show the tabbed view instead of the flat stacked one (`v`
     /// toggle, persisted).
     pub repo_page_maximized_tabbed: bool,
+    /// Session-only override of the restored repo page's tabbed/flat view: `v` sets it to flip the
+    /// current view WITHOUT mutating the persisted `repo_page_tabs` preference (so an `Auto` setting
+    /// survives a manual flip). `None` = follow the auto decision; cleared when the setting changes.
+    pub repo_page_tabbed_override: Option<bool>,
     /// Repo-page sections collapsed in the flat (stacked) view, by section name (persisted).
     pub repo_page_collapsed_sections: HashSet<String>,
     /// Click/hover regions for the flat-view section headers: `(row, start, end, section)`. Rebuilt
@@ -788,6 +792,7 @@ impl AppState {
             // Only the repo page's maximize is sticky; restore it from the legacy persisted bool.
             maximized: persisted.repo_page_maximized.then_some(Pane::RepoPage),
             repo_page_maximized_tabbed: persisted.repo_page_maximized_tabbed,
+            repo_page_tabbed_override: None,
             repo_page_collapsed_sections: persisted.repo_page_collapsed_sections.into_iter().collect(),
             repo_page_section_click: Vec::new(),
             branch_check: persisted.branch_check,

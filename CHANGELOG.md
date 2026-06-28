@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.90.0 — 2026-06-28
+New defaults + `v` overrides auto repo-page tabs
+- changed defaults (fresh installs / unset fields): **Hover effects on**, **Panel padding on**,
+  **Grouping on**, **Pane splitter → on-hover** (no dedicated lane), **Repo page tabs → auto**.
+- with **Repo page tabs: auto**, pressing **`v`** now flips the current view tabbed⇄flat as a
+  session override — it no longer clobbers the persisted `auto` preference to `off`.
+
 ## v2.89.1 — 2026-06-28
 Fix: a no-op refetch no longer flashes the changed-row attention indicator
 - the refetch re-queues each repo (transient `Queued`) before diffing, so the "status changed"

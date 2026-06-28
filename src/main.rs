@@ -3485,13 +3485,13 @@ async fn run_event_loop(
                         KeyCode::Char('v') => {
                             if app.maximized == Some(Pane::RepoPage) {
                                 app.repo_page_maximized_tabbed = !app.repo_page_maximized_tabbed;
+                                app.save_state();
                             } else {
-                                app.repo_page_tabs = match app.repo_page_tabs {
-                                    crate::app::RepoTabsMode::Auto => crate::app::RepoTabsMode::Off,
-                                    crate::app::RepoTabsMode::Off => crate::app::RepoTabsMode::Auto,
-                                };
+                                // Flip the current view via a session override — leaves the persisted
+                                // `repo_page_tabs` (e.g. Auto) intact so it isn't clobbered to Off.
+                                let now = app.repo_page_tabbed();
+                                app.repo_page_tabbed_override = Some(!now);
                             }
-                            app.save_state();
                         }
                         // `z` collapses/expands the selected row's section; `Z` expands/collapses all
                         // (the keyboard way back when a collapsed section's rows are hidden).

@@ -966,12 +966,15 @@ impl AppState {
             + u8::from(!page.worktrees.is_empty())
             + u8::from(!page.stashes.is_empty())
             + u8::from(!page.commits.is_empty());
-        let tabbed_allowed = if self.maximized == Some(Pane::RepoPage) {
-            self.repo_page_maximized_tabbed
+        // Mirror `repo_page_tabbed` from the locked `page` (avoid re-locking): maximized opts into
+        // tabs only via `repo_page_maximized_tabbed`; restored honors the `v` override over auto.
+        let tabbed = if self.maximized == Some(Pane::RepoPage) {
+            self.repo_page_maximized_tabbed && self.repo_page_tabs == RepoTabsMode::Auto && present >= 2
         } else {
-            true
+            self.repo_page_tabbed_override
+                .unwrap_or(self.repo_page_tabs == RepoTabsMode::Auto && present >= 2)
         };
-        if tabbed_allowed && self.repo_page_tabs == RepoTabsMode::Auto && present >= 2 {
+        if tabbed {
             match self.repo_page_tab.row_kind() {
                 Some(kind) => rows.retain(|row| row.kind == kind),
                 None => rows.clear(),
@@ -1017,14 +1020,15 @@ impl AppState {
     pub fn repo_page_tabbed(&self) -> bool {
         // Restored: tabbed per `repo_page_tabs`. Maximized: flat stacked by default, tabbed only
         // when the `v` toggle (`repo_page_maximized_tabbed`) is on.
-        let tabbed_allowed = if self.maximized == Some(Pane::RepoPage) {
-            self.repo_page_maximized_tabbed
-        } else {
-            true
-        };
-        tabbed_allowed
-            && self.repo_page_tabs == RepoTabsMode::Auto
-            && self.repo_page_present_tabs().len() >= 2
+        if self.maximized == Some(Pane::RepoPage) {
+            // Maximized stays flat-stacked by default; `v` (repo_page_maximized_tabbed) opts into tabs.
+            return self.repo_page_maximized_tabbed
+                && self.repo_page_tabs == RepoTabsMode::Auto
+                && self.repo_page_present_tabs().len() >= 2;
+        }
+        // Restored: the auto decision (Auto mode + ≥2 sections), unless `v` set an explicit override.
+        let auto = self.repo_page_tabs == RepoTabsMode::Auto && self.repo_page_present_tabs().len() >= 2;
+        self.repo_page_tabbed_override.unwrap_or(auto)
     }
 
     /// Switch the active repo-page tab, resetting the selection to its first row.

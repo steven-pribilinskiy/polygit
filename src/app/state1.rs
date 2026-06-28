@@ -648,8 +648,14 @@ impl AppState {
             (6, 1) => self.show_borders = false,
             (7, 0) => self.splitter_mode = SplitterMode::Dedicated,
             (7, 1) => self.splitter_mode = SplitterMode::Hover,
-            (8, 0) => self.repo_page_tabs = RepoTabsMode::Off,
-            (8, 1) => self.repo_page_tabs = RepoTabsMode::Auto,
+            (8, 0) => {
+                self.repo_page_tabs = RepoTabsMode::Off;
+                self.repo_page_tabbed_override = None; // changing the preference clears any `v` flip
+            }
+            (8, 1) => {
+                self.repo_page_tabs = RepoTabsMode::Auto;
+                self.repo_page_tabbed_override = None;
+            }
             (9, 0) => {
                 if self.maximized == Some(Pane::RepoPage) {
                     self.maximized = None;
