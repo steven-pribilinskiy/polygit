@@ -294,44 +294,10 @@ pub(crate) fn wrap_chars(text: &str, width: usize) -> Vec<String> {
 }
 
 
-/// Parse inline markdown — `**bold**` and `` `code` `` — over `base`, returning styled runs with
-/// the markers stripped. Code spans get a distinct color; bold adds the bold modifier to `base`.
-/// A lone `*` and unmatched markers render literally. Good enough for release-note prose.
+/// Parse inline markdown over `base` (delegates to the shared crate parser, which also handles
+/// `*italic*`). Kept as a thin alias so the changelog/PR-prose call sites read locally.
 fn parse_inline_md(text: &str, base: Style) -> Vec<(String, Style)> {
-    let bold = base.add_modifier(Modifier::BOLD);
-    let code = Style::default().fg(Color::Yellow);
-    let chars: Vec<char> = text.chars().collect();
-    let mut runs: Vec<(String, Style)> = Vec::new();
-    let mut buf = String::new();
-    let mut in_bold = false;
-    let mut in_code = false;
-    let mut idx = 0;
-    while idx < chars.len() {
-        let style = if in_code { code } else if in_bold { bold } else { base };
-        if !in_code && chars[idx] == '*' && chars.get(idx + 1) == Some(&'*') {
-            if !buf.is_empty() {
-                runs.push((std::mem::take(&mut buf), style));
-            }
-            in_bold = !in_bold;
-            idx += 2;
-            continue;
-        }
-        if chars[idx] == '`' {
-            if !buf.is_empty() {
-                runs.push((std::mem::take(&mut buf), style));
-            }
-            in_code = !in_code;
-            idx += 1;
-            continue;
-        }
-        buf.push(chars[idx]);
-        idx += 1;
-    }
-    if !buf.is_empty() {
-        let style = if in_code { code } else if in_bold { bold } else { base };
-        runs.push((buf, style));
-    }
-    runs
+    super::inline_md_runs(text, base)
 }
 
 /// Parse inline markdown in `text` over `base`, then word-wrap to `width` columns preserving each

@@ -99,13 +99,14 @@
     os === 'mac'
       ? [['ControlLeft', '⌃ ctrl', 1.5], ['AltLeft', '⌥ opt', 1.25], ['MetaLeft', '⌘ cmd', 1.5], ['Space', '', 6], ['MetaRight', '⌘', 1.5], ['AltRight', '⌥', 1.25], ['ControlRight', '⌃', 1.5]]
       : [['ControlLeft', 'ctrl', 1.5], ['MetaLeft', os === 'windows' ? '⊞ win' : 'super', 1.25], ['AltLeft', 'alt', 1.5], ['Space', '', 6], ['AltRight', 'alt', 1.5], ['MetaRight', os === 'windows' ? '⊞' : 'super', 1.25], ['ControlRight', 'ctrl', 1.5]];
-  // Right-side nav + arrow cluster (polygit uses Home/End/PgUp/PgDn + arrows).
+  // Right-side nav + arrow cluster — the standard 3-wide PC block (Ins/Home/PgUp over
+  // Del/End/PgDn) and the inverted-T arrows below.
   const navRows: Key[][] = [
-    [['Home', 'home'], ['PageUp', 'pgup']],
-    [['End', 'end'], ['PageDown', 'pgdn']],
+    [['Insert', 'ins'], ['Home', 'home'], ['PageUp', 'pgup']],
+    [['Delete', 'del'], ['End', 'end'], ['PageDown', 'pgdn']],
   ];
   const arrowRows: Key[][] = [
-    [['ArrowUp', '↑']],
+    [['__gap', ''], ['ArrowUp', '↑'], ['__gap', '']],
     [['ArrowLeft', '←'], ['ArrowDown', '↓'], ['ArrowRight', '→']],
   ];
 
@@ -146,6 +147,11 @@
       div.className = 'kbviz__key';
       div.style.flexGrow = String(w ?? 1);
       div.style.flexBasis = `${(w ?? 1) * 2.6}rem`;
+      // A spacer (the inverted-T gap) holds layout width but draws nothing.
+      if (code === '__gap') {
+        div.style.visibility = 'hidden';
+        return div;
+      }
       div.textContent = label;
       const acts = bound.get(code);
       if (acts && acts.length) {

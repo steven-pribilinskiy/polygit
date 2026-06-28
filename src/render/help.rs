@@ -293,6 +293,11 @@ pub(crate) const CLI_COPY: &str = "\u{1f}clicopy";
 pub(crate) const CLI_HELPMODE: &str = "\u{1f}clihelpmode";
 /// A built-command token line, tagged with its flag index — click removes it, hover highlights it.
 pub(crate) const CLI_CMD_PREFIX: &str = "\u{1f}clicmd:";
+/// A Hotkeys row whose action(s) were truncated with `…`. Payload: one or more
+/// `{col0}\u{1f}{col1}\u{1f}{full}` segments (column offsets relative to the line start) joined by
+/// `\u{1e}` — `render_help` maps the offsets to screen columns and registers each as a dwell tooltip
+/// (hover the row to read the full text).
+pub(crate) const HELP_TIP_PREFIX: &str = "\u{1f}helptip:";
 
 /// The help modal's "CLI & Flags" tab — an interactive command builder. Each flag is a row you
 /// toggle (boolean) or fill in (value); the constructed `polygit …` command + a `[Copy]` button
@@ -477,36 +482,32 @@ pub(crate) fn help_items_legend() -> Vec<(Line<'static>, Option<String>)> {
     let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
     let subhead = |text: &str| (Line::from(Span::styled(text.to_string(), subhead_style)), None);
     let plain = |text: &str| (Line::from(text.to_string()), None);
-    // One glyph in each set, in its real on-screen color, then the meaning.
+    // One glyph in each set, in its real on-screen color, then the meaning (inline markdown:
+    // `code` for column/marker tokens).
     let row = |uni: &str, emoji: &str, color: Color, meaning: &str| {
-        (
-            Line::from(vec![
-                Span::raw("    "),
-                Span::styled(pad_display(uni, 5), Style::default().fg(color)),
-                Span::styled(pad_display(emoji, 7), Style::default().fg(color)),
-                Span::raw(meaning.to_string()),
-            ]),
-            None,
-        )
+        let mut spans = vec![
+            Span::raw("    "),
+            Span::styled(pad_display(uni, 5), Style::default().fg(color)),
+            Span::styled(pad_display(emoji, 7), Style::default().fg(color)),
+        ];
+        spans.extend(inline_md_spans(meaning, Style::default()));
+        (Line::from(spans), None)
     };
     // Structural glyphs are the same in both sets — show them once across both columns.
     let fixed = |glyph: &str, color: Color, meaning: &str| {
-        (
-            Line::from(vec![
-                Span::raw("    "),
-                Span::styled(pad_display(glyph, 12), Style::default().fg(color)),
-                Span::raw(meaning.to_string()),
-            ]),
-            None,
-        )
+        let mut spans =
+            vec![Span::raw("    "), Span::styled(pad_display(glyph, 12), Style::default().fg(color))];
+        spans.extend(inline_md_spans(meaning, Style::default()));
+        (Line::from(spans), None)
     };
 
     items.push(header("LEGEND — every glyph, in both icon sets"));
     items.push((
-        Line::from(Span::styled(
-            "    left: Unicode · right: emoji — switch via Settings (,) → Icons",
-            note_style,
-        )),
+        Line::from({
+            let mut spans = vec![Span::raw("    ")];
+            spans.extend(inline_md_spans("left: Unicode · right: emoji — switch via Settings (`,`) → Icons", note_style));
+            spans
+        }),
         None,
     ));
     items.push(plain(""));
@@ -546,18 +547,18 @@ pub(crate) fn help_items_legend() -> Vec<(Line<'static>, Option<String>)> {
         UNI.dirty,
         EMOJI.dirty,
         Color::Red,
-        "uncommitted changes (count with the Δ column on)",
+        "uncommitted changes (count with the `Δ` column on)",
     ));
-    items.push(row(UNI.ahead, EMOJI.ahead, Color::Gray, "commits ahead of upstream (↑N)"));
-    items.push(row(UNI.behind, EMOJI.behind, Color::Gray, "commits behind upstream (↓N)"));
-    items.push(row(UNI.worktrees, EMOJI.worktrees, Color::Cyan, "worktree count (wt column)"));
+    items.push(row(UNI.ahead, EMOJI.ahead, Color::Gray, "commits ahead of upstream (`↑N`)"));
+    items.push(row(UNI.behind, EMOJI.behind, Color::Gray, "commits behind upstream (`↓N`)"));
+    items.push(row(UNI.worktrees, EMOJI.worktrees, Color::Cyan, "worktree count (`wt` column)"));
     items.push(row(
         UNI.branches,
         EMOJI.branches,
         Color::Green,
-        "feature-branch count (br column; local minus main/dev)",
+        "feature-branch count (`br` column; local minus `main`/`dev`)",
     ));
-    items.push(row(UNI.stashes, EMOJI.stashes, Color::Magenta, "stash count (st column)"));
+    items.push(row(UNI.stashes, EMOJI.stashes, Color::Magenta, "stash count (`st` column)"));
     items.push(plain(""));
     items.push(subhead("  Log & notices"));
     items.push(row(UNI.warning, EMOJI.warning, Color::Red, "warning (e.g. group resolve failed)"));
@@ -566,7 +567,7 @@ pub(crate) fn help_items_legend() -> Vec<(Line<'static>, Option<String>)> {
     items.push(plain(""));
     items.push(subhead("  Structural (same in both sets)"));
     items.push(fixed("▾ / ▸", Color::DarkGray, "group expanded / collapsed (collapsible header)"));
-    items.push(fixed("▲ / ▼", Color::Yellow, "sort direction (column header + ⟪tag⟫)"));
+    items.push(fixed("▲ / ▼", Color::Yellow, "sort direction (column header + `⟪tag⟫`)"));
     items.push(fixed("● / ○", Color::Green, "active / inactive option (settings, menus)"));
     items.push(fixed("▒ → █", Color::Gray, "divider grip (fills solid while dragging)"));
     items.push(fixed("…", Color::DarkGray, "still loading"));
@@ -650,10 +651,26 @@ fn help_group_order(section_id: &str) -> &'static [&'static str] {
     }
 }
 
-pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<String>)> {
+/// Columns between the two paired Hotkeys groups.
+const HOTKEYS_GAP: usize = 2;
+
+/// One Hotkeys row before pairing: its spans, the visible width, and — if the action was truncated
+/// with `…` — the full action text (for the hover tooltip).
+struct HkRow {
+    spans: Vec<Span<'static>>,
+    width: usize,
+    full: Option<String>,
+}
+
+/// `col_w` is the per-column budget (the modal's content width is split into two columns + the
+/// gap). The grouped rows fill that width and the action truncates to fit; truncated rows carry
+/// their full text out via a [`HELP_TIP_PREFIX`] sentinel for the hover tooltip.
+pub(crate) fn help_items_hotkeys(view: HelpView, col_w: usize) -> Vec<(Line<'static>, Option<String>)> {
+    let col_w = col_w.max(28);
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let subhead_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Cyan);
+    let desc_style = Style::default().fg(Color::Gray);
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
     let plain = |text: &str| (Line::from(text.to_string()), None);
@@ -677,9 +694,10 @@ pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<S
             order.push(group);
         }
     }
-    // Build each group's lines: a subhead + one padded `keys  action` row per binding (no notes —
-    // they'd make the two-column rows too wide; the keyboard viewer / docs carry the detail).
-    let group_lines = |group: &str| -> Vec<(Vec<Span<'static>>, usize)> {
+    // Build each group's rows: a subhead + one `keys  action` row per binding. The action is
+    // markdown-rendered and truncated to the column budget; the full text (if cut) rides along for
+    // the tooltip. (No inline notes — they'd bloat the two-column rows; the `K` viewer carries them.)
+    let group_lines = |group: &str| -> Vec<HkRow> {
         let entries: Vec<(String, String)> = section
             .bindings
             .iter()
@@ -690,43 +708,58 @@ pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<S
             return Vec::new();
         }
         let key_w = entries.iter().map(|(keys, _)| UnicodeWidthStr::width(keys.as_str())).max().unwrap_or(0).clamp(6, 20);
-        // Cap each row so two groups fit side-by-side without clipping at the modal border: budget
-        // a whole column to ~52 cells (4 indent + key_w + 2 sep + action) and truncate the action to
-        // fit (full text lives in the `K` keyboard viewer + the docs).
-        let action_max = 52usize.saturating_sub(key_w + 6).max(16);
-        let mut out =
-            vec![(vec![Span::styled(format!("  {group}"), subhead_style)], 2 + UnicodeWidthStr::width(group))];
+        let action_max = col_w.saturating_sub(4 + key_w + 2).max(10); // 4 indent + key_w + 2 sep
+        let mut out = vec![HkRow {
+            spans: vec![Span::styled(format!("  {group}"), subhead_style)],
+            width: 2 + UnicodeWidthStr::width(group),
+            full: None,
+        }];
         for (keys, action) in entries {
             let key_text = format!("    {keys:<key_w$}");
-            let desc_text = format!("  {}", truncate_str(&action, action_max));
-            let width = UnicodeWidthStr::width(key_text.as_str()) + UnicodeWidthStr::width(desc_text.as_str());
-            out.push((vec![Span::styled(key_text, key_style), Span::raw(desc_text)], width));
+            let shown = truncate_str(&action, action_max);
+            let full = (md_display_width(&shown) < md_display_width(&action)).then(|| action.clone());
+            let mut spans = vec![Span::styled(key_text, key_style), Span::raw("  ")];
+            spans.extend(inline_md_spans(&shown, desc_style));
+            let width = 4 + key_w + 2 + md_display_width(&shown);
+            out.push(HkRow { spans, width, full });
         }
         out
     };
 
     // Pair groups two-per-row (the former side-by-side look); a group with no bindings is skipped.
-    let groups: Vec<Vec<(Vec<Span<'static>>, usize)>> =
+    let groups: Vec<Vec<HkRow>> =
         order.iter().map(|group| group_lines(group)).filter(|lines| !lines.is_empty()).collect();
     let mut index = 0;
     while index < groups.len() {
         items.push(plain(""));
         let left = &groups[index];
         let right = groups.get(index + 1);
-        let column = left.iter().map(|(_, width)| *width).max().unwrap_or(0) + 4;
         let rows = left.len().max(right.map_or(0, |right| right.len()));
         for row in 0..rows {
             let mut spans = Vec::new();
-            let mut width = 0;
-            if let Some((left_spans, left_width)) = left.get(row) {
-                spans.extend(left_spans.clone());
-                width = *left_width;
+            let mut width = 0usize;
+            // `tips` collects `{col0}\u{1f}{col1}\u{1f}{full}` segments for any truncated cell on
+            // this line. `col_w` is the left column's right edge, so the right column starts there.
+            let mut tips: Vec<String> = Vec::new();
+            if let Some(left_row) = left.get(row) {
+                spans.extend(left_row.spans.clone());
+                width = left_row.width;
+                if let Some(full) = &left_row.full {
+                    tips.push(format!("0\u{1f}{col_w}\u{1f}{full}"));
+                }
             }
-            if let Some((right_spans, _)) = right.and_then(|right| right.get(row)) {
-                spans.push(Span::raw(" ".repeat(column.saturating_sub(width).max(2))));
-                spans.extend(right_spans.clone());
+            if let Some(right_row) = right.and_then(|right| right.get(row)) {
+                let pad = (col_w + HOTKEYS_GAP).saturating_sub(width).max(HOTKEYS_GAP);
+                spans.push(Span::raw(" ".repeat(pad)));
+                let right_start = width + pad;
+                spans.extend(right_row.spans.clone());
+                if let Some(full) = &right_row.full {
+                    tips.push(format!("{right_start}\u{1f}{}\u{1f}{full}", right_start + col_w));
+                }
             }
-            items.push((Line::from(spans), None));
+            let sentinel =
+                (!tips.is_empty()).then(|| format!("{HELP_TIP_PREFIX}{}", tips.join("\u{1e}")));
+            items.push((Line::from(spans), sentinel));
         }
         index += 2;
     }
@@ -742,9 +775,9 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     } else {
         HelpView::List
     };
-    // Build all tabs so the modal size stays stable when switching; show only the active one.
-    let hotkeys = help_items_hotkeys(view);
-    // For "help on hover" mode, the flag under the cursor (mapped via last frame's click regions).
+    // Build the non-hotkeys tabs first. The Hotkeys grid is sized to FILL the modal, so it's built
+    // last — once the width (hence the per-column budget) is known. (All tabs are built so the box
+    // stays a fixed size across tab switches; only the active one is shown.)
     let hovered_flag = app.hover.and_then(|(_, row)| {
         app.cli_flag_click.iter().find(|(click_row, _)| *click_row == row).map(|(_, idx)| *idx)
     });
@@ -752,6 +785,33 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let legend = help_items_legend();
     let about = help_items_about(app.help_notes_expanded);
     let design = help_items_design_system(app);
+
+    // Size the box to the widest/tallest tab (capped to the screen) so switching doesn't resize it.
+    let pad = if app.panel_padding { 2 } else { 0 };
+    // Hotkeys targets a comfortable two-column width; the other tabs size to their own content. The
+    // modal width then sets the per-column budget so the two columns fill whatever space is given
+    // (in particular, the maximized modal — they grow instead of hugging the left).
+    const HK_COL_TARGET: u16 = 56;
+    let hk_target_w = HK_COL_TARGET * 2 + HOTKEYS_GAP as u16;
+    let other_widest = cli
+        .iter()
+        .chain(legend.iter())
+        .chain(about.iter())
+        .chain(design.iter())
+        .map(|(line, _)| line.width())
+        .max()
+        .unwrap_or(0) as u16;
+    let max_width = area.width.saturating_sub(2);
+    let max_height = area.height.saturating_sub(2);
+    let modal_width = if app.help_maximized {
+        area.width.saturating_mul(9) / 10
+    } else {
+        (other_widest.max(hk_target_w) + 4 + pad).min(max_width).max(40.min(max_width))
+    };
+    let content_w = modal_width.saturating_sub(2 + pad);
+    let col_w = (content_w.saturating_sub(HOTKEYS_GAP as u16) / 2) as usize;
+    let hotkeys = help_items_hotkeys(view, col_w);
+
     // `/` search applies to every tab: the Hotkeys tab matches like lazygit (the key column AND the
     // description; a leading `@` restricts to keys), the others are a plain text filter over the
     // content lines. Section headers/blanks drop out of the filtered view.
@@ -771,17 +831,6 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     };
     let items = if filtering { &filtered } else { unfiltered };
 
-    // Size the box to the widest/tallest tab (capped to the screen) so switching doesn't resize it.
-    let pad = if app.panel_padding { 2 } else { 0 };
-    let widest = hotkeys
-        .iter()
-        .chain(cli.iter())
-        .chain(legend.iter())
-        .chain(about.iter())
-        .chain(design.iter())
-        .map(|(line, _)| line.width())
-        .max()
-        .unwrap_or(0) as u16;
     let tallest = hotkeys
         .len()
         .max(cli.len())
@@ -789,16 +838,10 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .max(about.len())
         .max(design.len()) as u16
         + 1; // +1 tab bar
-    let max_width = area.width.saturating_sub(2);
-    let max_height = area.height.saturating_sub(2);
-    let (modal_width, modal_height) = if app.help_maximized {
-        // ~90% of the viewport.
-        (area.width.saturating_mul(9) / 10, area.height.saturating_mul(9) / 10)
+    let modal_height = if app.help_maximized {
+        area.height.saturating_mul(9) / 10
     } else {
-        (
-            (widest + 4 + pad).min(max_width).max(40.min(max_width)),
-            (tallest + 2 + pad).min(max_height).max(8.min(max_height)),
-        )
+        (tallest + 2 + pad).min(max_height).max(8.min(max_height))
     };
     let modal_area = centered_rect(modal_width, modal_height, area);
     app.help_area = modal_area;
@@ -971,6 +1014,7 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let end = (start + content_height).min(items.len());
 
     app.help_links.clear();
+    app.help_trunc_tips.clear();
     app.help_notes_toggle_row = None;
     app.cli_flag_click.clear();
     app.cli_copy_click = None;
@@ -1029,6 +1073,22 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                     let width = UnicodeWidthStr::width(mode.label()) as u16 + 2; // ` label `
                     app.cli_helpmode_click.push((row, col, col + width, mode_idx));
                     col += width + 1;
+                }
+            }
+            Some(sentinel) if sentinel.starts_with(HELP_TIP_PREFIX) => {
+                // One or more `{col0}\u{1f}{col1}\u{1f}{full}` segments → screen-column tooltip regions.
+                for segment in sentinel[HELP_TIP_PREFIX.len()..].split('\u{1e}') {
+                    let mut parts = segment.splitn(3, '\u{1f}');
+                    if let (Some(col0), Some(col1), Some(full)) = (parts.next(), parts.next(), parts.next())
+                        && let (Ok(col0), Ok(col1)) = (col0.parse::<u16>(), col1.parse::<u16>())
+                    {
+                        app.help_trunc_tips.push((
+                            row,
+                            content_area.x + col0,
+                            content_area.x + col1,
+                            full.to_string(),
+                        ));
+                    }
                 }
             }
             Some(url) => app.help_links.push((row, url.to_string())),

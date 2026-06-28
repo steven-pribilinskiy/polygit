@@ -3,6 +3,20 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.102.0 — 2026-06-29
+Real-keyboard viewer layout · help columns fill width · hover tooltips · markdown
+- **keyboard viewer** (`K`) now reads like a real keyboard: rows **stagger** (`esc` is narrower
+  than `tab` so the backtick starts the column; the left `⇧` is wider so `z` steps right of `a`
+  like `a` does of `q`), and the nav cluster is the standard 3-wide PC block — `ins`/`home`/`pgup`
+  over `del`/`end`/`pgdn`, then the inverted-T arrows (`ins`/`del` added; `home`/`end`/`pgup`/`pgdn`
+  shifted right). `Insert`/`Delete` now light up when pressed.
+- **Hotkeys help** two columns now **fill the modal width** (they grow to fill the maximized modal
+  instead of hugging the left), and a description clipped with `…` shows its **full text on hover**.
+- **inline markdown** — `` `code` ``, **bold**, *italic* — renders in the help modal and tooltips
+  (e.g. the Legend's column/marker tokens like `Δ`, `wt`, `↑N`, `main`/`dev` are now styled).
+- web docs keyboard viewer mirrors the new nav cluster; the keybindings guide documents the
+  modifier-filter + grouped/fill/tooltip help.
+
 ## v2.101.1 — 2026-06-29
 Restore the grouped two-column Hotkeys layout (still keymap-driven)
 - the **`?` help → Hotkeys** tab is back to the **grouped, two-column** look — each `group` from

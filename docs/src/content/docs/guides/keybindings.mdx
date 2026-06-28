@@ -15,12 +15,17 @@ laid out on a keyboard:
 :::tip[Same viewer inside the terminal]
 This keyboard isn't just docs. Open the help modal (`?`), and on the **Hotkeys** tab click
 `[K ⌨ keyboard]` (or press `K`) to get the identical viewer in the TUI — built from the same
-keymap, nav cluster on the right. It's responsive: a full-blown bordered keyboard when the
+keymap, with the standard nav/arrow cluster (`ins`/`home`/`pgup` over `del`/`end`/`pgdn`, then
+the inverted-T arrows) on the right. It's responsive: a full-blown bordered keyboard when the
 terminal is large, a compact strip when it isn't. Every keypress — including physical
 `Shift`/`Ctrl` on terminals with the Kitty keyboard protocol — highlights its key and lists
-what it does in a panel below (whose keys column auto-sizes to the longest combo shown); `Esc`
-closes it.
+what it does in a panel below. **Held modifiers filter** that panel to the exact chord: press
+`Shift`+`G` to read only the `Shift`+`G` binding, or a bare key to see all its variants
+(`g`, `G`, `^G`, …). `Esc` closes it.
 :::
+
+The **Hotkeys** tab itself is rendered from this same keymap, grouped into two columns that
+fill the modal; a description clipped with `…` shows its full text on hover.
 
 <KeymapExplorer />
 

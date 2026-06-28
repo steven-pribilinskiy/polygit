@@ -108,7 +108,7 @@
         for view in [HelpView::List, HelpView::RepoPage, HelpView::DiffModal] {
             let id = help_section_id(view);
             let section = crate::keymap::sections().iter().find(|section| section.id == id).unwrap();
-            let rendered: String = help_items_hotkeys(view)
+            let rendered: String = help_items_hotkeys(view, 56)
                 .iter()
                 .map(|(line, _)| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
                 .collect::<Vec<_>>()
