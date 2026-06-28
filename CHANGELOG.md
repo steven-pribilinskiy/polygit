@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.94.0 — 2026-06-28
+Commit graph on the Commits tab (GitKraken-style, truecolor lanes)
+- the Commits tab now draws a **commit graph** left of each row: 24-bit truecolor branch lanes with
+  `●` nodes (`◆` for merge commits) and `│` continuations, so branches and merges read as parallel
+  colored lanes. One row per commit (still selectable/clickable; `Enter` opens its diff).
+- `git log` now also reads each commit's parents (`%p`) to lay out the lanes.
+
 ## v2.93.0 — 2026-06-28
 Stashes tab gets its own column selector
 - the **Stashes** tab now has a **`t cols ▾`** dropdown to toggle its **age** and **stats** columns

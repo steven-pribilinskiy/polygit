@@ -282,6 +282,8 @@ pub struct CommitInfo {
     pub subject: String,
     pub author: String,
     pub rel_date: String,
+    /// Abbreviated parent shas (as `git log %p` emits them) — drives the graph lane layout.
+    pub parents: Vec<String>,
 }
 
 /// Which diff a dirty row's modal shows. (Stash rows ignore this.)
@@ -525,6 +527,8 @@ pub struct PageRow {
     pub base: Option<String>,
     /// The resolved `base` came from a user override rather than auto-detection.
     pub base_is_override: bool,
+    /// Abbreviated parent shas — set for **commit** rows only (drives the Commits-tab graph lanes).
+    pub parents: Vec<String>,
 }
 
 impl PageRow {

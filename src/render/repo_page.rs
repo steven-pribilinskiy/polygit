@@ -1287,25 +1287,50 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         let sha_w = 9usize;
         let age_w = commit_width(|row| row.last_commit_rel.as_str()).clamp(8, 16);
         let author_w = commit_width(|row| row.author.as_str()).clamp(6, 40);
-        let used = 2 + sha_w + 2 + age_w + 2 + author_w + 2;
+        // A GitKraken-style commit graph (truecolor lanes, `●`/`◆` nodes) drawn left of the sha,
+        // computed once from the commit rows in display order.
+        let commit_seq: Vec<(String, Vec<String>)> = rows
+            .iter()
+            .filter(|row| row.kind == PageRowKind::Commit)
+            .map(|row| (row.commit_sha.clone(), row.parents.clone()))
+            .collect();
+        let graph = crate::graph::build_graph(&commit_seq);
+        let graph_w = graph.iter().map(|graph_row| graph_row.cells.len()).max().unwrap_or(1).max(1);
+        let used = 2 + graph_w + 1 + sha_w + 2 + age_w + 2 + author_w + 2;
         let subject_w = (inner.width as usize).saturating_sub(used).max(10);
+        let mut commit_ordinal = 0usize;
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Commit {
                 continue;
             }
-            items.push((
-                Line::from(vec![
-                    Span::styled(
-                        format!("  {:<sha_w$}", truncate_str(&row.commit_sha, sha_w)),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Span::styled(format!("  {:<age_w$}", truncate_str(&row.last_commit_rel, age_w)), label),
-                    Span::styled(format!("  {:<author_w$}", truncate_str(&row.author, author_w)), cyan),
-                    Span::raw(format!("  {}", truncate_str(&row.subject, subject_w))),
-                ]),
-                Some(sel_index),
-                None,
+            // Graph column: one colored cell per lane (padded to graph_w), then a gap.
+            let mut spans: Vec<Span> = vec![Span::raw("  ")];
+            if let Some(graph_row) = graph.get(commit_ordinal) {
+                for lane in 0..graph_w {
+                    match graph_row.cells.get(lane) {
+                        Some(cell) => {
+                            let mut style = Style::default().fg(crate::graph::lane_color(cell.lane));
+                            if lane == graph_row.node {
+                                style = style.add_modifier(Modifier::BOLD);
+                            }
+                            spans.push(Span::styled(cell.glyph.to_string(), style));
+                        }
+                        None => spans.push(Span::raw(" ")),
+                    }
+                }
+            } else {
+                spans.push(Span::raw(" ".repeat(graph_w)));
+            }
+            spans.push(Span::raw(" "));
+            commit_ordinal += 1;
+            spans.push(Span::styled(
+                format!("{:<sha_w$}", truncate_str(&row.commit_sha, sha_w)),
+                Style::default().fg(Color::Yellow),
             ));
+            spans.push(Span::styled(format!("  {:<age_w$}", truncate_str(&row.last_commit_rel, age_w)), label));
+            spans.push(Span::styled(format!("  {:<author_w$}", truncate_str(&row.author, author_w)), cyan));
+            spans.push(Span::raw(format!("  {}", truncate_str(&row.subject, subject_w))));
+            items.push((Line::from(spans), Some(sel_index), None));
         }
     }
 

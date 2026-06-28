@@ -838,6 +838,7 @@
             merge_base_short: None,
             base: base.map(str::to_string),
             base_is_override: false,
+            parents: Vec::new(),
         };
         let zed = row("zed", 100, Some("origin/main"));
         let abe = row("abe", 200, Some("origin/dev"));

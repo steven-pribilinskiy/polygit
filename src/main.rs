@@ -3,6 +3,7 @@ mod cache;
 mod changelog;
 mod diffview;
 mod git;
+mod graph;
 mod groups;
 mod keymap;
 mod persist;
