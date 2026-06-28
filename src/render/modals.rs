@@ -418,11 +418,31 @@ fn wrap_release_notes(
     dim: Style,
     avail: usize,
 ) -> Vec<(usize, Vec<(String, Style)>)> {
-    let mut rows = Vec::new();
+    // The changelog is hard-wrapped at ~100 cols, so one bullet spans several source lines — a
+    // continuation line is indented and is NOT itself a new bullet. Coalesce those back into one
+    // logical block first, so the text re-flows to the modal width (no mid-sentence break) and the
+    // whole bullet shares one style + hanging indent (instead of dim, flush-left orphan lines).
+    let mut blocks: Vec<String> = Vec::new();
     for note in notes {
-        let bullet = note.trim_start().starts_with('-');
+        let trimmed = note.trim_start();
+        let is_continuation = note.len() != trimmed.len() // had leading whitespace
+            && !trimmed.starts_with('-')
+            && !trimmed.starts_with('*');
+        match blocks.last_mut() {
+            Some(last) if is_continuation => {
+                last.push(' ');
+                last.push_str(trimmed);
+            }
+            _ => blocks.push(trimmed.to_string()),
+        }
+    }
+    let mut rows = Vec::new();
+    for block in &blocks {
+        // Bullets get the bright note style + a hanging indent (continuations align under the text
+        // after "- "); a plain paragraph (e.g. the release summary line) is dim, flush at indent 4.
+        let bullet = block.starts_with('-') || block.starts_with('*');
         let base = if bullet { note_style } else { dim };
-        for (row, segs) in super::preview::wrap_markdown(note, base, avail).into_iter().enumerate() {
+        for (row, segs) in super::preview::wrap_markdown(block, base, avail).into_iter().enumerate() {
             let indent = if row > 0 && bullet { 6 } else { 4 };
             rows.push((indent, segs));
         }

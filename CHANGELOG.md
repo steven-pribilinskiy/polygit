@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.91.1 — 2026-06-28
+Fix: changelog / What's New bullets re-flow and hang-indent correctly
+- the changelog is hard-wrapped in the source, so a bullet that spanned several lines rendered each
+  continuation as its own dim, flush-left line (a mid-sentence break, e.g. "stats," then "and" on a
+  new line, misaligned under the `-`). Continuation lines are now coalesced into their bullet and
+  re-flowed to the modal width, with continuations hang-indented under the bullet text.
+
 ## v2.91.0 — 2026-06-28
 Stash creation time on the repo page
 - the **Stashes** tab now has an **age** column ("3 days ago") between the ref and the change stats,
