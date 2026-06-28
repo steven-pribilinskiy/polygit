@@ -135,6 +135,10 @@ pub struct PersistedState {
     /// Default restored.
     #[serde(default)]
     pub repo_page_maximized: bool,
+    /// In the maximized (full-screen) repo page, show the tabbed view (true) instead of the flat
+    /// stacked single view (false). Toggled with `v`. Default flat (stacked).
+    #[serde(default)]
+    pub repo_page_maximized_tabbed: bool,
     /// Restored repo-panel height as a fraction of the main area (0 = use the default).
     #[serde(default)]
     pub dock_ratio: f64,

@@ -8,9 +8,10 @@ which runs `git fetch` and then lists everything about the repo. By default it o
 (a docked panel across the bottom, so the list stays live above it and selecting another repo
 retargets the page); press `m` or the `m▢` title-bar button (next to the `esc✕` close button) to
 **maximize** it full-screen, `m▣`/`m` to restore. The window controls use the active icon set
-(emoji glyphs in emoji mode). **Maximized is a single view** — every
-section stacked under its header, no tab bar (tabs apply only while restored). The state is sticky
-(Settings → Layout → **Repo page**). Rows hover-highlight like the main list.
+(emoji glyphs in emoji mode). **Maximized defaults to a single stacked view** — every section under
+its header, no tab bar — but **`v` toggles it between flat (stacked) and tabbed** (and toggles the
+tabbed/flat mode while restored too). The window + view state is sticky (also Settings → Layout →
+**Repo page**). Rows hover-highlight like the main list.
 
 While **restored**, the page is just panel `[4]` — `1`/`2`/`3`/`4` jump focus straight to the
 list / info / result / repo-page panels without leaving the page (and from a maximized page,

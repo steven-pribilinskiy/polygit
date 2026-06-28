@@ -3318,6 +3318,19 @@ async fn run_event_loop(
                         // Tab / Shift+Tab switch repo-page tabs (when tabbed).
                         KeyCode::Tab => app.repo_page_cycle_tab(true),
                         KeyCode::BackTab => app.repo_page_cycle_tab(false),
+                        // `v` toggles the view: maximized → tabbed ⇄ flat (stacked); restored →
+                        // tabbed ⇄ flat via the repo-page-tabs mode.
+                        KeyCode::Char('v') => {
+                            if app.maximized == Some(Pane::RepoPage) {
+                                app.repo_page_maximized_tabbed = !app.repo_page_maximized_tabbed;
+                            } else {
+                                app.repo_page_tabs = match app.repo_page_tabs {
+                                    crate::app::RepoTabsMode::Auto => crate::app::RepoTabsMode::Off,
+                                    crate::app::RepoTabsMode::Off => crate::app::RepoTabsMode::Auto,
+                                };
+                            }
+                            app.save_state();
+                        }
                         KeyCode::PageDown => {
                             app.repo_page_scroll = app.repo_page_scroll.saturating_add(10);
                         }

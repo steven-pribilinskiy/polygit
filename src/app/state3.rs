@@ -960,10 +960,12 @@ impl AppState {
             + u8::from(!page.worktrees.is_empty())
             + u8::from(!page.stashes.is_empty())
             + u8::from(!page.commits.is_empty());
-        if self.maximized != Some(Pane::RepoPage)
-            && self.repo_page_tabs == RepoTabsMode::Auto
-            && present >= 2
-        {
+        let tabbed_allowed = if self.maximized == Some(Pane::RepoPage) {
+            self.repo_page_maximized_tabbed
+        } else {
+            true
+        };
+        if tabbed_allowed && self.repo_page_tabs == RepoTabsMode::Auto && present >= 2 {
             match self.repo_page_tab.row_kind() {
                 Some(kind) => rows.retain(|row| row.kind == kind),
                 None => rows.clear(),
@@ -1003,7 +1005,14 @@ impl AppState {
     /// Whether the repo page is currently rendered as tabs (mode Auto + ≥2 non-empty sections).
     /// Maximized is always a single, full view — every section stacked, no tab bar.
     pub fn repo_page_tabbed(&self) -> bool {
-        self.maximized != Some(Pane::RepoPage)
+        // Restored: tabbed per `repo_page_tabs`. Maximized: flat stacked by default, tabbed only
+        // when the `v` toggle (`repo_page_maximized_tabbed`) is on.
+        let tabbed_allowed = if self.maximized == Some(Pane::RepoPage) {
+            self.repo_page_maximized_tabbed
+        } else {
+            true
+        };
+        tabbed_allowed
             && self.repo_page_tabs == RepoTabsMode::Auto
             && self.repo_page_present_tabs().len() >= 2
     }

@@ -209,6 +209,9 @@ pub struct AppState {
     pub repo_page_selected: usize,
     /// Whether the repo page uses tabs for branches/worktrees/stashes (persisted).
     pub repo_page_tabs: RepoTabsMode,
+    /// In the maximized repo page, show the tabbed view instead of the flat stacked one (`v`
+    /// toggle, persisted).
+    pub repo_page_maximized_tabbed: bool,
     /// Which pane (if any) is maximized to fill the screen — the single source of truth for every
     /// pane's maximize state. `Some(RepoPage)` is the only value that persists (round-tripped via
     /// the legacy `repo_page_maximized` field, so a repo page still opens maximized when sticky);
@@ -716,6 +719,7 @@ impl AppState {
             repo_page_tabs: persisted.repo_page_tabs,
             // Only the repo page's maximize is sticky; restore it from the legacy persisted bool.
             maximized: persisted.repo_page_maximized.then_some(Pane::RepoPage),
+            repo_page_maximized_tabbed: persisted.repo_page_maximized_tabbed,
             branch_check: persisted.branch_check,
             repo_page_tab: RepoTab::Branches,
             repo_page_tab_click: Vec::new(),
