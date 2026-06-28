@@ -9,14 +9,16 @@
           "j",
           "↓"
         ],
-        "action": "Next repo"
+        "action": "Next repo",
+        "group": "Navigate"
       },
       {
         "keys": [
           "k",
           "↑"
         ],
-        "action": "Previous repo"
+        "action": "Previous repo",
+        "group": "Navigate"
       },
       {
         "keys": [
@@ -27,7 +29,8 @@
         "keywords": [
           "mouse",
           "scroll"
-        ]
+        ],
+        "group": "Navigate"
       },
       {
         "keys": [
@@ -39,27 +42,31 @@
           "mouse",
           "scroll",
           "selection"
-        ]
+        ],
+        "group": "Navigate"
       },
       {
         "keys": [
           "g"
         ],
-        "action": "Jump to top"
+        "action": "Jump to top",
+        "group": "Navigate"
       },
       {
         "keys": [
           "G"
         ],
         "action": "Jump to bottom",
-        "note": "the Result summary row"
+        "note": "the Result summary row",
+        "group": "Navigate"
       },
       {
         "keys": [
           "Space"
         ],
         "action": "Toggle the Result/Errors summary in the preview",
-        "note": "any navigation clears it; on a folder/group header: collapse/expand"
+        "note": "any navigation clears it; on a folder/group header: collapse/expand",
+        "group": "Panes & views"
       },
       {
         "keys": [
@@ -73,7 +80,8 @@
           "grouping",
           "view",
           "section"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -88,7 +96,8 @@
           "directory",
           "view",
           "nested"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -102,7 +111,8 @@
           "collapse",
           "expand",
           "vim"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -112,7 +122,8 @@
         "keywords": [
           "fold",
           "collapse all"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -123,7 +134,8 @@
         "keywords": [
           "fold",
           "expand all"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -134,7 +146,8 @@
           "fold",
           "expand",
           "subtree"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -147,7 +160,8 @@
           "fold",
           "parent",
           "left"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -159,7 +173,8 @@
           "expand",
           "unfold",
           "right"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -171,7 +186,8 @@
           "group",
           "refresh",
           "resolve"
-        ]
+        ],
+        "group": "Folding & views"
       },
       {
         "keys": [
@@ -179,7 +195,8 @@
           "Shift+Tab"
         ],
         "action": "Cycle focus across the visible panels: [1] list · [2] info · [3] result · [4] repo page",
-        "note": "the focused panel gets a bright rounded border; hidden panels are skipped"
+        "note": "the focused panel gets a bright rounded border; hidden panels are skipped",
+        "group": "Panes & views"
       },
       {
         "keys": [
@@ -194,7 +211,8 @@
           "pane",
           "focus",
           "maximize"
-        ]
+        ],
+        "group": "Panes & views"
       },
       {
         "keys": [
@@ -202,13 +220,15 @@
           "PgDn"
         ],
         "action": "Scroll the result/log panel",
-        "note": "when panel [3] is focused"
+        "note": "when panel [3] is focused",
+        "group": "Navigate"
       },
       {
         "keys": [
           "End"
         ],
-        "action": "Resume auto-scroll in the preview"
+        "action": "Resume auto-scroll in the preview",
+        "group": "Navigate"
       },
       {
         "keys": [
@@ -216,7 +236,8 @@
           "]"
         ],
         "action": "Narrow / widen the left pane",
-        "note": "also clickable in the status bar; the divider grip fills solid while dragging"
+        "note": "also clickable in the status bar; the divider grip fills solid while dragging",
+        "group": "Panes & views"
       },
       {
         "keys": [
@@ -224,47 +245,54 @@
           "double-click"
         ],
         "action": "Open the dedicated repo page",
-        "note": "on a folder/collapsible group header: collapse/expand instead"
+        "note": "on a folder/collapsible group header: collapse/expand instead",
+        "group": "Navigate"
       },
       {
         "keys": [
           "r"
         ],
         "action": "Retry the selected repo if it failed or was skipped",
-        "note": "with a folder/group header selected: retry every failed/skipped repo it covers (folder subtree, recursively)"
+        "note": "with a folder/group header selected: retry every failed/skipped repo it covers (folder subtree, recursively)",
+        "group": "Pull / retry"
       },
       {
         "keys": [
           "R"
         ],
-        "action": "Retry all repos with an issue"
+        "action": "Retry all repos with an issue",
+        "group": "Pull / retry"
       },
       {
         "keys": [
           "e"
         ],
         "action": "Refetch / pull the selected repo",
-        "note": "re-pull regardless of status — incl. idle/cached repos when auto-pull was suppressed; with a folder/group header selected, re-pulls every repo it covers (folder subtree, recursively)"
+        "note": "re-pull regardless of status — incl. idle/cached repos when auto-pull was suppressed; with a folder/group header selected, re-pulls every repo it covers (folder subtree, recursively)",
+        "group": "Pull / retry"
       },
       {
         "keys": [
           "E"
         ],
         "action": "Refetch / pull all repos not in progress",
-        "note": "the manual \"pull everything\" when auto-pull-on-launch is off or suppressed"
+        "note": "the manual \"pull everything\" when auto-pull-on-launch is off or suppressed",
+        "group": "Pull / retry"
       },
       {
         "keys": [
           "u"
         ],
         "action": "Refresh the selected repo's local git facts (no pull)",
-        "note": "branch, ahead/behind, dirty, stash, branch count — network-free"
+        "note": "branch, ahead/behind, dirty, stash, branch count — network-free",
+        "group": "Pull / retry"
       },
       {
         "keys": [
           "U"
         ],
-        "action": "Refresh all repos' local git facts (no pull)"
+        "action": "Refresh all repos' local git facts (no pull)",
+        "group": "Pull / retry"
       },
       {
         "keys": [
@@ -279,7 +307,8 @@
           "expand",
           "github",
           "wrap"
-        ]
+        ],
+        "group": "Panes & views"
       },
       {
         "keys": [
@@ -293,13 +322,15 @@
           "panel",
           "split",
           "hide"
-        ]
+        ],
+        "group": "Panes & views"
       },
       {
         "keys": [
           "d"
         ],
-        "action": "Toggle the per-repo diff view"
+        "action": "Toggle the per-repo diff view",
+        "group": "Panes & views"
       },
       {
         "keys": [
@@ -318,7 +349,8 @@
           "files",
           "pull request",
           "pr"
-        ]
+        ],
+        "group": "Find & sort"
       },
       {
         "keys": [
@@ -334,7 +366,8 @@
           "branch",
           "pulled",
           "changed"
-        ]
+        ],
+        "group": "Find & sort"
       },
       {
         "keys": [
@@ -345,13 +378,15 @@
         "keywords": [
           "filter",
           "status"
-        ]
+        ],
+        "group": "Find & sort"
       },
       {
         "keys": [
           "o"
         ],
-        "action": "Open the selected repo's remote in the browser"
+        "action": "Open the selected repo's remote in the browser",
+        "group": "Clipboard & run"
       },
       {
         "keys": [
@@ -363,7 +398,8 @@
           "copy",
           "clipboard",
           "toast"
-        ]
+        ],
+        "group": "Clipboard & run"
       },
       {
         "keys": [
@@ -373,14 +409,16 @@
         "keywords": [
           "copy",
           "clipboard"
-        ]
+        ],
+        "group": "Clipboard & run"
       },
       {
         "keys": [
           "c"
         ],
         "action": "Launch the AI coding agent in the selected repo",
-        "note": "suspends the TUI; agent (claude/codex/gemini) + skip-permissions set in Settings → Agent; PULL_CLAUDE_CMD overrides the command verbatim"
+        "note": "suspends the TUI; agent (claude/codex/gemini) + skip-permissions set in Settings → Agent; PULL_CLAUDE_CMD overrides the command verbatim",
+        "group": "Clipboard & run"
       },
       {
         "keys": [
@@ -391,14 +429,16 @@
         "keywords": [
           "lazygit",
           "git ui"
-        ]
+        ],
+        "group": "Clipboard & run"
       },
       {
         "keys": [
           "x"
         ],
         "action": "Clear this repo's log buffer",
-        "note": "empties the streamed pull output"
+        "note": "empties the streamed pull output",
+        "group": "Clipboard & run"
       },
       {
         "keys": [
@@ -408,7 +448,8 @@
         "keywords": [
           "docs",
           "help website"
-        ]
+        ],
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -433,14 +474,16 @@
           "mouse",
           "auto-pull",
           "cache"
-        ]
+        ],
+        "group": "App & modals"
       },
       {
         "keys": [
           "click vX.Y.Z"
         ],
         "action": "Open the Changelog (every release as an accordion, latest two expanded; j/k select, space/enter fold). A What's New modal also pops automatically after reloading into a newer build.",
-        "note": "the clickable version tag in the status bar's bottom-right"
+        "note": "the clickable version tag in the status bar's bottom-right",
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -452,7 +495,8 @@
           "version",
           "update",
           "pin"
-        ]
+        ],
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -468,7 +512,8 @@
           "install",
           "update",
           "switch"
-        ]
+        ],
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -479,7 +524,8 @@
           "pin",
           "older",
           "downgrade"
-        ]
+        ],
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -491,7 +537,8 @@
           "pin",
           "confirm",
           "install"
-        ]
+        ],
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -504,20 +551,23 @@
           "fullscreen",
           "enlarge",
           "modal"
-        ]
+        ],
+        "group": "App & modals"
       },
       {
         "keys": [
           "?"
         ],
         "action": "Open the help modal",
-        "note": "Tab switches tabs (Hotkeys · CLI · Legend · Design · About). On the Design tab, v toggles flat ⇄ tabbed (vertical section tabs) and [/] move between sections; the preview-confirm button opens the shared dialog."
+        "note": "Tab switches tabs (Hotkeys · CLI · Legend · Design · About). On the Design tab, v toggles flat ⇄ tabbed (vertical section tabs) and [/] move between sections; the preview-confirm button opens the shared dialog.",
+        "group": "App & modals"
       },
       {
         "keys": [
           "/"
         ],
-        "action": "Fuzzy-filter repos by name (subsequence match, ranked by relevance; matched chars underlined; selection follows the first match, Enter keeps it)"
+        "action": "Fuzzy-filter repos by name (subsequence match, ranked by relevance; matched chars underlined; selection follows the first match, Enter keeps it)",
+        "group": "Find & sort"
       },
       {
         "keys": [
@@ -529,7 +579,8 @@
           "restore",
           "full-screen",
           "zoom"
-        ]
+        ],
+        "group": "Panes & views"
       },
       {
         "keys": [
@@ -541,7 +592,8 @@
           "star",
           "bookmark",
           "pin"
-        ]
+        ],
+        "group": "Favorites & menu"
       },
       {
         "keys": [
@@ -552,7 +604,8 @@
           "favorite",
           "favorites first",
           "pin"
-        ]
+        ],
+        "group": "Favorites & menu"
       },
       {
         "keys": [
@@ -567,7 +620,8 @@
           "jump",
           "search",
           "goto"
-        ]
+        ],
+        "group": "Find & sort"
       },
       {
         "keys": [
@@ -581,7 +635,8 @@
           "picker",
           "workspace",
           "browse"
-        ]
+        ],
+        "group": "Workspace"
       },
       {
         "keys": [
@@ -595,20 +650,23 @@
           "folder",
           "workspace",
           "delete"
-        ]
+        ],
+        "group": "Workspace"
       },
       {
         "keys": [
           "Esc"
         ],
-        "action": "Clear the filter and restore the pre-filter selection, or quit when no filter"
+        "action": "Clear the filter and restore the pre-filter selection, or quit when no filter",
+        "group": "App & modals"
       },
       {
         "keys": [
           "q"
         ],
         "action": "Quit",
-        "note": "with a modal open it closes the modal instead (the footer hint reads `q close`); `, settings` / `? help` / `q` stay clickable from inside any modal"
+        "note": "with a modal open it closes the modal instead (the footer hint reads `q close`); `, settings` / `? help` / `q` stay clickable from inside any modal",
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -616,7 +674,8 @@
           "C"
         ],
         "action": "Quit",
-        "note": "exit code 130"
+        "note": "exit code 130",
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -624,7 +683,8 @@
           "R"
         ],
         "action": "Reload into a newly-installed build",
-        "note": "only while the top-right `↺ new build installed` notice is up; restores the terminal and exec's the new binary with the same args (also the clickable `[^R reload]`); works from any view or modal"
+        "note": "only while the top-right `↺ new build installed` notice is up; restores the terminal and exec's the new binary with the same args (also the clickable `[^R reload]`); works from any view or modal",
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -632,7 +692,8 @@
           "X"
         ],
         "action": "Dismiss the new-build notice",
-        "note": "only while the notice is up; re-arms if the binary changes again (also the clickable `[^X]`); works from any view or modal"
+        "note": "only while the notice is up; re-arms if the binary changes again (also the clickable `[^X]`); works from any view or modal",
+        "group": "App & modals"
       },
       {
         "keys": [
@@ -647,7 +708,8 @@
           "context",
           "cleanup",
           "prompt"
-        ]
+        ],
+        "group": "Favorites & menu"
       }
     ]
   },
@@ -665,14 +727,16 @@
           "Home",
           "End"
         ],
-        "action": "Navigate rows"
+        "action": "Navigate rows",
+        "group": "Navigate"
       },
       {
         "keys": [
           "PgUp",
           "PgDn"
         ],
-        "action": "Scroll"
+        "action": "Scroll",
+        "group": "Navigate"
       },
       {
         "keys": [
@@ -680,7 +744,8 @@
           "double-click"
         ],
         "action": "Open the diff modal",
-        "note": "stash, dirty row, or a branch vs its base; \"no changes\" toasts instead"
+        "note": "stash, dirty row, or a branch vs its base; \"no changes\" toasts instead",
+        "group": "Navigate"
       },
       {
         "keys": [
@@ -692,7 +757,8 @@
         "keywords": [
           "checkout",
           "switch"
-        ]
+        ],
+        "group": "Navigate"
       },
       {
         "keys": [
@@ -707,7 +773,8 @@
           "deleted",
           "stats",
           "base"
-        ]
+        ],
+        "group": "Columns & info"
       },
       {
         "keys": [
@@ -720,14 +787,16 @@
           "order",
           "ascending",
           "descending"
-        ]
+        ],
+        "group": "Columns & info"
       },
       {
         "keys": [
           "i"
         ],
         "action": "Toggle the bottom info panel",
-        "note": "branch/upstream/base + merge-base, ahead-behind, change stats, last commit; persisted"
+        "note": "branch/upstream/base + merge-base, ahead-behind, change stats, last commit; persisted",
+        "group": "Columns & info"
       },
       {
         "keys": [
@@ -737,7 +806,8 @@
         "keywords": [
           "pull",
           "ff"
-        ]
+        ],
+        "group": "Row actions"
       },
       {
         "keys": [
@@ -747,20 +817,23 @@
         "keywords": [
           "pull all",
           "ff"
-        ]
+        ],
+        "group": "Row actions"
       },
       {
         "keys": [
           "d"
         ],
         "action": "Context action: delete branch / drop stash / remove worktree / discard",
-        "note": "dynamic to the row; confirmation scaled to danger"
+        "note": "dynamic to the row; confirmation scaled to danger",
+        "group": "Row actions"
       },
       {
         "keys": [
           "o"
         ],
-        "action": "Open the selected branch on the remote (e.g. GitHub) in the browser"
+        "action": "Open the selected branch on the remote (e.g. GitHub) in the browser",
+        "group": "Row actions"
       },
       {
         "keys": [
@@ -772,7 +845,8 @@
           "copy",
           "clipboard",
           "toast"
-        ]
+        ],
+        "group": "Row actions"
       },
       {
         "keys": [
@@ -785,19 +859,22 @@
           "fork",
           "parent",
           "override"
-        ]
+        ],
+        "group": "Row actions"
       },
       {
         "keys": [
           "c"
         ],
-        "action": "Launch the AI coding agent in the row's path"
+        "action": "Launch the AI coding agent in the row's path",
+        "group": "Row actions"
       },
       {
         "keys": [
           "l"
         ],
-        "action": "Open lazygit in the row's path"
+        "action": "Open lazygit in the row's path",
+        "group": "Row actions"
       },
       {
         "keys": [
@@ -813,7 +890,8 @@
           "panel",
           "pane",
           "switch"
-        ]
+        ],
+        "group": "Panes"
       },
       {
         "keys": [
@@ -827,14 +905,16 @@
           "dock",
           "full-screen",
           "window"
-        ]
+        ],
+        "group": "Panes"
       },
       {
         "keys": [
           "Esc",
           "q"
         ],
-        "action": "Back to the repo list"
+        "action": "Back to the repo list",
+        "group": "Other"
       }
     ]
   },
@@ -851,7 +931,8 @@
         "note": "the focused panel gets a bright border",
         "keywords": [
           "focus"
-        ]
+        ],
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -861,14 +942,16 @@
           "k"
         ],
         "action": "Drive the focused panel",
-        "note": "pick a file, or scroll the diff"
+        "note": "pick a file, or scroll the diff",
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "click",
           "double-click"
         ],
-        "action": "Pick the clicked file"
+        "action": "Pick the clicked file",
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -877,14 +960,16 @@
           "Home",
           "End"
         ],
-        "action": "First/last file, or diff top/bottom (per focus)"
+        "action": "First/last file, or diff top/bottom (per focus)",
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "PgUp",
           "PgDn"
         ],
-        "action": "Page the diff panel"
+        "action": "Page the diff panel",
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -893,7 +978,8 @@
           "PgDn"
         ],
         "action": "Page the file list",
-        "note": "Alt too — moves the selection a viewport at a time"
+        "note": "Alt too — moves the selection a viewport at a time",
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -901,7 +987,8 @@
           "wheel"
         ],
         "action": "Scroll the file list",
-        "note": "Alt+wheel too — selection unchanged"
+        "note": "Alt+wheel too — selection unchanged",
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -915,28 +1002,32 @@
           "modified",
           "added",
           "deleted"
-        ]
+        ],
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "t"
         ],
         "action": "Toggle uncommitted ⇄ vs base branch",
-        "note": "dirty rows only; re-lists files"
+        "note": "dirty rows only; re-lists files",
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "d"
         ],
         "action": "Discard changes (current branch) / remove worktree / drop stash",
-        "note": "with confirmation"
+        "note": "with confirmation",
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "Esc",
           "q"
         ],
-        "action": "Close the modal"
+        "action": "Close the modal",
+        "group": "Hotkeys"
       }
     ]
   },
@@ -957,7 +1048,8 @@
           "scroll",
           "up",
           "down"
-        ]
+        ],
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -966,28 +1058,32 @@
           "Home",
           "End"
         ],
-        "action": "Jump to top / bottom"
+        "action": "Jump to top / bottom",
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "PgUp",
           "PgDn"
         ],
-        "action": "Page up / down"
+        "action": "Page up / down",
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "click"
         ],
         "action": "Toggle a section (description / comment)",
-        "note": "click any ▾/▸ section header to fold or unfold it"
+        "note": "click any ▾/▸ section header to fold or unfold it",
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "z"
         ],
         "action": "Collapse all / expand all sections",
-        "note": "also the [− collapse all] / [+ expand all] control; shown with >1 comment"
+        "note": "also the [− collapse all] / [+ expand all] control; shown with >1 comment",
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -999,14 +1095,16 @@
           "search",
           "filter",
           "find"
-        ]
+        ],
+        "group": "Hotkeys"
       },
       {
         "keys": [
           "wheel"
         ],
         "action": "Scroll the PR",
-        "note": "drag the scrollbar to jump"
+        "note": "drag the scrollbar to jump",
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -1016,7 +1114,8 @@
         "keywords": [
           "open",
           "github"
-        ]
+        ],
+        "group": "Hotkeys"
       },
       {
         "keys": [
@@ -1024,7 +1123,8 @@
           "q"
         ],
         "action": "Close the modal",
-        "note": "the [x] button or a click outside also closes"
+        "note": "the [x] button or a click outside also closes",
+        "group": "Hotkeys"
       }
     ]
   }

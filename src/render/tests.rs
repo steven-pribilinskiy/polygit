@@ -98,3 +98,33 @@
         let num = line.spans.iter().find(|span| span.content.contains("42")).unwrap();
         assert_eq!(num.style.fg, Some(Color::Yellow));
     }
+
+    // Every binding in `keymap.json` must appear in the grouped help for its view — so a new (or
+    // renamed) hotkey can't silently fall out of the `?` Hotkeys list. Guards the group layout: a
+    // binding tagged with a group not in `help_group_order` still renders (appended), and this
+    // asserts it. (The PR-modal section has no help view, so it's excluded.)
+    #[test]
+    fn help_covers_every_binding() {
+        for view in [HelpView::List, HelpView::RepoPage, HelpView::DiffModal] {
+            let id = help_section_id(view);
+            let section = crate::keymap::sections().iter().find(|section| section.id == id).unwrap();
+            let rendered: String = help_items_hotkeys(view)
+                .iter()
+                .map(|(line, _)| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            for binding in &section.bindings {
+                // The grouped two-column layout truncates long actions with `…` to keep columns
+                // narrow (the full text lives in the `K` keyboard viewer + docs). The compact view
+                // always renders at least the first 14 chars, so assert that prefix is present —
+                // enough to prove every binding has a row without depending on the cap width.
+                let prefix: String = binding.action.chars().take(14).collect();
+                assert!(
+                    rendered.contains(&prefix),
+                    "help for `{id}` is missing binding {:?} ({})",
+                    binding.keys,
+                    binding.action
+                );
+            }
+        }
+    }

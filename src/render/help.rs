@@ -620,42 +620,115 @@ pub(crate) fn filter_help_items(
         .collect()
 }
 
+/// The id of the keymap section the help shows for `view`.
+pub(crate) fn help_section_id(view: HelpView) -> &'static str {
+    match view {
+        HelpView::List => "list",
+        HelpView::RepoPage => "page",
+        HelpView::DiffModal => "diff",
+    }
+}
+
+/// The preferred display order of a section's groups (layout-only; any group not listed renders
+/// after these, so a newly-tagged group still appears — the `help_covers_every_binding` test guards
+/// that every binding is reachable).
+fn help_group_order(section_id: &str) -> &'static [&'static str] {
+    match section_id {
+        "list" => &[
+            "Navigate",
+            "Panes & views",
+            "Find & sort",
+            "Folding & views",
+            "Pull / retry",
+            "Clipboard & run",
+            "Favorites & menu",
+            "Workspace",
+            "App & modals",
+        ],
+        "page" => &["Navigate", "Columns & info", "Row actions", "Panes", "Other"],
+        _ => &[],
+    }
+}
+
 pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<String>)> {
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let subhead_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Cyan);
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
     let plain = |text: &str| (Line::from(text.to_string()), None);
-    // A `keys` column (padded) followed by a description — one binding per line.
-    let kb = |keys: &str, desc: &str| {
-        (
-            Line::from(vec![
-                Span::styled(format!("    {keys:<14}"), key_style),
-                Span::raw(format!(" {desc}")),
-            ]),
-            None,
-        )
+
+    // Rendered from the SAME `keymap.json` the docs + keyboard viewer use — so the list always
+    // reflects the real bindings — but laid out in the **grouped, two-column** form: each group is a
+    // cyan subhead followed by its `keys  action` rows; short groups pair up side-by-side.
+    let section_id = help_section_id(view);
+    items.push(header(&format!("HOTKEYS — {}", view.label())));
+    let Some(section) = crate::keymap::sections().iter().find(|section| section.id == section_id)
+    else {
+        return items;
     };
 
-    // Rendered from the SAME `keymap.json` the docs + keyboard viewer use — so this list always
-    // reflects the real bindings (adding / changing / removing a hotkey there updates it here too,
-    // no curated copy to drift). The section is picked by the view the help was opened over.
-    let section_id = match view {
-        HelpView::List => "list",
-        HelpView::RepoPage => "page",
-        HelpView::DiffModal => "diff",
-    };
-    items.push(header(&format!("HOTKEYS — {}", view.label())));
-    items.push(plain(""));
-    if let Some(section) = crate::keymap::sections().iter().find(|section| section.id == section_id) {
-        for binding in &section.bindings {
-            let keys = binding.keys.join(" / ");
-            let desc = match binding.note.as_deref() {
-                Some(note) if !note.is_empty() => format!("{}  —  {}", binding.action, note),
-                _ => binding.action.clone(),
-            };
-            items.push(kb(&keys, &desc));
+    // Group bindings in the preferred order, then any leftover groups (so nothing is ever dropped).
+    let mut order: Vec<String> =
+        help_group_order(section_id).iter().map(|group| group.to_string()).collect();
+    for binding in &section.bindings {
+        let group = binding.group.clone().unwrap_or_else(|| "Other".to_string());
+        if !order.contains(&group) {
+            order.push(group);
         }
+    }
+    // Build each group's lines: a subhead + one padded `keys  action` row per binding (no notes —
+    // they'd make the two-column rows too wide; the keyboard viewer / docs carry the detail).
+    let group_lines = |group: &str| -> Vec<(Vec<Span<'static>>, usize)> {
+        let entries: Vec<(String, String)> = section
+            .bindings
+            .iter()
+            .filter(|binding| binding.group.as_deref().unwrap_or("Other") == group)
+            .map(|binding| (binding.keys.join(" / "), binding.action.clone()))
+            .collect();
+        if entries.is_empty() {
+            return Vec::new();
+        }
+        let key_w = entries.iter().map(|(keys, _)| UnicodeWidthStr::width(keys.as_str())).max().unwrap_or(0).clamp(6, 20);
+        // Cap each row so two groups fit side-by-side without clipping at the modal border: budget
+        // a whole column to ~52 cells (4 indent + key_w + 2 sep + action) and truncate the action to
+        // fit (full text lives in the `K` keyboard viewer + the docs).
+        let action_max = 52usize.saturating_sub(key_w + 6).max(16);
+        let mut out =
+            vec![(vec![Span::styled(format!("  {group}"), subhead_style)], 2 + UnicodeWidthStr::width(group))];
+        for (keys, action) in entries {
+            let key_text = format!("    {keys:<key_w$}");
+            let desc_text = format!("  {}", truncate_str(&action, action_max));
+            let width = UnicodeWidthStr::width(key_text.as_str()) + UnicodeWidthStr::width(desc_text.as_str());
+            out.push((vec![Span::styled(key_text, key_style), Span::raw(desc_text)], width));
+        }
+        out
+    };
+
+    // Pair groups two-per-row (the former side-by-side look); a group with no bindings is skipped.
+    let groups: Vec<Vec<(Vec<Span<'static>>, usize)>> =
+        order.iter().map(|group| group_lines(group)).filter(|lines| !lines.is_empty()).collect();
+    let mut index = 0;
+    while index < groups.len() {
+        items.push(plain(""));
+        let left = &groups[index];
+        let right = groups.get(index + 1);
+        let column = left.iter().map(|(_, width)| *width).max().unwrap_or(0) + 4;
+        let rows = left.len().max(right.map_or(0, |right| right.len()));
+        for row in 0..rows {
+            let mut spans = Vec::new();
+            let mut width = 0;
+            if let Some((left_spans, left_width)) = left.get(row) {
+                spans.extend(left_spans.clone());
+                width = *left_width;
+            }
+            if let Some((right_spans, _)) = right.and_then(|right| right.get(row)) {
+                spans.push(Span::raw(" ".repeat(column.saturating_sub(width).max(2))));
+                spans.extend(right_spans.clone());
+            }
+            items.push((Line::from(spans), None));
+        }
+        index += 2;
     }
     items
 }
