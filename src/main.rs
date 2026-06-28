@@ -2890,22 +2890,33 @@ async fn run_event_loop(
                         KeyCode::Char('q') | KeyCode::Char(',') => {
                             app.show_settings = false;
                         }
+                        // Shift+↑/↓ switch the tab (alongside Tab / Shift+Tab); plain ↑/↓ (j/k)
+                        // move the row.
+                        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            app.settings_cycle_tab(true);
+                        }
+                        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            app.settings_cycle_tab(false);
+                        }
                         KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
                         KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
-                        // In accordion mode ←/→ collapse/expand the selected section; in tabbed
-                        // mode they switch tabs; in flat mode they do nothing.
-                        KeyCode::Right | KeyCode::Tab => {
+                        // Tab / Shift+Tab switch the tab (in every layout).
+                        KeyCode::Tab => app.settings_cycle_tab(true),
+                        KeyCode::BackTab => app.settings_cycle_tab(false),
+                        // ←/→: accordion collapses/expands the selected section; tabbed + flat cycle
+                        // the selected setting's value.
+                        KeyCode::Right => {
                             if app.settings_layout == crate::app::SettingsLayout::Accordion {
                                 app.set_selected_settings_section(false);
                             } else {
-                                app.settings_cycle_tab(true);
+                                app.cycle_selected_setting(true);
                             }
                         }
-                        KeyCode::Left | KeyCode::BackTab => {
+                        KeyCode::Left => {
                             if app.settings_layout == crate::app::SettingsLayout::Accordion {
                                 app.set_selected_settings_section(true);
                             } else {
-                                app.settings_cycle_tab(false);
+                                app.cycle_selected_setting(false);
                             }
                         }
                         KeyCode::Char(' ') | KeyCode::Enter => {

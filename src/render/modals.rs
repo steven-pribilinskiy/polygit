@@ -1100,7 +1100,8 @@ pub(crate) fn settings_row_line(
 }
 
 /// Render the settings modal (`,`): IDE-style vertical tabs (or a flat list — toggle with `v`).
-/// `↑↓` move, `←→`/`tab` switch tab, `space`/`enter` toggle, `esc` closes.
+/// `↑↓` move, `tab`/`shift+tab` (or `shift+↑↓`) switch tab, `←→` change the value (collapse/expand
+/// in accordion), `space`/`enter` toggle, `esc` closes.
 pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect) {
     use crate::app::{
         Background, ButtonHoverStyle, ClaudeAgent, Contrast, SelectionStyle, SettingsLayout, Theme,
@@ -1374,8 +1375,20 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let mut footer: Vec<(String, Style, Option<HintKey>)> =
         vec![("↑↓".to_string(), key, None), (" move".to_string(), hint, None), footer_sep()];
     if tabbed {
-        footer.push(("←→/tab".to_string(), key, Some(HintKey::Tab)));
+        // Tab / Shift+Tab (or Shift+↑↓) switch the tab; ←/→ change the selected value.
+        footer.push(("tab".to_string(), key, Some(HintKey::Tab)));
         footer.push((" tab".to_string(), hint, Some(HintKey::Tab)));
+        footer.push(footer_sep());
+        footer.push(("←→".to_string(), key, None));
+        footer.push((" value".to_string(), hint, None));
+        footer.push(footer_sep());
+    } else if accordion {
+        footer.push(("←→".to_string(), key, None));
+        footer.push((" fold".to_string(), hint, None));
+        footer.push(footer_sep());
+    } else {
+        footer.push(("←→".to_string(), key, None));
+        footer.push((" value".to_string(), hint, None));
         footer.push(footer_sep());
     }
     footer.push(("space".to_string(), key, Some(HintKey::Char(' '))));
@@ -1683,10 +1696,11 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             GroupsHint,
         }
         let groups_empty = app.groups.is_empty();
+        // The single blank spacer after the search box (the `search_rows` offset below) separates it
+        // from the first section in BOTH padding modes — no extra leading blank when padding is off,
+        // so the spacing is consistent and the `panel_pad` border inset is the only thing the padding
+        // toggle changes.
         let mut items: Vec<FlatItem> = Vec::new();
-        if !app.panel_padding {
-            items.push(FlatItem::Blank);
-        }
         let mut row_idx = 0usize;
         for (tab_idx, (_, count)) in SETTINGS_TABS.iter().enumerate() {
             if tab_idx > 0 {

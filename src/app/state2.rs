@@ -1023,15 +1023,9 @@ impl AppState {
         self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
     }
 
-    /// Toggle/cycle the currently-selected settings row, persisting immediately.
-    /// Row order (matches `render_settings` sections): 0 grouping · 1 tree · 2 hide-folder-lines
-    /// (Lists), 3 icons · 4 hide-zeros · 5 theme · 6 background · 7 contrast · 8 selection ·
-    /// 9 button-hover (Theming), 10 auto-pull · 11 limit · 12 in-tree (Sync), 13 hover · 14 flash ·
-    /// 15 highlight (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-tabs ·
-    /// 20 repo-page (restored/maximized) · 21 branch-check (Layout), 22 all-tooltips · 23 footer ·
-    /// 24 headers · 25 counts · 26 settings · 27 links (Tooltips).
+    /// Toggle/cycle the currently-selected settings row one step forward, persisting immediately.
+    /// Row indices are the global order in `SETTINGS` / `SETTINGS_LABELS` (alphabetical sections).
     pub fn toggle_selected_setting(&mut self) {
-        // Alphabetical-section row order (see SETTINGS_LABELS).
         match self.settings_selected {
             // Agent
             0 => self.claude_agent = self.claude_agent.cycle(),
@@ -1091,5 +1085,19 @@ impl AppState {
             _ => {}
         }
         self.save_state();
+    }
+
+    /// Cycle the selected setting's value one option forward / backward — the ←/→ keys in the tabbed
+    /// and flat layouts. Built on the same `set_setting_option` dispatch the radio chips use, so all
+    /// side effects (grouping/tree reselect, the emoji-mode Hide-zeros guard, etc.) are identical.
+    pub fn cycle_selected_setting(&mut self, forward: bool) {
+        let row = self.settings_selected;
+        let count = Self::settings_option_labels(row).len();
+        if count == 0 {
+            return;
+        }
+        let active = self.settings_active_option(row).min(count - 1);
+        let next = if forward { (active + 1) % count } else { (active + count - 1) % count };
+        self.set_setting_option(row, next);
     }
 }
