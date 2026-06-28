@@ -376,18 +376,6 @@
     }
 
     #[test]
-    fn settings_repo_page_row_maps_restored_and_maximized() {
-        let mut state = state_named(&["a"]);
-        state.maximized = None;
-        assert_eq!(state.settings_active_option(9), 0, "restored is option 0");
-        state.set_setting_option(9, 1);
-        assert_eq!(state.maximized, Some(Pane::RepoPage));
-        assert_eq!(state.settings_active_option(9), 1, "maximized is option 1");
-        state.set_setting_option(9, 0);
-        assert_ne!(state.maximized, Some(Pane::RepoPage));
-    }
-
-    #[test]
     fn auto_pull_limit_cycles_through_choices() {
         assert_eq!(next_auto_pull_limit(50), 100);
         assert_eq!(next_auto_pull_limit(100), 250);
@@ -966,12 +954,13 @@
     fn merged_prs_setting_persists_and_resets() {
         let mut state = state_named(&["a"]);
         assert!(!state.show_merged_prs); // off by default
-        // The settings row (index 14) toggles + reports its active option.
-        assert_eq!(state.settings_active_option(14), 1); // "off"
-        state.settings_selected = 14;
+        // The "Merged PRs" settings row (index 12) toggles + reports its active option.
+        let merged_row = crate::app::SETTINGS_LABELS.iter().position(|&l| l == "Merged PRs").unwrap();
+        assert_eq!(state.settings_active_option(merged_row), 1); // "off"
+        state.settings_selected = merged_row;
         state.toggle_selected_setting();
         assert!(state.show_merged_prs);
-        assert_eq!(state.settings_active_option(14), 0); // "on"
+        assert_eq!(state.settings_active_option(merged_row), 0); // "on"
         // Reset restores the default (off).
         state.apply_settings_reset();
         assert!(!state.show_merged_prs);

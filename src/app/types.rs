@@ -1009,6 +1009,30 @@ impl SplitterMode {
     }
 }
 
+/// The post-change attention indicator for a repo row's changed cells. A single setting (off /
+/// flash / highlight) replacing the old two booleans, which looked identical and could both be on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChangedRowEffect {
+    Off,
+    /// Pulse the changed cells a few times, then settle.
+    #[default]
+    Flash,
+    /// Steadily highlight the changed cells for the whole attention window.
+    Highlight,
+}
+
+impl ChangedRowEffect {
+    /// Cycle off → flash → highlight → off.
+    pub fn cycle(self) -> Self {
+        match self {
+            ChangedRowEffect::Off => ChangedRowEffect::Flash,
+            ChangedRowEffect::Flash => ChangedRowEffect::Highlight,
+            ChangedRowEffect::Highlight => ChangedRowEffect::Off,
+        }
+    }
+}
+
 /// Which AI coding-agent CLI the `c` hotkey launches in the selected repo. The binary is run in
 /// the repo dir; when "Skip permissions" is on, the agent's bypass-all-prompts flag is appended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1437,8 +1461,8 @@ impl RepoTabsMode {
 /// here, and add the option/handler arms.
 pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Agent", 2),
-    ("Interaction", 3),
-    ("Layout", 6),
+    ("Interaction", 2),
+    ("Layout", 5),
     ("Lists", 3),
     ("Pull requests", 1),
     ("Sync", 3),
@@ -1462,20 +1486,22 @@ pub struct SettingInfo {
 
 /// Every settings row in global (alphabetical-section) order — see `SETTINGS_TABS`. The ONLY place
 /// row labels + tips live; everything else derives from this or is asserted against it.
-pub const SETTINGS: [SettingInfo; 31] = [
+pub const SETTINGS: [SettingInfo; 29] = [
     // Agent
     SettingInfo { label: "AI agent", tip: "Which AI agent `c` launches for the selected repo, run in its directory", option_tips: &[] },
     SettingInfo { label: "Skip permissions", tip: "Launch the agent with its skip-permissions flag (e.g. claude's --dangerously-skip-permissions)", option_tips: &[] },
     // Interaction
     SettingInfo { label: "Hover effects", tip: "Highlight actionable elements under the cursor (enables all-motion mouse tracking, which takes over terminal text selection)", option_tips: &[] },
-    SettingInfo { label: "Changed-row flash", tip: "Pulse a row's changed cells after a pull. The status text column (t u) also marks what changed.", option_tips: &[] },
-    SettingInfo { label: "Changed-row highlight", tip: "Steadily highlight a row's changed cells. The status text column (t u) also marks what changed.", option_tips: &[] },
+    SettingInfo { label: "Changed-row effect", tip: "Post-change attention indicator on a row's changed cells after a pull/refresh: off, a brief flash, or a steady highlight. The status text column (t u) also marks what changed.", option_tips: &[
+        "No attention indicator on changed cells",
+        "Pulse the changed cells a few times, then settle",
+        "Steadily highlight the changed cells for the attention window",
+    ] },
     // Layout
     SettingInfo { label: "Panel padding", tip: "A 1-cell inner padding inside every bordered panel and modal", option_tips: &[] },
     SettingInfo { label: "Borders", tip: "Draw the rounded borders around the two main panes", option_tips: &[] },
     SettingInfo { label: "Pane splitter", tip: "Draw the draggable splitter grip between the panes", option_tips: &[] },
     SettingInfo { label: "Repo page tabs", tip: "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ sections have rows)", option_tips: &[] },
-    SettingInfo { label: "Repo page", tip: "Show the repo page as a docked bottom panel instead of full-screen (toggle with b)", option_tips: &[] },
     SettingInfo { label: "Auto branch-check", tip: "Periodically refresh each repo's local branch/status (no pull) — auto scales the interval with the repo count", option_tips: &[] },
     // Lists
     SettingInfo { label: "Grouping", tip: "Render the repo list as named group sections (from groups.json)", option_tips: &[] },

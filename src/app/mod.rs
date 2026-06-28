@@ -579,10 +579,8 @@ pub struct AppState {
     /// How the pane splitters are presented: a dedicated 1-cell lane vs a thin on-hover grip
     /// (persisted, default dedicated).
     pub splitter_mode: SplitterMode,
-    /// Pulse changed cells after a pull/refresh (persisted, default on).
-    pub changed_row_flash: bool,
-    /// Steadily highlight changed cells for the attention window (persisted, default off).
-    pub changed_row_highlight: bool,
+    /// Post-change attention indicator on changed cells: off / flash / highlight (persisted).
+    pub changed_row_effect: ChangedRowEffect,
     /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). Persisted,
     /// all default on. Tooltips still require `hover_effects` (for cursor tracking).
     pub tooltips: TooltipPrefs,
@@ -978,8 +976,7 @@ impl AppState {
             hover_effects: persisted.hover_effects,
             show_borders: persisted.show_borders,
             splitter_mode: persisted.splitter_mode,
-            changed_row_flash: persisted.changed_row_flash,
-            changed_row_highlight: persisted.changed_row_highlight,
+            changed_row_effect: persisted.changed_row_effect,
             tooltips: persisted.tooltips,
             hover: None,
             hover_tooltip: None,

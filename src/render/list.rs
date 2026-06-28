@@ -145,8 +145,11 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
             // Post-change attention indicator on the cells whose value changed: pulse REVERSED
             // ("flash") and/or steady REVERSED for the whole window ("highlight") — each toggled
             // in settings. `flash_on` drives every flagged-cell style below.
-            let flash_on = (app.changed_row_flash && state.flash_on())
-                || (app.changed_row_highlight && state.flash_active());
+            let flash_on = match app.changed_row_effect {
+                crate::app::ChangedRowEffect::Off => false,
+                crate::app::ChangedRowEffect::Flash => state.flash_on(),
+                crate::app::ChangedRowEffect::Highlight => state.flash_active(),
+            };
             let flash = state.flash;
             let flash_style = |base: Style, flagged: bool| {
                 if flash_on && flagged {
