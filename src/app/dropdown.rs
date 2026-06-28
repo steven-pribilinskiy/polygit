@@ -28,6 +28,7 @@ const LIST_SORTS: &[(SortColumn, &str, char)] = &[
     (SortColumn::Stashes, "stashes", 'k'),
     (SortColumn::PulledCommits, "pulled", 'p'),
     (SortColumn::PulledFiles, "changed", 'g'),
+    (SortColumn::Favorite, "favorite", 'v'),
 ];
 
 /// The status-filter options, in dropdown order: `(filter, label, mnemonic)`.
@@ -38,6 +39,7 @@ const LIST_FILTERS: &[(StatusFilter, &str, char)] = &[
     (StatusFilter::Skipped, "skipped", 's'),
     (StatusFilter::Failed, "failed", 'f'),
     (StatusFilter::Issues, "issues", 'i'),
+    (StatusFilter::Favorites, "favorites", 'v'),
 ];
 
 /// The toggleable repo-page columns, in dropdown order: `(column, label, mnemonic)`.

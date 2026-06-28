@@ -1018,22 +1018,37 @@ impl AppState {
         }
         let row_idx = (row - area.y) as usize + self.list_offset;
         let rows = self.visible_rows();
-        // Physical rows: [rows…][sep][Result]([sep][Errors]). Group headers and spacers are
-        // real list rows, so physical == logical for the rows region.
+        // The scroll area holds only repo/header/spacer rows now (the Result/Errors summary is a
+        // pinned footer, hit-tested separately below).
         if row_idx < rows.len() {
-            match rows[row_idx] {
+            return match rows[row_idx] {
                 // Static (small-group) headers, the favorites header, and spacers are inert.
                 ListRow::GroupHeader { collapsible: false, .. }
                 | ListRow::FavoritesHeader
                 | ListRow::Spacer => None,
                 _ => Some(row_idx),
-            }
-        } else if row_idx == rows.len() + 1 {
-            Some(rows.len())
-        } else if self.has_errors() && row_idx == rows.len() + 3 {
-            Some(rows.len() + 1)
-        } else {
-            None
+            };
+        }
+        None
+    }
+
+    /// The pinned-footer selection (Result / Errors) at `(col,row)`, if the click lands there.
+    /// Footer line 1 = Result → `rows.len()`; line 3 = Errors → `rows.len()+1`.
+    pub fn list_footer_selection_at(&self, col: u16, row: u16) -> Option<usize> {
+        let area = self.list_footer_area;
+        if area.width == 0
+            || col < area.x
+            || col >= area.x + area.width
+            || row < area.y
+            || row >= area.y + area.height
+        {
+            return None;
+        }
+        let rows = self.visible_rows();
+        match row - area.y {
+            1 => Some(rows.len()),                              // the "Result" summary line
+            3 if self.has_errors() => Some(rows.len() + 1),     // the "Errors" line
+            _ => None,
         }
     }
 

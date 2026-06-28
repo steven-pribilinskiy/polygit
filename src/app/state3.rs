@@ -1363,7 +1363,14 @@ impl AppState {
         let has_remote = state.remote_url.is_some();
         let agent = self.claude_agent.binary();
         let checkbox = if self.kebab_session_prefix { "[x]" } else { "[ ]" };
+        let favorited = self.favorites.contains(&favorite_key(&state.path));
         vec![
+            KebabItem {
+                label: if favorited { "★ Unfavorite".to_string() } else { "☆ Favorite".to_string() },
+                action: KebabAction::ToggleFavorite,
+                enabled: true,
+                hint: Some("b".to_string()),
+            },
             KebabItem {
                 label: "Checkout branch…".to_string(),
                 action: KebabAction::Checkout,

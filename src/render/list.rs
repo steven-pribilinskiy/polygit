@@ -342,8 +342,10 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                 spans.push(Span::styled(pad_display(&text, pr_w), style));
             }
             if columns.favorite {
-                // Already holding this repo's lock — read favorites by rel_path, don't re-lock.
-                let favorited = app.favorites.contains(&state.rel_path);
+                // Favorites are keyed by ABSOLUTE path (see `favorite_key`), not rel_path — keying
+                // the star off `rel_path` here never matched a toggle, so the column looked dead.
+                // We hold this repo's lock, so derive the key from its `path` without re-locking.
+                let favorited = app.favorites.contains(&crate::app::favorite_key(&state.path));
                 let (glyph, style) = if favorited {
                     (icons.fav_on, Style::default().fg(Color::Yellow))
                 } else {
@@ -371,44 +373,12 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         })
         .collect();
 
-    // Add separator and Result item
-    items.push(ListItem::new(Line::from(vec![Span::styled(
-        "─".repeat(inner_width.saturating_sub(2)),
-        Style::default().fg(Color::DarkGray),
-    )])));
-
-    let result_icons = app.icons();
-    let result_glyph = if app.all_done {
-        let (_, _, _, _, _, failed, _, _) = app.counts();
-        if failed > 0 {
-            Span::styled(result_icons.failed, Style::default().fg(Color::Red))
-        } else {
-            Span::styled(result_icons.ok, Style::default().fg(Color::Green))
-        }
-    } else {
-        Span::styled("—", Style::default().fg(Color::DarkGray))
-    };
-
-    items.push(ListItem::new(Line::from(vec![
-        result_glyph,
-        Span::raw(" "),
-        Span::raw("Result"),
-    ])));
-
-    // A dynamic Errors row, only when something failed — appears after Result.
-    let has_errors = app.has_errors();
-    if has_errors {
-        let failed = app.counts().5;
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            "─".repeat(inner_width.saturating_sub(2)),
-            Style::default().fg(Color::DarkGray),
-        )])));
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(result_icons.failed, Style::default().fg(Color::Red)),
-            Span::raw(" "),
-            Span::styled(format!("Errors ({failed})"), Style::default().fg(Color::Red)),
-        ])));
-    }
+    // The "Last pull" summary + (when something failed) Errors are rendered as a PINNED footer at
+    // the bottom of the list pane — built here as plain lines, not appended to the scrollable items,
+    // so they stay visible while the repo list scrolls. `footer_lines` = [divider, summary] (+ a
+    // [divider, errors] pair when there are failures). Selection of those rows is handled separately.
+    let footer_lines: Vec<Line> = build_result_footer(app, inner_width);
+    let footer_h = footer_lines.len() as u16;
 
     // Trailing (non-selectable) empty-state hint once the scan finishes with nothing to show.
     if app.discovery_done && app.repos.is_empty() {
@@ -420,25 +390,24 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     }
 
     let mut list_state = ListState::default();
-    // Physical list-item row of the selection (skipping the separator lines):
-    //   list rows → same index; Result → rows.len()+1; Errors → rows.len()+3.
-    let sel_item = if app.selected < rows.len() {
-        app.selected
-    } else if app.selected == rows.len() {
-        rows.len() + 1
-    } else {
-        rows.len() + 3
-    };
+    // The repo rows scroll; the Result/Errors footer is pinned below. The selection is a repo row
+    // only when `< rows.len()`; the footer rows (Result = rows.len(), Errors = rows.len()+1) are
+    // highlighted in the pinned footer instead.
+    let sel_item = (app.selected < rows.len()).then_some(app.selected);
 
     // Split the inner area into a 2-row column header (titles + sort indicator) and the repo
     // rows beneath. Too short for a header → use the whole inner area for rows.
     let header_height: u16 = if inner.height >= 4 { 2 } else { 0 };
-    let rows_area = Rect {
+    let rows_and_footer = Rect {
         x: inner.x,
         y: inner.y + header_height,
         width: inner.width,
         height: inner.height.saturating_sub(header_height),
     };
+    // Reserve the bottom `footer_h` rows for the pinned summary; the repo list scrolls above it.
+    let footer_h = footer_h.min(rows_and_footer.height.saturating_sub(1));
+    let rows_area = Rect { height: rows_and_footer.height - footer_h, ..rows_and_footer };
+    let footer_area = Rect { y: rows_area.y + rows_area.height, height: footer_h, ..rows_and_footer };
     let (header_lines, header_click, fav_range) = if header_height > 0 {
         build_list_header(
             inner,
@@ -493,11 +462,12 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let viewport = rows_area.height as usize;
     let scroll = app.list_scroll.min(total_items.saturating_sub(viewport));
     app.list_scroll = scroll;
-    // Highlight the selected row only when it falls within the scrolled viewport.
-    if viewport > 0 && sel_item >= scroll && sel_item < scroll + viewport {
-        list_state.select(Some(sel_item - scroll));
-    } else {
-        list_state.select(None);
+    // Highlight the selected repo row only when it falls within the scrolled viewport.
+    match sel_item {
+        Some(sel) if viewport > 0 && sel >= scroll && sel < scroll + viewport => {
+            list_state.select(Some(sel - scroll));
+        }
+        _ => list_state.select(None),
     }
     let visible_items: Vec<ListItem> = items.into_iter().skip(scroll).collect();
     let list = List::new(visible_items)
@@ -505,6 +475,31 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         .highlight_symbol("");
 
     frame.render_stateful_widget(list, rows_area, &mut list_state);
+
+    // Pinned footer (Result / Errors summary), with the selected footer row highlighted. Footer
+    // line 1 = the "Result" selection (app.selected == rows.len()), line 3 = "Errors".
+    let footer_sel = match app.selected {
+        sel if sel == rows.len() => Some(1usize),
+        sel if app.has_errors() && sel == rows.len() + 1 => Some(3usize),
+        _ => None,
+    };
+    if footer_h > 0 {
+        let highlight = selection_highlight_style(app);
+        let rendered: Vec<Line> = footer_lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut line)| {
+                if footer_sel == Some(index) {
+                    for span in line.spans.iter_mut() {
+                        span.style = span.style.patch(highlight);
+                    }
+                }
+                line
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(rendered), footer_area);
+    }
+    app.list_footer_area = footer_area;
     // Scrollbar on the pane's right border, aligned to the rows region (below the header).
     let scrollbar_area = Rect {
         x: area.x,
@@ -605,6 +600,60 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     scroll
 }
 
+/// The pinned list footer: a divider, a compact **Last pull** summary line (`✓ Last pull · N · …`),
+/// and — when something failed — a second divider + an `Errors (N)` line. Rendered stuck to the
+/// bottom of the list pane (not in the scrollable items) so it stays visible as the list scrolls.
+/// Lines: `[0]` divider, `[1]` summary, (`[2]` divider, `[3]` errors). Index 1 = the selectable
+/// "Result" row, index 3 = the selectable "Errors" row.
+pub(crate) fn build_result_footer(app: &AppState, inner_width: usize) -> Vec<Line<'static>> {
+    let icons = app.icons();
+    let dim = Style::default().fg(Color::DarkGray);
+    let divider =
+        || Line::from(Span::styled("\u{2500}".repeat(inner_width.saturating_sub(2)), dim));
+    let (idle, _running, updated, up_to_date, skipped, failed, no_upstream, throttled) = app.counts();
+    let total = idle + updated + up_to_date + skipped + failed + no_upstream + throttled;
+
+    let glyph = if app.all_done {
+        if failed > 0 {
+            Span::styled(icons.failed, Style::default().fg(Color::Red))
+        } else {
+            Span::styled(icons.ok, Style::default().fg(Color::Green))
+        }
+    } else {
+        Span::styled("\u{2014}", dim) // — while the run is still in flight
+    };
+    let mut spans = vec![
+        glyph,
+        Span::raw(" "),
+        Span::styled("Last pull", Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("  \u{b7}  {total}"), dim),
+    ];
+    // Compact per-status breakdown: non-zero tallies only, each as `<glyph> N` in its status color.
+    for (count, mark, color) in [
+        (updated, icons.updated, Color::Green),
+        (up_to_date, icons.up_to_date, Color::Gray),
+        (skipped, icons.skipped, Color::DarkGray),
+        (no_upstream, icons.no_upstream, Color::DarkGray),
+        (throttled, icons.throttled, Color::Magenta),
+        (failed, icons.failed, Color::Red),
+    ] {
+        if count > 0 {
+            spans.push(Span::styled(format!("  {mark} {count}"), Style::default().fg(color)));
+        }
+    }
+
+    let mut lines = vec![divider(), Line::from(spans)];
+    if app.has_errors() {
+        lines.push(divider());
+        lines.push(Line::from(vec![
+            Span::styled(icons.failed, Style::default().fg(Color::Red)),
+            Span::raw(" "),
+            Span::styled(format!("Errors ({failed})"), Style::default().fg(Color::Red)),
+        ]));
+    }
+    lines
+}
+
 /// `build_list_header` output: the 2 header lines, the clickable sort-cell regions
 /// `(col_start, col_end, column)`, and the favorite column's x-range (when shown).
 pub(crate) type ListHeader = (Vec<Line<'static>>, Vec<(u16, u16, SortColumn)>, Option<(u16, u16)>);
@@ -676,8 +725,9 @@ pub(crate) fn build_list_header(
         cells.push(cell("pr", pr_w, true, Some(SortColumn::PullRequest)));
     }
     if columns.favorite {
-        // Not sortable (favorites-first handles ordering) — a plain title, no click-to-sort region.
-        cells.push(Cell { label: "\u{2605}", width: fav_w, lead: true, sort: None, fav: true });
+        // Sortable (favorited repos first) AND the favorite-toggle column — both a sort region and
+        // the `fav` flag, so a header click sorts and the per-row star toggles.
+        cells.push(Cell { label: "\u{2605}", width: fav_w, lead: true, sort: Some(SortColumn::Favorite), fav: true });
     }
 
     let active_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
@@ -835,6 +885,7 @@ fn sort_column_hideable(sort: SortColumn) -> Option<Column> {
         SortColumn::PulledCommits => Some(Column::PulledCommits),
         SortColumn::PulledFiles => Some(Column::PulledFiles),
         SortColumn::PullRequest => Some(Column::PullRequest),
+        SortColumn::Favorite => Some(Column::Favorite),
     }
 }
 
@@ -853,6 +904,7 @@ pub(crate) fn column_header_tooltip(sort: SortColumn) -> &'static str {
         SortColumn::PulledCommits => "pull — commits pulled in this session",
         SortColumn::PulledFiles => "chg — files changed by this session's pull",
         SortColumn::PullRequest => "pr — pull request for the current branch (click to open)",
+        SortColumn::Favorite => "favorite (★) — click to sort favorited repos first",
     }
 }
 

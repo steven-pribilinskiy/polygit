@@ -3,6 +3,19 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.97.0 — 2026-06-28
+Favorites fixed + sortable + filterable; "Last pull" summary pinned to the list footer
+- **fixed** the favorite (★) column — it was keyed by `rel_path` while favorites are stored by
+  absolute path, so the star never reflected a toggle. It now toggles correctly (click the star,
+  `b`, or the kebab).
+- **sort by favorite** — favorited repos first (the `s sort ▾` dropdown's *favorite* row, or click
+  the ★ column header).
+- **filter to favorites** — a *favorites* row in the `f status ▾` dropdown.
+- **kebab menu** gains a **★ Favorite / Unfavorite** item.
+- the list's **Result** summary row is now **"Last pull"** — a compact one-liner
+  (`✓ Last pull · N · …` with per-status counts) **pinned to the bottom of the list pane** (with its
+  divider), so it stays visible while the repo list scrolls instead of scrolling away.
+
 ## v2.96.0 — 2026-06-28
 Kebab menu: "Checkout branch…" with a filterable branch picker
 - the kebab (`⋮`) menu's top item is now **Checkout branch…**, opening a picker of local + remote

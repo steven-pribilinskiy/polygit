@@ -18,6 +18,12 @@ impl AppState {
                 if state.hidden || !self.status_filter.matches(&state.status) {
                     return None;
                 }
+                // The Favorites status-filter is repo-level (favorite_key by absolute path).
+                if self.status_filter == StatusFilter::Favorites
+                    && !self.favorites.contains(&favorite_key(&state.path))
+                {
+                    return None;
+                }
                 match filter.as_deref() {
                     None => Some((index, 0)),
                     Some(needle) => match needle.strip_prefix('@') {
@@ -774,6 +780,11 @@ impl AppState {
                         .map(|pr| pr.number);
                     (number.is_none(), number.unwrap_or(0))
                 };
+                key(&left).cmp(&key(&right))
+            }
+            SortColumn::Favorite => {
+                // Favorited repos first (Asc) — keyed by absolute path, like `is_favorite`.
+                let key = |state: &RepoState| !self.favorites.contains(&favorite_key(&state.path));
                 key(&left).cmp(&key(&right))
             }
         }
