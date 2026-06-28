@@ -3,6 +3,17 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.101.1 — 2026-06-29
+Restore the grouped two-column Hotkeys layout (still keymap-driven)
+- the **`?` help → Hotkeys** tab is back to the **grouped, two-column** look — each `group` from
+  `keymap.json` (Navigate, Panes & views, Find & sort, …) renders as a cyan subhead with its
+  `keys  action` rows, short groups paired side-by-side — instead of the flat list from 2.101.0
+- still generated entirely from `keymap.json`, so the list can't drift from the real bindings; long
+  actions are truncated with `…` to keep the columns narrow (full text stays in the `K` keyboard
+  viewer + the docs)
+- new `help_covers_every_binding` test asserts **every** `keymap.json` binding is rendered in the
+  help for its view, so a new/renamed hotkey can never silently fall out of the Hotkeys list
+
 ## v2.101.0 — 2026-06-29
 Help Hotkeys list is generated from the keymap; keyboard viewer filters by modifier
 - the **`?` help → Hotkeys** list is now rendered from the **same `keymap.json`** as the docs + the

@@ -9,6 +9,8 @@ export type Binding = {
   action: string;
   /** Optional clarifying note shown in a dimmer column. */
   note?: string;
+  /** Sub-group within the section (e.g. "Navigate") — drives the grouped help layout. */
+  group?: string;
   /** Extra search terms (synonyms) that don't appear verbatim in the action text. */
   keywords?: string[];
 };

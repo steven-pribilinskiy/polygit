@@ -12,9 +12,9 @@ use serde::Deserialize;
 pub struct Binding {
     pub keys: Vec<String>,
     pub action: String,
-    /// Optional clarifying note (shown dim after the action in the help list).
+    /// Sub-group within the section (drives the grouped help layout, e.g. "Navigate").
     #[serde(default)]
-    pub note: Option<String>,
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
