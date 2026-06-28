@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.79.1 — 2026-06-28
+Info-panel copy glyph in emoji mode, no PR "checking…" flicker, clearer reset tooltip
+- **the info panel's inline copy buttons now follow the icon set** — they showed a hardcoded Unicode `⧉` even in emoji mode; they render `📋` now, and the click region + spacing are width-aware so the 2-cell emoji stays aligned.
+- **removed the in-flight "checking…" Pull Request placeholder** in the info panel — the PR line now appears only once a PR actually resolves, instead of flipping a placeholder that shifted the rows beneath it (a layout shift). Repos with no PR never render the line.
+- **the footer's active `{status}` reset tag tooltip now reads "Clear the status filter"** (was the generic "Filter by this status" — it resets the filter, it doesn't set one).
+
 ## v2.79.0 — 2026-06-28
 Declutter the footer, rename the filter trigger, and fix the horizontal splitter grip
 - the status-filter is now owned entirely by the list-header trigger — **removed the redundant `f by-status` chip from the status-bar footer** (the active `{status}` reset tag still appears there while a filter is on). Dropped the now-dead `FilterLeader` command.

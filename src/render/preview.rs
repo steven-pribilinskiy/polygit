@@ -463,8 +463,13 @@ pub(crate) fn build_info_lines(
     let dim = Style::default().fg(Color::DarkGray);
     let link = Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED);
     let value_width = content_width.saturating_sub(LABEL_W).max(1);
-    // Reserve 2 trailing cols for a ` ⧉` copy button on copyable rows.
-    let copy_avail = value_width.saturating_sub(2).max(1);
+    // The copy-button glyph follows the icon set (`⧉` in Unicode mode, `📋` in emoji mode); emoji
+    // render 2 cells wide, so measure it instead of assuming 1.
+    let copy_glyph = app.icons().copy;
+    let copy_w = UnicodeWidthStr::width(copy_glyph) as u16;
+    // Reserve a leading space + the glyph for the trailing copy button on copyable rows.
+    let copy_btn_w = 1 + copy_w; // " " + glyph
+    let copy_avail = value_width.saturating_sub(copy_btn_w as usize).max(1);
     // The copy-button glyph: a standout magenta on whole-line-copy rows (Path/Worktrees/plain
     // Branch); the existing `dim` style is reused on link rows, where the value's own click opens
     // the link and copy is a separate, secondary button.
@@ -508,13 +513,13 @@ pub(crate) fn build_info_lines(
                          copy: String| {
         let line_idx = lines.len();
         let value_w = UnicodeWidthStr::width(display.as_str()) as u16;
-        let end = LABEL_W as u16 + value_w + 2; // value + the 2-char copy button (" " + "⧉")
+        let end = LABEL_W as u16 + value_w + copy_btn_w; // value + the copy button (" " + glyph)
         clicks.push((line_idx, LABEL_W as u16, end, InfoAction::CopyText(copy)));
         lines.push(Line::from(vec![
             Span::styled(format!("{name:<13}"), label),
             Span::styled(display, value),
             Span::raw(" "),
-            Span::styled("⧉".to_string(), copy_icon),
+            Span::styled(copy_glyph.to_string(), copy_icon),
         ]));
     };
 
@@ -527,14 +532,14 @@ pub(crate) fn build_info_lines(
             let line_idx = lines.len();
             let width = UnicodeWidthStr::width(branch) as u16;
             clicks.push((line_idx, LABEL_W as u16, LABEL_W as u16 + width, InfoAction::OpenUrl(url.to_string())));
-            // The copy button is a 2-char target: the space before the glyph plus the glyph itself.
+            // The copy button target spans the space before the glyph plus the glyph itself.
             let copy_start = LABEL_W as u16 + width;
-            clicks.push((line_idx, copy_start, copy_start + 2, InfoAction::CopyText(branch.to_string())));
+            clicks.push((line_idx, copy_start, copy_start + copy_btn_w, InfoAction::CopyText(branch.to_string())));
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<13}", "Branch"), label),
                 Span::styled(branch.to_string(), link),
                 Span::raw(" "),
-                Span::styled("⧉".to_string(), dim),
+                Span::styled(copy_glyph.to_string(), dim),
             ]));
         } else {
             push_link(lines, clicks, "Branch", branch, url);
@@ -583,7 +588,9 @@ pub(crate) fn build_info_lines(
     }
 
     // Pull Request — the open PR for the current branch (via `gh`), clickable to the PR on the
-    // remote. Shown only when one exists; a dim "checking…" appears while the lookup is in flight.
+    // remote. Shown only when one is actually available — no in-flight "checking…" placeholder, so
+    // the line just appears once a PR resolves instead of flipping a placeholder (which shifted the
+    // rows below it). Repos with no PR never render this line.
     if let Some(pr) = state.pr.as_ref().filter(|pr| pr.shown(app.show_merged_prs)) {
         let text = format!("#{} {}", pr.number, pr.title);
         push_link(&mut lines, &mut clicks, "Pull Request", &text, &pr.url);
@@ -599,11 +606,6 @@ pub(crate) fn build_info_lines(
             sub.push(Span::styled(format!(" · checked {when}"), dim));
         }
         lines.push(Line::from(sub));
-    } else if state.pr_loading {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{:<13}", "Pull Request"), label),
-            Span::styled("checking…", dim),
-        ]));
     }
 
     // Pulled — what the most recent pull delivered: the old→new sha (the before/after the user

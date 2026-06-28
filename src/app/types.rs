@@ -1797,6 +1797,7 @@ impl Command {
             }
             Command::Help => "Open the help modal (keys, flags, glyphs, about)",
             Command::OpenPage => "Open the selected repo's page: branches, worktrees, stashes",
+            Command::SetFilter(StatusFilter::All) => "Clear the status filter",
             Command::SetFilter(_) => "Filter by this status",
             Command::LeaderCancel => "Close this menu",
             Command::NameFilter => "Filter repos by name (type to match)",
