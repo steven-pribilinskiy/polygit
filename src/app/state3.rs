@@ -910,8 +910,9 @@ impl AppState {
                 ahead: None,
                 behind: None,
                 upstream: None,
-                last_commit_rel: String::new(),
-                last_commit_secs: 0,
+                // A stash is a commit — reuse the row's commit-date fields for its creation time.
+                last_commit_rel: stash.date_rel.clone(),
+                last_commit_secs: stash.created_secs,
                 subject: String::new(),
                 stats: stash.stats,
                 commit_sha: String::new(),

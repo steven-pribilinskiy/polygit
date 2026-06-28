@@ -29,8 +29,9 @@ appear when there's something to list.
   total** change counts vs the base branch, the upstream name, last-commit date, and subject.
 - **`⑂ WORKTREES`** — each linked worktree's branch and path.
 - **`≡ STASHES`** — every stash entry in its **own independent columns** (a stash has no
-  upstream / ahead-behind / base / PR): `stash@{N}` · change stats (`+A ~M -D  Σtotal`, from
-  `git stash show`, loaded lazily) · message.
+  upstream / ahead-behind / base / PR): `stash@{N}` · **age** (relative creation time, e.g.
+  "3 days ago") · change stats (`+A ~M -D  Σtotal`, from `git stash show`, loaded lazily) · message.
+  The info panel (`i`) adds a **created** row for the selected stash.
 - **`◉ COMMITS`** — recent commits: short sha · relative date · author · subject. The **author**
   column grows to the longest name (never truncated) and the **subject** fills the remaining width.
   Commit rows are selectable / hoverable / clickable like the other sections — **`Enter` (or a

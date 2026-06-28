@@ -1023,6 +1023,8 @@
             stashes: vec![StashInfo {
                 index: 0,
                 label: "WIP on main".into(),
+                date_rel: "2 days ago".into(),
+                created_secs: 0,
                 stats: Some(BranchStats { added: 1, modified: 2, deleted: 0 }),
             }],
             ..Default::default()

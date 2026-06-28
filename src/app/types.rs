@@ -267,6 +267,10 @@ pub struct WorktreeInfo {
 pub struct StashInfo {
     pub index: usize,
     pub label: String,
+    /// Relative creation time ("3 days ago"), from the stash commit's committer date.
+    pub date_rel: String,
+    /// Committer Unix timestamp of the stash commit (for sorting); 0 when unknown.
+    pub created_secs: i64,
     /// Change counts (vs the stash's parent) — `None` until the stash-stats worker fills them in.
     pub stats: Option<BranchStats>,
 }
