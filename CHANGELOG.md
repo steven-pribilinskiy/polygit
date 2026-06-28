@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.82.0 — 2026-06-28
+Settings footer is now two rows so every hotkey is visible
+- the settings modal's hint footer was a single border row and **truncated the rightmost chips** — `R reset` was cut to `R`, and the `Shift+Tab` / `Shift+↑↓` tab-switch keys weren't shown at all. Split it into two: **navigation** (`↑↓ move · ⇧↑↓/tab tab · ←→ value`, or `fold` in accordion) on the row just inside the bottom border, and **actions** (`space/enter toggle · v <layout> view · R reset · esc close`) on the border. Both rows stay fully clickable.
+
 ## v2.81.1 — 2026-06-28
 Settings wheel scrolls the container (web-app style), not the selection
 - the mouse wheel now scrolls the settings view **freely without moving the selection** (2.81.0 moved the selection). Scroll away from the selected setting and it stays put off-screen; then any keyboard command (`↑↓` / `←→` / `space` / `enter` / `tab` / …) snaps the view back to it — exactly like a focused control in a web app. (Mirrors the changelog modal's decoupled scroll.)
