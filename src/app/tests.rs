@@ -447,6 +447,35 @@
         );
     }
 
+    // After a reset, every setting must actually BE at its default — i.e. the reset-plan (what still
+    // differs) is empty. Catches `apply_settings_reset` / `settings_default_option` drifting from the
+    // real field defaults (e.g. when a default flips and one of the two tables isn't updated).
+    #[test]
+    fn reset_reaches_defaults_and_plan_is_empty() {
+        let mut state = state_with(&[RepoStatus::UpToDate]);
+        // Flip a bunch of settings off-default first.
+        state.panel_padding = false;
+        state.hover_effects = false;
+        state.grouping_enabled = false;
+        state.splitter_mode = crate::app::SplitterMode::Dedicated;
+        state.repo_page_tabs = crate::app::RepoTabsMode::Off;
+        state.apply_settings_reset();
+        assert!(
+            state.settings_reset_plan().is_empty(),
+            "after reset nothing should still differ from default: {:?}",
+            state.settings_reset_plan()
+        );
+        // And every row's active option equals its declared default option.
+        for row in 0..AppState::SETTINGS_ROWS {
+            assert_eq!(
+                state.settings_active_option(row),
+                AppState::settings_default_option(row),
+                "row {row} ({}) not at default after reset",
+                crate::app::SETTINGS_LABELS[row]
+            );
+        }
+    }
+
     fn state_with(statuses: &[RepoStatus]) -> AppState {
         let repos: Vec<SharedRepoState> = statuses
             .iter()
