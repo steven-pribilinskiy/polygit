@@ -12,10 +12,15 @@ use serde::Deserialize;
 pub struct Binding {
     pub keys: Vec<String>,
     pub action: String,
+    /// Optional clarifying note (shown dim after the action in the help list).
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Section {
+    /// Stable id (`list` / `page` / `diff` / `pr`) — what the help tab matches the current view on.
+    pub id: String,
     pub title: String,
     pub bindings: Vec<Binding>,
 }
@@ -30,11 +35,16 @@ pub fn sections() -> &'static [Section] {
 }
 
 /// One action a physical key participates in, with the human-readable key combo + which section.
+/// `shift`/`ctrl`/`alt` are the modifiers the combo requires, so the keyboard viewer can filter to
+/// the exact chord the user pressed (e.g. `Shift+G` vs plain `g`).
 #[derive(Debug, Clone)]
 pub struct KeyUse {
     pub combo: String,
     pub action: String,
     pub section: &'static str,
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
 }
 
 /// physical-key `code` → the actions it's part of. Built once from `sections()`.
@@ -51,15 +61,31 @@ pub fn key_uses() -> &'static HashMap<&'static str, Vec<KeyUse>> {
                     continue;
                 }
                 let combo = tokens.iter().map(|key| key.as_str()).collect::<Vec<_>>().join(" ");
-                let mut needs_shift = false;
+                // `Ctrl`/`Alt` are binding-level tokens; Shift is decided PER KEY — an UPPERCASE
+                // letter (or `?`/`+`/`*`) implies Shift, but only with no Ctrl/Alt (the uppercase `C`
+                // in `Ctrl C` is just the C key, not Ctrl+Shift+C). Computing Shift per token means a
+                // mixed binding like `g G Home End` registers `g` as no-shift and `G` as Shift — so a
+                // Shift filter shows only the keys that truly need Shift.
+                let ctrl = tokens.iter().any(|token| token.as_str() == "Ctrl");
+                let alt = tokens.iter().any(|token| token.as_str() == "Alt");
+                let explicit_shift =
+                    tokens.iter().any(|token| token.as_str() == "Shift" || token.contains("Shift"));
+                let mut any_shift = false;
                 for token in &tokens {
-                    if let Some((code, shift)) = token_to_code(token) {
-                        push(&mut map, code, &combo, &binding.action, title);
-                        needs_shift |= shift;
+                    if let Some((code, token_shift)) = token_to_code(token) {
+                        let shift = explicit_shift || (!ctrl && !alt && token_shift);
+                        any_shift |= shift;
+                        push(&mut map, code, &combo, &binding.action, title, shift, ctrl, alt);
                     }
                 }
-                if needs_shift {
-                    push(&mut map, "ShiftLeft", &combo, &binding.action, title);
+                if any_shift {
+                    push(&mut map, "ShiftLeft", &combo, &binding.action, title, true, ctrl, alt);
+                }
+                if ctrl {
+                    push(&mut map, "ControlLeft", &combo, &binding.action, title, explicit_shift, true, alt);
+                }
+                if alt {
+                    push(&mut map, "AltLeft", &combo, &binding.action, title, explicit_shift, ctrl, true);
                 }
             }
         }
@@ -67,12 +93,16 @@ pub fn key_uses() -> &'static HashMap<&'static str, Vec<KeyUse>> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push(
     map: &mut HashMap<&'static str, Vec<KeyUse>>,
     code: &'static str,
     combo: &str,
     action: &str,
     section: &'static str,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
 ) {
     let entry = map.entry(code).or_default();
     if !entry.iter().any(|use_| use_.combo == combo && use_.action == action) {
@@ -80,6 +110,9 @@ fn push(
             combo: combo.to_string(),
             action: action.to_string(),
             section,
+            shift,
+            ctrl,
+            alt,
         });
     }
 }

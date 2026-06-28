@@ -3,6 +3,17 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.101.0 — 2026-06-29
+Help Hotkeys list is generated from the keymap; keyboard viewer filters by modifier
+- the **`?` help → Hotkeys** list is now rendered from the **same `keymap.json`** as the docs + the
+  keyboard viewer, instead of a hand-curated copy — so it always reflects the real bindings (adding,
+  changing, or removing a hotkey updates it everywhere at once; no drift). Each row shows its keys,
+  action, and the clarifying note.
+- in the **keyboard viewer** (`K`), **held modifiers now filter** the actions panel to the exact
+  chord: `Shift+G` lists only the `Shift+G` binding, `Ctrl+R` only `Ctrl+R`; a plain key still shows
+  every variant (`g`, `G`, `^G`, …). Modifier-ness is computed per key, so a mixed binding like
+  `g G Home End` doesn't pollute the Shift filter.
+
 ## v2.100.0 — 2026-06-29
 Repo page: smarter base, flexible upstream/base columns, ref-gone marker, leaner defaults
 - **base resolution fixed** — the `base` column now only ever resolves to a **conventional
