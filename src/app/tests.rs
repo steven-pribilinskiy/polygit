@@ -305,6 +305,15 @@
         assert!(!state.title_button_hit(28, 5)); // wrong row
         assert!(!state.title_button_hit(10, 4)); // left of both buttons (the drag handle)
         assert!(!state.title_button_hit(40, 4)); // half-open: end is exclusive
+        // Also covers the pane maximize / copy buttons and the cols/sort triggers, so a click on
+        // any of them on a splitter-handle row isn't stolen by the splitter grab.
+        state.max_click.push((4, 50, 52, crate::app::Pane::Result));
+        state.info_click.push((4, 44, 46, crate::app::InfoAction::CopyText("x".into())));
+        state.page_cols_click = Some((4, 18, 25));
+        assert!(state.title_button_hit(51, 4)); // pane maximize button
+        assert!(state.title_button_hit(45, 4)); // copy button
+        assert!(state.title_button_hit(20, 4)); // t cols ▾ trigger
+        assert!(!state.title_button_hit(60, 4)); // empty gap → still a drag handle
     }
 
     #[test]

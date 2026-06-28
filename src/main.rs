@@ -1482,7 +1482,10 @@ async fn run_event_loop(
                 let on_preview_split = !overlay_open
                     && app.preview_divider_row.is_some_and(|row| {
                         (mouse.row == row || mouse.row + 1 == row) && mouse.column >= app.divider_col
-                    });
+                    })
+                    // The result/info pane's top-border buttons (copy `📋`, maximize `m▢`) sit on
+                    // this row — exclude them so a click on a button isn't stolen by the splitter grab.
+                    && !app.title_button_hit(mouse.column, mouse.row);
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) if on_preview_split => {
                         dragging_preview_split = true;
@@ -2445,7 +2448,10 @@ async fn run_event_loop(
                             .abs()
                                 <= 1
                                 && mouse.row >= app.main_area.y
-                                && mouse.row < app.main_area.y + app.main_area.height;
+                                && mouse.row < app.main_area.y + app.main_area.height
+                                // The panes' top-border buttons sit near the divider column — let a
+                                // click on a button win over the divider grab.
+                                && !app.title_button_hit(mouse.column, mouse.row);
                             if on_divider {
                                 dragging_divider = true;
                             } else if let Some(selection) =

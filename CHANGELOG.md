@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.86.3 — 2026-06-28
+Pane top-border buttons are clickable again (the splitter no longer steals the click)
+- clicking a pane's top-border button — the copy `📋`, the maximize `m▢`, or the repo page's `t cols ▾` / `s sort ▾` — started a **splitter drag** instead: those borders double as resize handles, and only the repo-page `esc`/maximize were excluded from the grab. The splitter grab (the dock boundary, the info/result split, and the list│preview divider) now yields to **every** top-border button, so the buttons sit above the splitter as expected.
+
 ## v2.86.2 — 2026-06-28
 Opening a merge commit's diff no longer flashes shut
 - a **merge commit** showed nothing for `git show --name-status` (the default combined `--cc` diff is empty for a clean merge), so the diff modal opened with an empty file list and immediately closed with a "no changes" toast — a flash. Commit diffs now use **`--first-parent`**, so a merge shows the files it brought in vs its first parent (and normal commits are unaffected).
