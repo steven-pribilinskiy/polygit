@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.98.1 — 2026-06-28
+Hover-reveal kebab button + favorite star
+- the repo list's **rightmost column** now shows a **`⋮` kebab button on the hovered row** — click
+  it to open that repo's menu (right-click is eaten by some terminals, so this is the mouse way in).
+- an **un-favorited** repo's **☆** now appears **only while its row is hovered** (a favorited repo
+  still always shows **★**), so the column isn't a wall of empty stars.
+
 ## v2.98.0 — 2026-06-28
 Columns dropdowns: select/deselect-all + reset buttons
 - every **columns** dropdown (list, repo-page, stashes) now has a footer below its items: a divider,

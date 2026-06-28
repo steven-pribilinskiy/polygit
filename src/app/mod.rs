@@ -365,6 +365,8 @@ pub struct AppState {
     pub kebab_area: Rect,
     pub kebab_click: Vec<(u16, usize)>,
     pub kebab_close_click: Option<(u16, u16, u16)>,
+    /// Per-repo-row `⋮` kebab affordance click regions (rightmost column): `(row, col_start, col_end, repo_idx)`.
+    pub kebab_open_click: Vec<(u16, u16, u16, usize)>,
     /// The "wrap copied prompt in `cd <repo> && claude '…'`" checkbox state (persisted).
     pub kebab_session_prefix: bool,
     pub copy_menu: Option<usize>,
@@ -878,6 +880,7 @@ impl AppState {
             kebab_area: Rect::default(),
             kebab_click: Vec::new(),
             kebab_close_click: None,
+            kebab_open_click: Vec::new(),
             kebab_session_prefix: persisted.kebab_session_prefix,
             copy_menu: None,
             toast: None,

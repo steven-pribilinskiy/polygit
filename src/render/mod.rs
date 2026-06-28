@@ -563,6 +563,11 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         } else {
             None
         };
+        let kebab_hit = if list_visible {
+            app.kebab_open_click.iter().find(|&&(r, s, e, _)| contains(r, s, e)).map(|&(r, s, e, _)| (r, s, e))
+        } else {
+            None
+        };
         let repo_row = if repo_visible {
             app.repo_page_click.iter().find(|&&(row, _)| row == hrow).map(|&(_, idx)| idx)
         } else {
@@ -596,6 +601,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         } else if let Some((row, start, end)) = info_button {
             button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) = pr_hit {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) = kebab_hit {
+            // The rightmost `⋮` kebab affordance on the hovered row.
             button_hits.push(row_rect(row, start, end));
         } else if let Some(scroll) = scrollbar_col_hit() {
             hits.push(scroll);

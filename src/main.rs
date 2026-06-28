@@ -2671,6 +2671,16 @@ async fn run_event_loop(
                                 InfoAction::ToggleExpand(field) => app.toggle_info_expanded(&field),
                             }
                         } else if let Some(repo_idx) = app
+                            .kebab_open_click
+                            .iter()
+                            .find(|(row, start, end, _)| {
+                                mouse.row == *row && mouse.column >= *start && mouse.column < *end
+                            })
+                            .map(|(_, _, _, repo_idx)| *repo_idx)
+                        {
+                            // Click the rightmost `⋮` to open that repo's kebab menu.
+                            app.open_kebab(repo_idx);
+                        } else if let Some(repo_idx) = app
                             .fav_cell_click
                             .iter()
                             .find(|(row, start, end, _)| {

@@ -116,7 +116,9 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let count_w = 4 + col_extra; // glyph + count (worktrees / branches / stashes)
     let pr_w = 6; // `#NNNNN` — fits a 5-digit PR number
     let fav_w = 1; // star is a compact 1-cell symbol in both icon sets
-    let columns_width = usize::from(columns.status) * (STATUS_COL_W + 1)
+    let kebab_w = 2; // the rightmost column: a space + the `⋮` kebab affordance (shown on hover)
+    let columns_width = kebab_w
+        + usize::from(columns.status) * (STATUS_COL_W + 1)
         + usize::from(columns.ahead_behind) * 10
         + (dirty_w + 1)
         + usize::from(columns.last_commit) * 15
@@ -139,7 +141,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     // darkens it on a painted background), so `faint` is the floor — recessed but rendered
     // consistently dim across terminals.
     let count_dim = app.palette().faint;
-    let repo_item = |repo_idx: usize, depth: u16| -> ListItem<'static> {
+    let repo_item = |repo_idx: usize, depth: u16, hovered: bool| -> ListItem<'static> {
             let state = app.repos[repo_idx].lock().unwrap();
             let icons = app.icons();
             // Post-change attention indicator on the cells whose value changed: pulse REVERSED
@@ -345,23 +347,43 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                 // Favorites are keyed by ABSOLUTE path (see `favorite_key`), not rel_path — keying
                 // the star off `rel_path` here never matched a toggle, so the column looked dead.
                 // We hold this repo's lock, so derive the key from its `path` without re-locking.
+                // A favorited repo always shows ★; an un-favorited one shows ☆ only while hovered.
                 let favorited = app.favorites.contains(&crate::app::favorite_key(&state.path));
                 let (glyph, style) = if favorited {
                     (icons.fav_on, Style::default().fg(Color::Yellow))
-                } else {
+                } else if hovered {
                     (icons.fav_off, Style::default().fg(Color::DarkGray))
+                } else {
+                    (" ", Style::default())
                 };
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(pad_display(glyph, fav_w), style));
             }
+            // The rightmost column reserves `kebab_w` cells (above) for the `⋮` kebab affordance; the
+            // glyph itself is overlaid at the pane's right edge on the hovered row after the list
+            // renders (so its screen column is exact for hit-testing, regardless of content width).
+            let _ = hovered;
 
             ListItem::new(Line::from(spans))
     };
 
+    // The row under the cursor (for the hover-only ★ / `⋮` affordances). Derived from last frame's
+    // captured list geometry — stable across frames, so a 1-frame lag on resize is imperceptible.
+    let hovered_row: Option<usize> = if app.hover_effects {
+        app.hover.and_then(|(_, hrow)| {
+            let geom = app.list_rows_area;
+            (geom.height > 0 && hrow >= geom.y && hrow < geom.y + geom.height)
+                .then(|| app.list_scroll + (hrow - geom.y) as usize)
+        })
+    } else {
+        None
+    };
+
     let mut items: Vec<ListItem> = rows
         .iter()
-        .map(|row| match *row {
-            ListRow::Repo { repo_idx, depth } => repo_item(repo_idx, depth),
+        .enumerate()
+        .map(|(index, row)| match *row {
+            ListRow::Repo { repo_idx, depth } => repo_item(repo_idx, depth, hovered_row == Some(index)),
             ListRow::GroupHeader { group_idx, parent, collapsible, depth } => {
                 group_header_item(app, group_idx, parent, collapsible, depth, inner_width, tick)
             }
@@ -476,6 +498,26 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
 
     frame.render_stateful_widget(list, rows_area, &mut list_state);
 
+    // Overlay the `⋮` kebab affordance at the pane's right edge on the hovered repo row (into the
+    // reserved `kebab_w` gutter, so it never clobbers a column value). Drawn after the list so its
+    // screen column is exact (the row content may not fill the full width).
+    if let Some(idx) = hovered_row {
+        if idx >= scroll
+            && idx < scroll + viewport
+            && matches!(rows.get(idx), Some(ListRow::Repo { .. }))
+            && rows_area.width >= 1
+        {
+            let screen_row = rows_area.y + (idx - scroll) as u16;
+            let col = rows_area.x + rows_area.width - 1;
+            frame.buffer_mut().set_string(
+                col,
+                screen_row,
+                "\u{22ee}",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            );
+        }
+    }
+
     // Pinned footer (Result / Errors summary), with the selected footer row highlighted. Footer
     // line 1 = the "Result" selection (app.selected == rows.len()), line 3 = "Errors".
     let footer_sel = match app.selected {
@@ -553,6 +595,19 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
             }
         }
         app.fav_cell_click = clicks;
+    }
+
+    // Capture the rightmost `⋮` kebab region for each visible repo row (clicking it opens the menu).
+    app.kebab_open_click.clear();
+    {
+        let kebab_end = rows_area.x + rows_area.width;
+        let kebab_start = kebab_end.saturating_sub(2); // the " ⋮" gutter at the far right
+        let height = rows_area.height as usize;
+        for (visible, row) in rows.iter().skip(scroll).take(height).enumerate() {
+            if let ListRow::Repo { repo_idx, .. } = *row {
+                app.kebab_open_click.push((rows_area.y + visible as u16, kebab_start, kebab_end, repo_idx));
+            }
+        }
     }
 
     // Dwell tooltips for the group/folder count tails (right-aligned in each header row).
