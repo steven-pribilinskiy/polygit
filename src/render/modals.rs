@@ -1444,6 +1444,10 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         height: full_inner.height.saturating_sub(search_rows),
         ..full_inner
     };
+    // Snap the view to the selected setting only when a keyboard nav / value change (or an open /
+    // layout switch) asked for it — consumed once per render. The wheel never sets this, so wheel
+    // scrolling moves the container freely (web-app style) without snapping back to the selection.
+    let ensure_visible = std::mem::take(&mut app.settings_ensure_visible);
 
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     // Precomputed (not via `app` inside the closure, which would conflict with the closure's
@@ -1615,15 +1619,17 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     _ => {}
                 }
             }
-        } else if let Some(sel) = sel_line {
-            if sel <= first_sel {
-                // Selecting the first section header reveals the very top (collapse-all + blank),
-                // so the thumb sits at the top — matching "I'm at the top of the list".
-                scroll = 0;
-            } else if sel < scroll {
-                scroll = sel;
-            } else if viewport > 0 && sel >= scroll + viewport {
-                scroll = sel + 1 - viewport;
+        } else if ensure_visible {
+            if let Some(sel) = sel_line {
+                if sel <= first_sel {
+                    // Selecting the first section header reveals the very top (collapse-all +
+                    // blank), so the thumb sits at the top — matching "I'm at the top of the list".
+                    scroll = 0;
+                } else if sel < scroll {
+                    scroll = sel;
+                } else if viewport > 0 && sel >= scroll + viewport {
+                    scroll = sel + 1 - viewport;
+                }
             }
         }
         app.settings_scroll = scroll;
@@ -1732,11 +1738,13 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             {
                 app.settings_selected = *row;
             }
-        } else if let Some(sel) = sel_line {
-            if sel < scroll {
-                scroll = sel;
-            } else if viewport > 0 && sel >= scroll + viewport {
-                scroll = sel + 1 - viewport;
+        } else if ensure_visible {
+            if let Some(sel) = sel_line {
+                if sel < scroll {
+                    scroll = sel;
+                } else if viewport > 0 && sel >= scroll + viewport {
+                    scroll = sel + 1 - viewport;
+                }
             }
         }
         app.settings_scroll = scroll;

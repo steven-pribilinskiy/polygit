@@ -340,6 +340,7 @@ impl AppState {
         self.settings_on_header =
             (self.settings_layout == crate::app::SettingsLayout::Accordion).then_some(0);
         self.settings_scroll = 0;
+        self.settings_ensure_visible = true; // open scrolled to the selection
         self.settings_search.clear();
         self.settings_search_focused = false;
     }

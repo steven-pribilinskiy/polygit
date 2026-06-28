@@ -482,6 +482,11 @@ pub struct AppState {
     /// moves (j/k/g/G), expand/collapse, and header clicks — NOT by the wheel — so wheel scrolling
     /// is free (web-app style, like the main list) instead of snapping back to the selection.
     pub changelog_ensure_visible: bool,
+    /// Settings modal: snap the view to the selected setting on the NEXT render. Set by keyboard
+    /// nav / value changes (and on open / layout switch), consumed once per render — NOT by the
+    /// wheel, so wheel scrolling is free (web-app style: scroll the container; a keyboard command
+    /// scrolls back to the selected setting).
+    pub settings_ensure_visible: bool,
     /// Maximize ⇄ restore the changelog / What's New / version-picker modal (runtime-only, like the
     /// help modal): `true` fills ~90% of the viewport. `m` or its title-bar button toggles it.
     pub changelog_maximized: bool,
@@ -858,6 +863,7 @@ impl AppState {
             changelog_close_click: None,
             changelog_header_click: Vec::new(),
             changelog_ensure_visible: true,
+            settings_ensure_visible: true,
             changelog_maximized: false,
             changelog_maximize_click: None,
             changelog_pin_mode: false,
