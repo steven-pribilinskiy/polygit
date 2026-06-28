@@ -2465,6 +2465,7 @@ async fn run_event_loop(
                                 .map(|(_, _, _, code)| *code)
                             {
                                 app.keyboard_selected = Some(code);
+                                app.keyboard_mods = (false, false, false); // a click shows all chords
                                 app.keyboard_scroll = 0;
                             }
                         }
@@ -2873,6 +2874,21 @@ async fn run_event_loop(
                         app.keyboard_scroll = 0;
                     } else if let Some(code) = keymap::keycode_to_code(key.code, key.modifiers) {
                         app.keyboard_selected = Some(code);
+                        // The held modifiers filter the actions panel to that exact chord. An
+                        // uppercase char implies Shift even when the terminal drops the SHIFT bit;
+                        // pressing a bare modifier key itself carries no chord (mods stay clear).
+                        let bare_modifier = matches!(
+                            key.code,
+                            KeyCode::Modifier(_)
+                        );
+                        let shift = !bare_modifier
+                            && (key.modifiers.contains(KeyModifiers::SHIFT)
+                                || matches!(key.code, KeyCode::Char(ch) if ch.is_ascii_uppercase()));
+                        app.keyboard_mods = (
+                            shift,
+                            !bare_modifier && key.modifiers.contains(KeyModifiers::CONTROL),
+                            !bare_modifier && key.modifiers.contains(KeyModifiers::ALT),
+                        );
                         app.keyboard_scroll = 0;
                     }
                     continue;

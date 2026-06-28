@@ -192,6 +192,9 @@ pub struct AppState {
     pub show_keyboard: bool,
     /// The key the user last pressed/clicked on the board (its layout `code`); drives the panel.
     pub keyboard_selected: Option<&'static str>,
+    /// Modifiers held when `keyboard_selected` was set — `(shift, ctrl, alt)`. The actions panel
+    /// filters to the chord that exactly matches them, so `Shift+G` reads only the `Shift+G` binding.
+    pub keyboard_mods: (bool, bool, bool),
     /// Scroll offset in the keyboard modal's actions panel.
     pub keyboard_scroll: usize,
     /// The keyboard modal's outer area (for outside-click close).
@@ -801,6 +804,7 @@ impl AppState {
             help_design_tab_click: Vec::new(),
             show_keyboard: false,
             keyboard_selected: None,
+            keyboard_mods: (false, false, false),
             keyboard_scroll: 0,
             keyboard_area: Rect::default(),
             keyboard_panel_area: Rect::default(),

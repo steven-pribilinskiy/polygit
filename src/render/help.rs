@@ -622,7 +622,6 @@ pub(crate) fn filter_help_items(
 
 pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<String>)> {
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-    let subhead_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Cyan);
     let mut items: Vec<(Line<'static>, Option<String>)> = Vec::new();
     let header = |text: &str| (Line::from(Span::styled(text.to_string(), header_style)), None);
@@ -638,186 +637,24 @@ pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<S
         )
     };
 
-    match view {
-        HelpView::List => {
-            items.push(header("HOTKEYS — repo list"));
-            // Short sections are laid out side-by-side (two whole sections per row block);
-            // long-description sections (Find & sort, Groups, Pull / retry) span the width.
-            type Sec<'a> = (&'a str, &'a [(&'a str, &'a str)]);
-            let navigate: Sec = (
-                "Navigate",
-                &[
-                    ("j/k  ↑/↓", "move"),
-                    ("g / G", "jump to top / end"),
-                    ("Home / End", "jump to top / bottom"),
-                    ("PgUp / PgDn", "page up / down"),
-                    ("wheel · click", "select a row"),
-                ],
-            );
-            let views: Sec = (
-                "Views & panes",
-                &[
-                    ("space", "Result / Errors overlay"),
-                    ("tab · 1/2", "focus list ⇄ preview"),
-                    ("i", "info panel"),
-                    ("d", "diff view"),
-                    ("End", "resume autoscroll"),
-                ],
-            );
-            let find_sort: Sec = (
-                "Find & sort",
-                &[
-                    ("/", "filter by name"),
-                    ("f", "filter by status: a/u/c/s/f/i/v (v = favorites)"),
-                    ("s", "sort: n/c/s/a/d/l/w/b/k/p/g/v (v = favorite); re-pick flips ▲▼; or click a header"),
-                    ("t", "toggle columns (the dropdown has * select-all · 0 reset)"),
-                ],
-            );
-            let groups: Sec = (
-                "Views & folding",
-                &[
-                    ("v g · v t", "toggle grouped view · tree view"),
-                    ("Z", "refresh dynamic group memberships"),
-                    ("- / + / *", "collapse all · expand all · expand subtree"),
-                    ("za", "fold: toggle the folder/group"),
-                    ("zo · zc", "fold: open · close"),
-                    ("zO", "fold: expand subtree"),
-                    ("zM · zR", "fold: collapse all · expand all"),
-                    ("← / →", "collapse + jump to parent / expand"),
-                    ("enter · space", "collapse/expand (on a folder/group header)"),
-                ],
-            );
-            let pull_retry: Sec = (
-                "Pull / retry",
-                &[
-                    ("r / R", "retry selected / all (failed or skipped)"),
-                    ("e / E", "refetch selected / all (re-pull anything)"),
-                ],
-            );
-            let clipboard: Sec = (
-                "Clipboard & open",
-                &[
-                    ("y", "copy absolute path"),
-                    ("Y", "copy remote (origin) url"),
-                    ("o", "open remote in browser"),
-                    ("x", "clear this repo's log buffer"),
-                ],
-            );
-            let run: Sec = ("Run", &[("c", "claude in repo dir"), ("l", "lazygit in repo dir")]);
-            let repo_menu: Sec = (
-                "Favorites & menu",
-                &[
-                    (".", "open the repo's kebab (⋮) menu — or click the ⋮ on a hovered row"),
-                    ("b", "toggle favorite (★)"),
-                    ("B", "pin the ★ Favorites section to the top"),
-                ],
-            );
-            let other: Sec = (
-                "Other",
-                &[
-                    (",", "settings"),
-                    ("D", "open docs site"),
-                    ("?", "help"),
-                    ("q", "quit"),
-                    ("^C", "exit"),
-                ],
-            );
-            let layout: Sec = (
-                "Layout",
-                &[("[ ]", "resize panes"), ("drag divider", "resize with the mouse")],
-            );
-
-            // A section's lines: subhead title, then one `keys  description` line per entry.
-            let section_lines = |(title, entries): Sec| -> Vec<(Vec<Span<'static>>, usize)> {
-                let mut out = vec![(
-                    vec![Span::styled(format!("  {title}"), subhead_style)],
-                    2 + UnicodeWidthStr::width(title),
-                )];
-                for &(keys, desc) in entries {
-                    let key_text = format!("    {keys:<14}");
-                    let desc_text = format!(" {desc}");
-                    let width = UnicodeWidthStr::width(key_text.as_str())
-                        + UnicodeWidthStr::width(desc_text.as_str());
-                    out.push((
-                        vec![Span::styled(key_text, key_style), Span::raw(desc_text)],
-                        width,
-                    ));
-                }
-                out
+    // Rendered from the SAME `keymap.json` the docs + keyboard viewer use — so this list always
+    // reflects the real bindings (adding / changing / removing a hotkey there updates it here too,
+    // no curated copy to drift). The section is picked by the view the help was opened over.
+    let section_id = match view {
+        HelpView::List => "list",
+        HelpView::RepoPage => "page",
+        HelpView::DiffModal => "diff",
+    };
+    items.push(header(&format!("HOTKEYS — {}", view.label())));
+    items.push(plain(""));
+    if let Some(section) = crate::keymap::sections().iter().find(|section| section.id == section_id) {
+        for binding in &section.bindings {
+            let keys = binding.keys.join(" / ");
+            let desc = match binding.note.as_deref() {
+                Some(note) if !note.is_empty() => format!("{}  —  {}", binding.action, note),
+                _ => binding.action.clone(),
             };
-            enum HelpBlock<'a> {
-                Side(Sec<'a>, Sec<'a>),
-                Wide(Sec<'a>),
-            }
-            let blocks = [
-                HelpBlock::Side(navigate, views),
-                HelpBlock::Wide(find_sort),
-                HelpBlock::Wide(groups),
-                HelpBlock::Wide(pull_retry),
-                HelpBlock::Side(clipboard, run),
-                HelpBlock::Wide(repo_menu),
-                HelpBlock::Side(other, layout),
-            ];
-            for block in blocks {
-                items.push(plain(""));
-                match block {
-                    HelpBlock::Wide(section) => {
-                        for (spans, _) in section_lines(section) {
-                            items.push((Line::from(spans), None));
-                        }
-                    }
-                    HelpBlock::Side(left, right) => {
-                        let left_lines = section_lines(left);
-                        let right_lines = section_lines(right);
-                        let column = left_lines.iter().map(|(_, w)| *w).max().unwrap_or(0) + 4;
-                        for row in 0..left_lines.len().max(right_lines.len()) {
-                            let mut spans = Vec::new();
-                            let mut width = 0;
-                            if let Some((left_spans, left_width)) = left_lines.get(row) {
-                                spans.extend(left_spans.clone());
-                                width = *left_width;
-                            }
-                            if let Some((right_spans, _)) = right_lines.get(row) {
-                                spans.push(Span::raw(" ".repeat(column - width)));
-                                spans.extend(right_spans.clone());
-                            }
-                            items.push((Line::from(spans), None));
-                        }
-                    }
-                }
-            }
-        }
-        HelpView::RepoPage => {
-            items.push(header("HOTKEYS — repo page"));
-            items.push(kb("↑↓ · j/k", "move"));
-            items.push(kb("g/G · Home/End", "jump to top / bottom"));
-            items.push(kb("enter", "open diff (stash or dirty row)"));
-            items.push(kb("shift+enter", "checkout (clean, non-current branch)"));
-            items.push(kb("p / P", "pull branch / all branches"));
-            items.push(kb("d", "delete branch · drop stash · remove worktree · discard (confirm)"));
-            items.push(kb("t", "column menu — b/y/a/m/d/c/u/g/s toggle, esc closes"));
-            items.push(kb("i", "toggle the info panel"));
-            items.push(kb("c", "claude in the row's path"));
-            items.push(kb("l", "lazygit in the row's path"));
-            items.push(kb("o", "open the branch on the remote (e.g. GitHub) in your browser"));
-            items.push(kb("y", "copy menu — path / branch / both"));
-            items.push(kb(",", "settings"));
-            items.push(kb("esc · q", "back to the repo list"));
-            items.push(plain(""));
-            items.push(plain("    ● marks branches/worktrees with uncommitted changes"));
-        }
-        HelpView::DiffModal => {
-            items.push(header("HOTKEYS — diff modal"));
-            items.push(kb("tab", "switch file list ⇄ diff focus"));
-            items.push(kb("↑↓ · j/k", "pick a file / scroll the diff"));
-            items.push(kb("g / G", "first / last file · diff top / bottom"));
-            items.push(kb("PgUp/PgDn", "scroll the diff"));
-            items.push(kb("⇧/⌥ PgUp/PgDn", "page the file list"));
-            items.push(kb("⇧/⌥ wheel", "scroll the file list"));
-            items.push(kb("f", "filter by status (>10 files)"));
-            items.push(kb("t", "toggle uncommitted ⇄ base branch"));
-            items.push(kb("d", "discard / remove / drop (confirm)"));
-            items.push(kb("esc · q", "close"));
+            items.push(kb(&keys, &desc));
         }
     }
     items
@@ -1378,20 +1215,44 @@ pub(crate) fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area:
                 ]));
             }
             Some(list) => {
+                // Held modifiers filter the panel to the EXACT chord (e.g. `Shift+G` shows only the
+                // Shift+G binding); a plain key with no modifiers shows every variant (g, G, ^G, …).
+                let (sh, ct, al) = app.keyboard_mods;
+                let filtering = sh || ct || al;
+                let shown: Vec<&crate::keymap::KeyUse> = if filtering {
+                    list.iter().filter(|use_| (use_.shift, use_.ctrl, use_.alt) == (sh, ct, al)).collect()
+                } else {
+                    list.iter().collect()
+                };
+                let mut mod_label = String::new();
+                if ct { mod_label.push_str("Ctrl+"); }
+                if al { mod_label.push_str("Alt+"); }
+                if sh { mod_label.push_str("Shift+"); }
+                let count_note = if filtering {
+                    format!("{} action{} · filtered to {mod_label}", shown.len(), if shown.len() == 1 { "" } else { "s" })
+                } else {
+                    format!("{} action{}", shown.len(), if shown.len() == 1 { "" } else { "s" })
+                };
                 panel_lines.push(Line::from(vec![
                     Span::styled(header.clone(), Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
                     Span::raw("  "),
-                    Span::styled(format!("{} action{}", list.len(), if list.len() == 1 { "" } else { "s" }), Style::default().fg(Color::Gray)),
+                    Span::styled(count_note, Style::default().fg(Color::Gray)),
                 ]));
                 panel_lines.push(Line::from(""));
+                if shown.is_empty() {
+                    panel_lines.push(Line::from(Span::styled(
+                        format!("no {mod_label}{} binding — press the key without modifiers to see its other chords", header.trim()),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
                 // Size the keys column to the longest combo *currently shown*, so it tightens for
                 // keys with only short combos and stays aligned when one combo is long.
-                let combo_width = list
+                let combo_width = shown
                     .iter()
                     .map(|use_| UnicodeWidthStr::width(use_.combo.as_str()))
                     .max()
                     .unwrap_or(0);
-                for use_ in list {
+                for use_ in shown {
                     panel_lines.push(Line::from(vec![
                         Span::styled(pad_display(&use_.combo, combo_width), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
                         Span::raw("  "),
