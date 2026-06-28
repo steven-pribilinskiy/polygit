@@ -34,16 +34,21 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     // + direction rides on the sort trigger. Captured for click hit-testing + dropdown anchoring.
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
-    // Top-border triggers, `·`-separated and ordered `filter · sort · columns`: `f by-status` arms
-    // the status-filter leader (reusing the footer command's click machinery), `s sort ⟪col ▲⟫ ▾`
-    // and `t cols ▾` open the sort/columns dropdowns. The maximize button is the rightmost element.
+    // Top-border triggers, `·`-separated and ordered `filter · sort · columns`. All three open a
+    // dropdown (`f`/`s`/`t` or a click): `f by-status ⟪filter⟫ ▾`, `s sort ⟪col ▲⟫ ▾`, `t cols ▾`.
+    // The active filter / sort rides on its trigger (mirrors the footer `{status}` reset tag);
+    // when the filter is `all` the tag is omitted. The maximize button is the rightmost element.
     // (The `/` name filter is left in the status-bar footer where its active needle lives.)
     let cols_text = "t cols ▾";
     let cols_w = cols_text.chars().count() as u16;
     let sort_tag = format!("⟪{} {}⟫", app.sort_column.label(), app.sort_dir.arrow());
     let sort_label = format!(" sort {sort_tag} ▾");
     let sort_w = (1 + sort_label.chars().count()) as u16;
-    let filter_w = 1 + " by-status".chars().count() as u16;
+    let filter_label = match app.status_filter.tag() {
+        Some(tag) => format!(" by-status ⟪{tag}⟫ ▾"),
+        None => " by-status ▾".to_string(),
+    };
+    let filter_w = (1 + filter_label.chars().count()) as u16;
     let sep_w = 3u16; // " · "
     let (max_spans, chips_end) =
         max_button_spans(app, Pane::List, area.y, area.x + area.width.saturating_sub(1));
@@ -59,7 +64,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     app.list_filter_click = Some((area.y, filter_start, filter_end));
     let chips = Line::from(vec![
         Span::styled("f", key_style),
-        Span::styled(" by-status", label_style),
+        Span::styled(filter_label.clone(), label_style),
         Span::styled(" · ", label_style),
         Span::styled("s", key_style),
         Span::styled(sort_label.clone(), label_style),
