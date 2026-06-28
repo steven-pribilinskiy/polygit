@@ -970,6 +970,10 @@ impl AppState {
                 Some(kind) => rows.retain(|row| row.kind == kind),
                 None => rows.clear(),
             }
+        } else {
+            // Flat (stacked) view: hide rows in collapsed sections (their header stays, so they can
+            // be re-expanded). Headers aren't rows, so nav/selection skip the hidden rows.
+            rows.retain(|row| !self.repo_page_collapsed_sections.contains(row.tab().section_name()));
         }
         rows
     }
@@ -1025,6 +1029,48 @@ impl AppState {
     }
 
     /// Cycle to the next/previous present repo-page tab.
+    /// Whether a repo-page section is collapsed in the flat (stacked) view.
+    pub fn repo_page_section_collapsed(&self, tab: RepoTab) -> bool {
+        self.repo_page_collapsed_sections.contains(tab.section_name())
+    }
+
+    /// Collapse/expand a repo-page section (flat view), persisting. Keeps the selection valid.
+    pub fn toggle_repo_page_section(&mut self, tab: RepoTab) {
+        let name = tab.section_name().to_string();
+        if !self.repo_page_collapsed_sections.remove(&name) {
+            self.repo_page_collapsed_sections.insert(name);
+        }
+        let len = self.repo_page_selectable_len();
+        if self.repo_page_selected >= len {
+            self.repo_page_selected = len.saturating_sub(1);
+        }
+        self.save_state();
+    }
+
+    /// Collapse/expand the section the selected row belongs to (the `z` key).
+    pub fn toggle_selected_repo_page_section(&mut self) {
+        if let Some(row) = self.repo_page_target() {
+            self.toggle_repo_page_section(row.tab());
+        }
+    }
+
+    /// Expand every section if any is collapsed, else collapse them all (`Z`). The keyboard way to
+    /// re-expand a section whose rows are hidden (so `z` can no longer reach it).
+    pub fn toggle_all_repo_page_sections(&mut self) {
+        if self.repo_page_collapsed_sections.is_empty() {
+            for tab in self.repo_page_present_tabs() {
+                self.repo_page_collapsed_sections.insert(tab.section_name().to_string());
+            }
+        } else {
+            self.repo_page_collapsed_sections.clear();
+        }
+        let len = self.repo_page_selectable_len();
+        if self.repo_page_selected >= len {
+            self.repo_page_selected = len.saturating_sub(1);
+        }
+        self.save_state();
+    }
+
     pub fn repo_page_cycle_tab(&mut self, forward: bool) {
         let tabs = self.repo_page_present_tabs();
         if tabs.is_empty() {

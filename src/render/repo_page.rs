@@ -644,6 +644,16 @@ pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, O
             hint,
             Some(HintKey::Char('v')),
         ),
+    ]);
+    // The fold hint only applies in the flat (stacked) view.
+    if !app.repo_page_tabbed() {
+        footer_segments.extend([
+            sep(),
+            ("z/Z".to_string(), key, Some(HintKey::Char('z'))),
+            (" fold".to_string(), hint, Some(HintKey::Char('z'))),
+        ]);
+    }
+    footer_segments.extend([
         sep(),
         ("?".to_string(), key, Some(HintKey::Char('?'))),
         (" help".to_string(), hint, Some(HintKey::Char('?'))),
@@ -792,9 +802,6 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let base_style = Style::default().fg(Color::Blue);
     let base_override_style = Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD);
 
-    let branch_count = rows.iter().filter(|row| row.kind == PageRowKind::Branch).count();
-    let worktree_count = rows.iter().filter(|row| row.kind == PageRowKind::Worktree).count();
-    let stash_count = rows.iter().filter(|row| row.kind == PageRowKind::Stash).count();
     let columns = app.effective_repo_page_columns();
 
     // The optional columns after the name, in a fixed order. The header row and every data row
@@ -985,10 +992,11 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         (Line::from(spans), cells)
     };
 
-    // Section header: a colored type icon for quick recognition, then the yellow label.
-    let section_header = |icon: &'static str, icon_color: Color, text: String| {
+    // Section header: a fold chevron, a colored type icon for quick recognition, then the label.
+    let section_header = |chevron: &str, icon: &'static str, icon_color: Color, text: String| {
         (
             Line::from(vec![
+                Span::styled(format!("{chevron} "), Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
                 Span::styled(text, header_style),
             ]),
@@ -1003,6 +1011,14 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let mut items: Vec<PageItem> = Vec::new();
     // The single clickable PR cell (current-branch row): (absolute item index, start, end, url).
     let mut pr_item: Option<(usize, u16, u16, String)> = None;
+    // Flat-view collapsible sections: which `items` index each section header sits at (so the draw
+    // loop can register a click region), and each section's collapsed state (chevron + hide rows).
+    let mut section_header_items: Vec<(usize, crate::app::RepoTab)> = Vec::new();
+    let branches_collapsed = app.repo_page_section_collapsed(crate::app::RepoTab::Branches);
+    let worktrees_collapsed = app.repo_page_section_collapsed(crate::app::RepoTab::Worktrees);
+    let stashes_collapsed = app.repo_page_section_collapsed(crate::app::RepoTab::Stashes);
+    let commits_collapsed = app.repo_page_section_collapsed(crate::app::RepoTab::Commits);
+    let chevron = |collapsed: bool| if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
 
     // Tabbed mode: a clickable tab bar (Branches/Worktrees/Stashes/Commits) replaces the section
     // headers, and only the active tab's rows render (rows are already filtered to it).
@@ -1041,16 +1057,21 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let mut header_cells: Vec<(u16, u16, RepoPageSort)> = Vec::new();
     if render_branches {
         if !tabbed {
+            section_header_items.push((items.len(), crate::app::RepoTab::Branches));
             items.push(section_header(
+                chevron(branches_collapsed),
                 icons.branches,
                 Color::Green,
-                format!("BRANCHES ({branch_count})"),
+                format!("BRANCHES ({full_branches})"),
             ));
         }
-        let (header_line, cells) = column_header();
-        header_cells = cells;
-        header_item_index = items.len();
-        items.push((header_line, None, None));
+        // Skip the column header (and the rows, filtered out already) when this section is collapsed.
+        if tabbed || !branches_collapsed {
+            let (header_line, cells) = column_header();
+            header_cells = cells;
+            header_item_index = items.len();
+            items.push((header_line, None, None));
+        }
     }
     for (sel_index, row) in rows.iter().enumerate() {
         if row.kind != PageRowKind::Branch {
@@ -1096,14 +1117,17 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         items.push((Line::from(line_spans), Some(sel_index), base_range));
     }
 
-    // Worktrees / stashes sections only appear when there's something to show.
-    if worktree_count > 0 {
+    // Worktrees / stashes sections only appear when the repo has any (full count, so a collapsed
+    // section still shows its header). Rows come from `rows`, which is empty for a collapsed section.
+    if full_worktrees > 0 {
         if !tabbed {
             items.push((Line::from(String::new()), None, None));
+            section_header_items.push((items.len(), crate::app::RepoTab::Worktrees));
             items.push(section_header(
+                chevron(worktrees_collapsed),
                 icons.worktrees,
                 Color::Cyan,
-                format!("WORKTREES ({worktree_count})"),
+                format!("WORKTREES ({full_worktrees})"),
             ));
         }
         for (sel_index, row) in rows.iter().enumerate() {
@@ -1137,13 +1161,15 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         }
     }
 
-    if stash_count > 0 {
+    if full_stashes > 0 {
         if !tabbed {
             items.push((Line::from(String::new()), None, None));
+            section_header_items.push((items.len(), crate::app::RepoTab::Stashes));
             items.push(section_header(
+                chevron(stashes_collapsed),
                 icons.stashes,
                 Color::Magenta,
-                format!("STASHES ({stash_count})"),
+                format!("STASHES ({full_stashes})"),
             ));
         }
         for (sel_index, row) in rows.iter().enumerate() {
@@ -1186,7 +1212,13 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     if render_commits {
         if !tabbed {
             items.push((Line::from(String::new()), None, None));
-            items.push(section_header(icons.commits, Color::Yellow, format!("COMMITS ({full_commits})")));
+            section_header_items.push((items.len(), crate::app::RepoTab::Commits));
+            items.push(section_header(
+                chevron(commits_collapsed),
+                icons.commits,
+                Color::Yellow,
+                format!("COMMITS ({full_commits})"),
+            ));
         }
         // The author column grows to the longest name (not truncated to a fixed width); the subject
         // then fills whatever horizontal space is left.
@@ -1268,10 +1300,16 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     app.repo_page_click.clear();
     app.base_cell_click.clear();
     app.repo_page_sort_click.clear();
+    app.repo_page_section_click.clear();
     app.repo_page_pr_click = None;
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, (line, sel, base_range)) in items[start..end].iter().enumerate() {
         let mut line = line.clone();
+        // Register a flat-view section header as clickable (toggles its collapse) when on screen.
+        if let Some((_, tab)) = section_header_items.iter().find(|(index, _)| *index == start + offset) {
+            let width = line.width() as u16;
+            app.repo_page_section_click.push((inner.y + offset as u16, inner.x, inner.x + width, *tab));
+        }
         // Register the clickable PR cell when the current-branch row is on screen.
         if let Some((item_index, pr_start, pr_end, url)) = &pr_item {
             if start + offset == *item_index {

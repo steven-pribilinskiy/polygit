@@ -81,6 +81,8 @@ Navigate rows with `j`/`k`/`g`/`G`/`Home`/`End` (or the wheel / a click), then:
 | `l` | Open [lazygit](https://github.com/jesseduffield/lazygit) in the row's path |
 | `1`/`2`/`3`/`4` | Focus the list / info / result / repo-page panel (restores the layout first if maximized) |
 | `m` | Maximize / restore the page (restored = docked panel `[4]`; maximized = full-screen) |
+| `v` | Toggle the view between flat (stacked) and tabbed |
+| `z` / `Z` | Collapse/expand the selected row's section / all sections (flat view) |
 | `Esc` / `q` | Return to the repo list |
 
 ### The `d` key, by row type

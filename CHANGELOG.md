@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.86.0 — 2026-06-28
+Repo page: collapsible accordion sections in the flat view
+- in the flat (stacked) repo page, each section header (Branches / Worktrees / Stashes / Commits) is now a **collapsible accordion** — a `▾`/`▸` chevron shows its state. **Click the header (or press `z`) to collapse/expand** the selected row's section, and **`Z`** expands/collapses them all (the keyboard way back once a collapsed section's rows are hidden). The collapsed set persists; headers hover-highlight, and a collapsed section keeps its header so it's easy to re-open.
+
 ## v2.85.0 — 2026-06-28
 Maximized repo page: toggle between flat (stacked) and tabbed with `v`
 - the full-screen repo page defaulted to a single flat stacked view of every section; **`v` now toggles it between flat and tabbed** (a tab bar with one section at a time), persisted. `v` also flips the tabbed/flat mode while restored. A `v flat`/`v tabbed` hint sits in the footer.

@@ -2157,6 +2157,16 @@ async fn run_event_loop(
                                 continue;
                             } else if let Some(kind) = tab_click {
                                 app.repo_page_select_tab(kind);
+                            } else if let Some(tab) = app
+                                .repo_page_section_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., tab)| tab)
+                            {
+                                // Click a flat-view section header to collapse/expand it.
+                                app.toggle_repo_page_section(tab);
                             } else if let Some(selection) =
                                 app.base_cell_at(mouse.column, mouse.row)
                             {
@@ -3331,6 +3341,10 @@ async fn run_event_loop(
                             }
                             app.save_state();
                         }
+                        // `z` collapses/expands the selected row's section; `Z` expands/collapses all
+                        // (the keyboard way back when a collapsed section's rows are hidden).
+                        KeyCode::Char('z') => app.toggle_selected_repo_page_section(),
+                        KeyCode::Char('Z') => app.toggle_all_repo_page_sections(),
                         KeyCode::PageDown => {
                             app.repo_page_scroll = app.repo_page_scroll.saturating_add(10);
                         }

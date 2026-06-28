@@ -139,6 +139,10 @@ pub struct PersistedState {
     /// stacked single view (false). Toggled with `v`. Default flat (stacked).
     #[serde(default)]
     pub repo_page_maximized_tabbed: bool,
+    /// Repo-page sections collapsed in the flat (stacked) view — by section name
+    /// ("Branches"/"Worktrees"/"Stashes"/"Commits").
+    #[serde(default)]
+    pub repo_page_collapsed_sections: Vec<String>,
     /// Restored repo-panel height as a fraction of the main area (0 = use the default).
     #[serde(default)]
     pub dock_ratio: f64,

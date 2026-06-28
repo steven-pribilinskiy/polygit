@@ -333,6 +333,11 @@ impl AppState {
             // Only the repo page's maximize is sticky; other panes' maximize is session-only.
             repo_page_maximized: self.maximized == Some(Pane::RepoPage),
             repo_page_maximized_tabbed: self.repo_page_maximized_tabbed,
+            repo_page_collapsed_sections: {
+                let mut sections: Vec<String> = self.repo_page_collapsed_sections.iter().cloned().collect();
+                sections.sort();
+                sections
+            },
             branch_check: self.branch_check,
             repo_page_columns: self.repo_page_columns,
             repo_page_info: self.repo_page_info,
