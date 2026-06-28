@@ -2430,6 +2430,96 @@ pub(crate) fn render_kebab(frame: &mut Frame, app: &mut AppState, area: Rect) {
     }
 }
 
+/// The branch-checkout picker (kebab → "Checkout branch…"): a top filter line then the filtered
+/// local+remote branch list. `Enter` checks out the highlighted branch (with a dirty confirmation).
+pub(crate) fn render_branch_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let Some(picker) = app.branch_picker.clone() else {
+        return;
+    };
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = 56u16.min(area.width.saturating_sub(2)).max(32) + pad;
+    let height = (18u16 + pad).min(area.height.saturating_sub(2).max(8));
+    let modal = centered_rect(width, height, area);
+    let (close_line, close_click) = modal_close_button(modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" checkout branch ")
+        .title_top(close_line);
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.branch_picker_area = modal;
+    app.branch_picker_close_click = close_click;
+    app.branch_picker_click.clear();
+
+    let filtered = picker.filtered();
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut lines: Vec<Line> = Vec::new();
+    // Filter line (type to filter; live result count).
+    lines.push(Line::from(vec![
+        Span::styled("  / ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            if picker.filter.is_empty() { "filter…".to_string() } else { picker.filter.clone() },
+            if picker.filter.is_empty() { dim } else { Style::default().fg(Color::Gray) },
+        ),
+        Span::styled("▏", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            if picker.loading {
+                "   (fetching…)".to_string()
+            } else {
+                format!("   ({} branch{})", filtered.len(), if filtered.len() == 1 { "" } else { "es" })
+            },
+            dim,
+        ),
+    ]));
+
+    // The list scrolls to keep the highlighted branch visible; reserve top filter + bottom hint rows.
+    let list_height = inner.height.saturating_sub(3) as usize;
+    let selected = picker.selected.min(filtered.len().saturating_sub(1));
+    let view_start = if selected >= list_height && list_height > 0 { selected - list_height + 1 } else { 0 };
+    let view_end = (view_start + list_height).min(filtered.len());
+    for (index, name) in filtered.iter().enumerate().take(view_end).skip(view_start) {
+        let row_y = inner.y + lines.len() as u16;
+        if row_y < inner.y + inner.height {
+            app.branch_picker_click.push((row_y, index));
+        }
+        let cursor = if index == selected { "> " } else { "  " };
+        let style = if index == selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        lines.push(Line::from(Span::styled(format!("  {cursor}{}", truncate_str(name, 46)), style)));
+    }
+    if filtered.is_empty() && !picker.loading {
+        lines.push(Line::from(Span::styled("  (no matching branches)", dim)));
+    }
+    lines.push(Line::from(String::new()));
+    let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let footer_hint = Style::default().fg(Color::DarkGray);
+    let footer_row = inner.y + (inner.height.saturating_sub(1));
+    let footer = build_hint_footer(
+        vec![
+            ("  ".to_string(), footer_hint, None),
+            ("↑↓".to_string(), footer_key, None),
+            (" move · ".to_string(), footer_hint, None),
+            ("enter".to_string(), footer_key, Some(HintKey::Enter)),
+            (" checkout · ".to_string(), footer_hint, Some(HintKey::Enter)),
+            ("esc".to_string(), footer_key, Some(HintKey::Esc)),
+            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
+        ],
+        inner.x,
+        footer_row,
+        &mut app.hint_click,
+    );
+    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(footer), Rect { y: footer_row, height: 1, ..inner });
+}
+
 /// The base-branch picker modal: row 0 is "auto-detect" (clears any override), then every
 /// candidate branch. The current override is checked; the detected fork parent is tagged. Scrolls
 /// to keep the highlighted row in view when there are more candidates than fit.

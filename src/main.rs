@@ -45,7 +45,7 @@ use app::{
     RepoStatus, RightView, SharedRepoState,
 };
 use worker::{
-    run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal,
+    run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal, run_load_branches,
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
@@ -161,6 +161,9 @@ fn spawn_confirm_action(app_state: &Arc<Mutex<AppState>>, action: ConfirmAction)
         }
         ConfirmAction::DiscardChanges { repo_idx, path } => {
             tokio::spawn(run_discard_changes(app_state, repo_idx, path));
+        }
+        ConfirmAction::CheckoutBranch { repo_idx, branch } => {
+            tokio::spawn(run_checkout(app_state, repo_idx, branch, true));
         }
         ConfirmAction::ResetSettings => {
             let mut app = app_state.lock().unwrap();
@@ -493,24 +496,26 @@ fn kebab_activate(
     retry_queue: &mut Vec<usize>,
     pending_claude: &mut Option<std::path::PathBuf>,
     pending_lazygit: &mut Option<std::path::PathBuf>,
-) {
-    let Some(menu) = app.kebab.as_ref() else {
-        return;
-    };
+) -> Option<usize> {
+    let menu = app.kebab.as_ref()?;
     let idx = menu.repo_idx;
-    let Some(item) = menu.items.get(menu.selected) else {
-        return;
-    };
+    let item = menu.items.get(menu.selected)?;
     if !item.enabled {
-        return;
+        return None;
     }
     match item.action {
+        app::KebabAction::Checkout => {
+            app.close_kebab();
+            app.open_branch_picker(idx);
+            return Some(idx); // caller spawns the async branch load
+        }
         app::KebabAction::ToggleSessionPrefix => {
             app.kebab_session_prefix = !app.kebab_session_prefix;
             app.save_state();
             app.open_kebab(idx); // rebuild so the checkbox label updates
             if let Some(menu) = app.kebab.as_mut() {
-                menu.selected = 1; // keep the highlight on the checkbox row
+                // Keep the highlight on the checkbox row (Checkout=0, Copy=1, checkbox=2).
+                menu.selected = 2;
             }
         }
         app::KebabAction::CopyCleanupPrompt => {
@@ -545,6 +550,7 @@ fn kebab_activate(
             }
         }
     }
+    None
 }
 
 fn dispatch_command(
@@ -2056,6 +2062,51 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Branch picker: click a branch to check it out (with the dirty confirmation), [x]
+                // or outside to close.
+                if app.branch_picker.is_some() {
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        let row_idx = app
+                            .branch_picker_click
+                            .iter()
+                            .find(|(row, _)| *row == mouse.row)
+                            .map(|(_, idx)| *idx);
+                        if region_hit(app.branch_picker_close_click, mouse.column, mouse.row)
+                            || !point_in(app.branch_picker_area, mouse.column, mouse.row)
+                        {
+                            app.close_branch_picker();
+                        } else if let Some(idx) = row_idx {
+                            let chosen = app.branch_picker.as_ref().and_then(|picker| {
+                                picker.filtered().get(idx).map(|name| (picker.repo_idx, name.to_string()))
+                            });
+                            if let Some((repo_idx, branch)) = chosen {
+                                let dirty = app.repos[repo_idx]
+                                    .lock()
+                                    .unwrap()
+                                    .details
+                                    .as_ref()
+                                    .map(|info| info.dirty_count)
+                                    .unwrap_or(0);
+                                app.close_branch_picker();
+                                if dirty > 0 {
+                                    app.confirm = Some(app::ConfirmDialog::simple(
+                                        format!(
+                                            "Working tree has {dirty} uncommitted change(s). Switch to '{branch}'? Non-conflicting changes carry over; git refuses if any would be overwritten."
+                                        ),
+                                        app::ConfirmAction::CheckoutBranch { repo_idx, branch },
+                                        true,
+                                    ));
+                                } else {
+                                    drop(app);
+                                    tokio::spawn(run_checkout(Arc::clone(&app_state), repo_idx, branch, false));
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // Kebab (⋮) row menu: click an item to run it, the checkbox to toggle it, [x] or
                 // outside to close. Scroll/other events are swallowed while it's open.
                 if app.kebab.is_some() {
@@ -2073,12 +2124,16 @@ async fn run_event_loop(
                             if let Some(menu) = app.kebab.as_mut() {
                                 menu.selected = index;
                             }
-                            kebab_activate(
+                            if let Some(repo_idx) = kebab_activate(
                                 &mut app,
                                 &mut retry_queue,
                                 &mut pending_claude,
                                 &mut pending_lazygit,
-                            );
+                            ) {
+                                drop(app);
+                                tokio::spawn(run_load_branches(Arc::clone(&app_state), repo_idx));
+                                continue;
+                            }
                         }
                     }
                     continue;
@@ -3170,6 +3225,71 @@ async fn run_event_loop(
                 }
 
                 // Copy menu (`y` on the repo page): pick path / branch / both, then copy.
+                // Branch-checkout picker: type to filter, ↑↓ to move, Enter checks out (with a
+                // dirty-tree confirmation), Esc closes. Typed chars edit the filter, so nav is arrows.
+                if app.branch_picker.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    match key.code {
+                        KeyCode::Esc => app.close_branch_picker(),
+                        KeyCode::Down => app.branch_picker_move(1),
+                        KeyCode::Up => app.branch_picker_move(-1),
+                        KeyCode::Backspace => {
+                            if let Some(picker) = app.branch_picker.as_mut() {
+                                picker.filter.pop();
+                                picker.selected = 0;
+                            }
+                        }
+                        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(picker) = app.branch_picker.as_mut() {
+                                picker.filter.push(ch);
+                                picker.selected = 0;
+                            }
+                        }
+                        KeyCode::Enter => {
+                            let chosen = app.branch_picker.as_ref().and_then(|picker| {
+                                let filtered = picker.filtered();
+                                let idx = picker.selected.min(filtered.len().saturating_sub(1));
+                                filtered.get(idx).map(|name| (picker.repo_idx, name.to_string()))
+                            });
+                            if let Some((repo_idx, branch)) = chosen {
+                                let dirty = app.repos[repo_idx]
+                                    .lock()
+                                    .unwrap()
+                                    .details
+                                    .as_ref()
+                                    .map(|info| info.dirty_count)
+                                    .unwrap_or(0);
+                                app.close_branch_picker();
+                                if dirty > 0 {
+                                    app.confirm = Some(app::ConfirmDialog::simple(
+                                        format!(
+                                            "Working tree has {dirty} uncommitted change(s). Switch to '{branch}'? Non-conflicting changes carry over; git refuses if any would be overwritten."
+                                        ),
+                                        app::ConfirmAction::CheckoutBranch { repo_idx, branch },
+                                        true,
+                                    ));
+                                } else {
+                                    drop(app);
+                                    tokio::spawn(run_checkout(
+                                        Arc::clone(&app_state),
+                                        repo_idx,
+                                        branch,
+                                        false,
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if app.kebab.is_some() {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -3182,12 +3302,16 @@ async fn run_event_loop(
                         KeyCode::Char('j') | KeyCode::Down => app.kebab_move(1),
                         KeyCode::Char('k') | KeyCode::Up => app.kebab_move(-1),
                         KeyCode::Char(' ') | KeyCode::Enter => {
-                            kebab_activate(
+                            if let Some(repo_idx) = kebab_activate(
                                 &mut app,
                                 &mut retry_queue,
                                 &mut pending_claude,
                                 &mut pending_lazygit,
-                            );
+                            ) {
+                                drop(app);
+                                tokio::spawn(run_load_branches(Arc::clone(&app_state), repo_idx));
+                                continue;
+                            }
                         }
                         _ => {}
                     }
@@ -3644,7 +3768,7 @@ async fn run_event_loop(
                                 if row.kind == PageRowKind::Branch && !row.is_head {
                                     let app_state_clone = Arc::clone(&app_state);
                                     drop(app);
-                                    tokio::spawn(run_checkout(app_state_clone, idx, row.branch));
+                                    tokio::spawn(run_checkout(app_state_clone, idx, row.branch, false));
                                     continue;
                                 }
                             }

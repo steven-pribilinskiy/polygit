@@ -404,6 +404,18 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         {
             button_hits.push(row_rect(row, start, end));
         }
+    } else if app.branch_picker.is_some() {
+        if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.branch_picker_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if app.branch_picker_click.iter().any(|&(row, _)| row == hrow) {
+            hits.push(inner_row(app.branch_picker_area));
+        }
     } else if app.show_build_info {
         if let Some((row, start, end)) =
             app.build_info_close_click.filter(|&(r, s, e)| contains(r, s, e))
@@ -867,6 +879,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.base_picker.is_some() {
             render_base_picker(frame, app, area);
         }
+        if app.branch_picker.is_some() {
+            render_branch_picker(frame, app, area);
+        }
         // Help overlays the page / diff modal, showing that view's contextual hotkeys.
         if app.show_help {
             render_help(frame, app, area);
@@ -1035,6 +1050,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.base_picker.is_some() {
         render_base_picker(frame, app, area);
+    }
+    if app.branch_picker.is_some() {
+        render_branch_picker(frame, app, area);
     }
     // Confirmation dialog overlays all — rendered after the modal it may sit over (settings reset,
     // the pin-version picker) so it's always on top.

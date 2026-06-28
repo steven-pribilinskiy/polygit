@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.96.0 — 2026-06-28
+Kebab menu: "Checkout branch…" with a filterable branch picker
+- the kebab (`⋮`) menu's top item is now **Checkout branch…**, opening a picker of local + remote
+  branches (after a best-effort `git fetch`), with a **live substring filter** (type to narrow),
+  `↑↓` to move, `Enter`/click to check out.
+- a **clean** working tree switches immediately; a **dirty** one pops a confirmation describing the
+  uncommitted-change count + the risk (non-conflicting changes carry over; git refuses overwrites).
+
 ## v2.95.0 — 2026-06-28
 Kebab (`⋮`) row menu with a state-aware cleanup prompt
 - press **`.`** (or right-click a repo) to open a per-repo kebab menu of state-aware actions.

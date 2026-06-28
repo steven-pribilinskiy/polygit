@@ -204,6 +204,7 @@ impl AppState {
             || self.copy_menu.is_some()
             || self.kebab.is_some()
             || self.base_picker.is_some()
+            || self.branch_picker.is_some()
             || self.show_changelog
     }
 
@@ -221,6 +222,7 @@ impl AppState {
         self.copy_menu = None;
         self.kebab = None;
         self.base_picker = None;
+        self.branch_picker = None;
         self.dropdown = None;
         self.finder = None;
         self.picker = None;
@@ -1363,6 +1365,12 @@ impl AppState {
         let checkbox = if self.kebab_session_prefix { "[x]" } else { "[ ]" };
         vec![
             KebabItem {
+                label: "Checkout branch…".to_string(),
+                action: KebabAction::Checkout,
+                enabled: true,
+                hint: None,
+            },
+            KebabItem {
                 label: "Copy cleanup prompt".to_string(),
                 action: KebabAction::CopyCleanupPrompt,
                 enabled: true,
@@ -1434,6 +1442,30 @@ impl AppState {
                 return;
             }
         }
+    }
+
+    /// Open the branch-checkout picker for `repo_idx` (empty + loading; the worker fills branches).
+    pub fn open_branch_picker(&mut self, repo_idx: usize) {
+        self.branch_picker =
+            Some(BranchPicker { repo_idx, branches: Vec::new(), filter: String::new(), selected: 0, loading: true });
+    }
+
+    pub fn close_branch_picker(&mut self) {
+        self.branch_picker = None;
+    }
+
+    /// Move the branch-picker highlight by `delta`, clamped to the filtered list.
+    pub fn branch_picker_move(&mut self, delta: isize) {
+        let Some(picker) = self.branch_picker.as_mut() else {
+            return;
+        };
+        let len = picker.filtered().len();
+        if len == 0 {
+            picker.selected = 0;
+            return;
+        }
+        let last = (len - 1) as isize;
+        picker.selected = (picker.selected as isize + delta).clamp(0, last) as usize;
     }
 
     pub fn open_diff_modal(&mut self, source: DiffSource) {
