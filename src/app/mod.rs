@@ -281,6 +281,12 @@ pub struct AppState {
     /// The PR modal's outer rect (outside-click closes) + its `[x]` close button region.
     pub pr_modal_area: Rect,
     pub pr_modal_close_click: Option<(u16, u16, u16)>,
+    /// PR-modal collapsible section headers: `(row, col_start, col_end, section_idx)`.
+    pub pr_section_click: Vec<(u16, u16, u16, usize)>,
+    /// PR-modal `[collapse all] / [expand all]` control region (shown with >1 comment).
+    pub pr_collapse_all_click: Option<(u16, u16, u16)>,
+    /// PR-modal search box region (click to focus, then type to filter).
+    pub pr_search_click: Option<(u16, u16, u16)>,
     /// The directories/roots being scanned (each may itself be a single repo). Drives the per-root
     /// tree forest; worktree re-discovery derives parents from the repos.
     pub root_dirs: Vec<PathBuf>,
@@ -609,16 +615,54 @@ pub struct AppState {
 }
 
 /// The PR viewer modal's state: which repo+PR it shows, the data (None while loading), the remote
-/// URL (for "open in browser"), and the scroll offset. Rendered at a fixed ~90% size like the diff
-/// modal; the markdown is re-wrapped to the width each frame.
+/// URL (for "open in browser"), the scroll offset, which sections are collapsed, and the live search
+/// query. Rendered at a fixed ~90% size like the diff modal; content re-wraps to the width per frame.
 pub struct PrModalState {
     pub repo_idx: usize,
     pub number: u32,
     pub url: String,
     pub title: String,
-    /// The assembled markdown document, or `None` while the `gh pr view` fetch is in flight.
-    pub markdown: Option<String>,
+    /// The structured PR data, or `None` while the `gh pr view` fetch is in flight.
+    pub view: Option<crate::app::PrView>,
     pub scroll: usize,
+    /// Collapsed section indices: 0 = Description, 1.. = `view.comments[idx-1]`.
+    pub collapsed: std::collections::HashSet<usize>,
+    /// Live search query (filters + highlights sections); empty = no filter.
+    pub search: String,
+    /// Whether the search box has focus (typing edits the query).
+    pub search_focused: bool,
+}
+
+impl PrModalState {
+    /// Total collapsible sections: Description (always) + one per comment/review.
+    pub fn section_count(&self) -> usize {
+        1 + self.view.as_ref().map_or(0, |view| view.comments.len())
+    }
+
+    /// Whether section `idx` is currently collapsed.
+    pub fn is_collapsed(&self, idx: usize) -> bool {
+        self.collapsed.contains(&idx)
+    }
+
+    /// Toggle one section's collapsed state.
+    pub fn toggle_section(&mut self, idx: usize) {
+        if !self.collapsed.remove(&idx) {
+            self.collapsed.insert(idx);
+        }
+    }
+
+    /// True when every section is collapsed (drives the expand/collapse-all label).
+    pub fn all_collapsed(&self) -> bool {
+        (0..self.section_count()).all(|idx| self.collapsed.contains(&idx))
+    }
+
+    /// Collapse or expand every section at once.
+    pub fn set_all_collapsed(&mut self, collapse: bool) {
+        self.collapsed.clear();
+        if collapse {
+            self.collapsed.extend(0..self.section_count());
+        }
+    }
 }
 
 impl AppState {
@@ -774,6 +818,9 @@ impl AppState {
             pr_modal: None,
             pr_modal_area: Rect::default(),
             pr_modal_close_click: None,
+            pr_section_click: Vec::new(),
+            pr_collapse_all_click: None,
+            pr_search_click: None,
             root_dirs: Vec::new(),
             workspaces,
             active_workspace: None,

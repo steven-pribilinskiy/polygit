@@ -3,6 +3,19 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.89.0 — 2026-06-28
+PR viewer modal — structured, collapsible, searchable; loading skeleton
+- the description and every review/comment are now **collapsible sections** (click the `▾`/`▸`
+  header or any header to fold). With more than one comment a **`[− collapse all]` / `[+ expand
+  all]`** control appears (also `z`).
+- **`/` searches** across the description and all comments — filters to matching sections, shows a
+  live match count, and highlights hits.
+- a **loading skeleton** (spinner + shimmer bars) shows while `gh pr view` is in flight.
+- the title/number now live only in the modal's title bar — no longer duplicated in the body, which
+  starts with a clean meta header (state · `head → base` · @author · date · `+adds −dels` · labels).
+- **raw HTML tags are stripped** (`<details>`/`<summary>`/… in bot comments) so bodies read cleanly.
+- fixed: hovering inside the PR modal no longer highlights panes behind it.
+
 ## v2.88.0 — 2026-06-28
 PR viewer modal — read a pull request in full without leaving the terminal
 - click the **Pull Request** link (info panel), the repo page's HEAD-branch PR, or a list **PRs**

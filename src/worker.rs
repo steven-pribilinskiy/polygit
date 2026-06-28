@@ -575,16 +575,20 @@ pub async fn run_pr_view(app_state: Arc<Mutex<AppState>>) {
         }
         match view {
             Some(view) => {
-                modal.title = view.title;
-                modal.url = view.url;
-                modal.markdown = Some(view.markdown);
+                modal.title = view.title.clone();
+                modal.url = view.url.clone();
+                modal.view = Some(view);
             }
             None => {
-                modal.markdown = Some(
-                    "# Couldn't load this PR\n\n`gh pr view` failed — check that `gh` is installed \
-                     and authenticated and that this is a GitHub repo."
+                // Surface the failure as a description-only view so the modal still renders.
+                modal.view = Some(crate::app::PrView {
+                    title: modal.title.clone(),
+                    url: modal.url.clone(),
+                    description: "**Couldn't load this PR.** `gh pr view` failed — check that `gh` \
+                                  is installed and authenticated and that this is a GitHub repo."
                         .to_string(),
-                );
+                    ..Default::default()
+                });
             }
         }
     }

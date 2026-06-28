@@ -2035,7 +2035,28 @@ async fn run_event_loop(
                 if app.pr_modal.is_some() && !app.show_help {
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if region_hit(app.pr_modal_close_click, mouse.column, mouse.row)
+                            // A collapsible section header toggles that section.
+                            if let Some(idx) = app
+                                .pr_section_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(_, _, _, idx)| idx)
+                            {
+                                if let Some(modal) = app.pr_modal.as_mut() {
+                                    modal.toggle_section(idx);
+                                }
+                            } else if region_hit(app.pr_collapse_all_click, mouse.column, mouse.row) {
+                                if let Some(modal) = app.pr_modal.as_mut() {
+                                    let collapse = !modal.all_collapsed();
+                                    modal.set_all_collapsed(collapse);
+                                }
+                            } else if region_hit(app.pr_search_click, mouse.column, mouse.row) {
+                                if let Some(modal) = app.pr_modal.as_mut() {
+                                    modal.search_focused = true;
+                                }
+                            } else if region_hit(app.pr_modal_close_click, mouse.column, mouse.row)
                                 || !point_in(app.pr_modal_area, mouse.column, mouse.row)
                             {
                                 app.pr_modal = None;
@@ -3167,14 +3188,36 @@ async fn run_event_loop(
 
                 // Diff modal: scroll, toggle the dirty-diff mode, or close. Skipped while help is
                 // open so the help overlay (gated below) handles keys instead.
-                // PR viewer modal: scroll with j/k/g/G/PgUp/PgDn, `o` opens it in the browser,
-                // esc/q closes. Captured before the other views so it owns input while open.
+                // PR viewer modal: scroll with j/k/g/G/PgUp/PgDn, `/` searches, `o` opens it in the
+                // browser, esc/q closes. Captured before the other views so it owns input while open.
                 if app.pr_modal.is_some() && !app.show_help {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
                         drop(app);
                         return Ok(130);
+                    }
+                    // While the search box is focused, keystrokes edit the query (not scroll/toggle).
+                    let search_focused =
+                        app.pr_modal.as_ref().is_some_and(|modal| modal.search_focused);
+                    if search_focused {
+                        if let Some(modal) = app.pr_modal.as_mut() {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    modal.search.clear();
+                                    modal.search_focused = false;
+                                }
+                                KeyCode::Enter => modal.search_focused = false,
+                                KeyCode::Backspace => {
+                                    modal.search.pop();
+                                }
+                                KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                    modal.search.push(ch);
+                                }
+                                _ => {}
+                            }
+                        }
+                        continue;
                     }
                     let scroll_by = |app: &mut AppState, set: Option<usize>, delta: isize| {
                         if let Some(modal) = app.pr_modal.as_mut() {
@@ -3187,11 +3230,23 @@ async fn run_event_loop(
                     };
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.pr_modal = None,
+                        KeyCode::Char('/') => {
+                            if let Some(modal) = app.pr_modal.as_mut() {
+                                modal.search_focused = true;
+                            }
+                        }
                         KeyCode::Char('o') => {
                             if let Some(url) = app.pr_modal.as_ref().map(|modal| modal.url.clone()) {
                                 drop(app);
                                 open_url(&url);
                                 continue;
+                            }
+                        }
+                        // `z` toggles collapse-all (mnemonic shared with the repo-page fold chord).
+                        KeyCode::Char('z') => {
+                            if let Some(modal) = app.pr_modal.as_mut() {
+                                let collapse = !modal.all_collapsed();
+                                modal.set_all_collapsed(collapse);
                             }
                         }
                         KeyCode::Char('j') | KeyCode::Down => scroll_by(&mut app, None, 1),

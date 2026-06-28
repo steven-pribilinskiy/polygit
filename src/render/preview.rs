@@ -340,6 +340,34 @@ fn parse_inline_md(text: &str, base: Style) -> Vec<(String, Style)> {
 /// Render a full markdown document into wrapped, styled `Line`s for the PR viewer modal. Block-level
 /// handling for headings, `---` rules, fenced code, blockquotes, and bullet lists; inline markdown
 /// (bold / code / links) goes through [`wrap_markdown`]. Width is the inner content width.
+/// Remove HTML tags from a line — `<details>`, `<summary>`, `<div>`, `<img …>`, etc. Only sequences
+/// that look like a tag (`<` then `/` or an ASCII letter … `>`) are dropped, so a stray `a < b`
+/// comparison or an unmatched `<` survives. Inner text between tags is kept.
+pub(crate) fn strip_html_tags(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let chars: Vec<char> = line.chars().collect();
+    let mut idx = 0;
+    while idx < chars.len() {
+        if chars[idx] == '<'
+            && chars.get(idx + 1).is_some_and(|next| next.is_ascii_alphabetic() || *next == '/')
+        {
+            // Skip past the closing '>'. If the tag is unterminated (no '>'), it isn't really a
+            // tag — keep the '<' literally and move on.
+            match chars[idx + 1..].iter().position(|&ch| ch == '>') {
+                Some(offset) => idx = idx + 1 + offset + 1,
+                None => {
+                    out.push(chars[idx]);
+                    idx += 1;
+                }
+            }
+        } else {
+            out.push(chars[idx]);
+            idx += 1;
+        }
+    }
+    out.trim_end().to_string()
+}
+
 pub(crate) fn markdown_to_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     let base = Style::default().fg(Color::Gray);
     let heading = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
@@ -354,6 +382,13 @@ pub(crate) fn markdown_to_lines(text: &str, width: usize) -> Vec<Line<'static>> 
         }
         if in_code {
             lines.push(Line::from(Span::styled(format!("    {raw}"), dim)));
+            continue;
+        }
+        // Strip raw HTML tags (PR bodies often wrap collapsibles in `<details><summary>…`); a line
+        // that was nothing but tags collapses to empty and is skipped to avoid a blank gap.
+        let stripped = strip_html_tags(trimmed);
+        let trimmed = stripped.as_str();
+        if trimmed.is_empty() && !raw.trim().is_empty() {
             continue;
         }
         if trimmed == "---" {
@@ -1377,6 +1412,18 @@ mod tests {
 
     fn plain(lines: &[Vec<(String, Style)>]) -> Vec<String> {
         lines.iter().map(|segs| segs.iter().map(|(text, _)| text.clone()).collect()).collect()
+    }
+
+    #[test]
+    fn strip_html_tags_drops_tags_keeps_text_and_comparisons() {
+        assert_eq!(strip_html_tags("<details><summary>About</summary>"), "About");
+        assert_eq!(strip_html_tags("text <div> inside </div> end"), "text  inside  end");
+        assert_eq!(strip_html_tags("<img src=\"x.png\" alt=\"y\">caption"), "caption");
+        // A non-tag `<` (comparison / unterminated) is preserved verbatim.
+        assert_eq!(strip_html_tags("if a < b then"), "if a < b then");
+        assert_eq!(strip_html_tags("only <tag text no close"), "only <tag text no close");
+        // A line that is nothing but tags collapses to empty.
+        assert_eq!(strip_html_tags("<br/>"), "");
     }
 
     #[test]

@@ -135,13 +135,39 @@ pub struct PrInfo {
     pub state: PrState,
 }
 
-/// The full data for the PR viewer modal: the title, the remote URL (for "open in browser"), and a
-/// single assembled markdown document (metadata header + description + every review and comment).
+/// One collapsible block in the PR viewer below the meta header: the description, or a single
+/// review / comment. `body` is raw markdown; `kind` colors the byline (review state or "commented").
+#[derive(Debug, Clone)]
+pub struct PrSection {
+    /// Byline author login (empty for the Description block).
+    pub author: String,
+    /// What this block is: "description" · "approved" · "changes_requested" · "commented" · "review".
+    pub kind: String,
+    /// Day stamp (`YYYY-MM-DD`), empty when unknown.
+    pub day: String,
+    /// Raw markdown body.
+    pub body: String,
+}
+
+/// The full data for the PR viewer modal — structured (not one markdown blob) so the modal can show
+/// a real meta header, render the description + each review/comment as its own collapsible section,
+/// and search across them. The title/number live only in the modal's title bar (not repeated here).
 #[derive(Debug, Clone, Default)]
 pub struct PrView {
     pub title: String,
     pub url: String,
-    pub markdown: String,
+    pub state: String,
+    pub head: String,
+    pub base: String,
+    pub author: String,
+    pub created: String,
+    pub additions: i64,
+    pub deletions: i64,
+    pub labels: Vec<String>,
+    /// The description body (markdown); already "_No description._" when the PR has none.
+    pub description: String,
+    /// Reviews then issue comments, in API order. Each is a collapsible section.
+    pub comments: Vec<PrSection>,
 }
 
 impl PrInfo {

@@ -1243,8 +1243,11 @@ impl AppState {
             number,
             url,
             title,
-            markdown: None,
+            view: None,
             scroll: 0,
+            collapsed: std::collections::HashSet::new(),
+            search: String::new(),
+            search_focused: false,
         });
     }
 
