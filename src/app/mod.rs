@@ -90,6 +90,9 @@ pub struct AppState {
     /// The exact rect the repo rows render into (inner, below the 2-row header) — used for
     /// click→row mapping so it's correct regardless of border/padding/header offsets.
     pub list_rows_area: Rect,
+    /// The pinned list footer's rect (the Result / Errors summary below the scrolling rows) — for
+    /// click→Result/Errors-row mapping. Empty when there's no footer.
+    pub list_footer_area: Rect,
     /// Clickable PR-cell regions in the list (PR column): (row, col_start, col_end, url). Rebuilt
     /// each render; a click opens the PR in the browser.
     pub pr_cell_click: Vec<(u16, u16, u16, usize)>,
@@ -742,6 +745,7 @@ impl AppState {
             main_area: Rect::default(),
             list_area: Rect::default(),
             list_rows_area: Rect::default(),
+            list_footer_area: Rect::default(),
             pr_cell_click: Vec::new(),
             fav_cell_click: Vec::new(),
             header_area: Rect::default(),

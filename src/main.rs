@@ -504,6 +504,10 @@ fn kebab_activate(
         return None;
     }
     match item.action {
+        app::KebabAction::ToggleFavorite => {
+            app.toggle_favorite(idx);
+            app.open_kebab(idx); // rebuild so the ★/☆ label updates
+        }
         app::KebabAction::Checkout => {
             app.close_kebab();
             app.open_branch_picker(idx);
@@ -514,8 +518,8 @@ fn kebab_activate(
             app.save_state();
             app.open_kebab(idx); // rebuild so the checkbox label updates
             if let Some(menu) = app.kebab.as_mut() {
-                // Keep the highlight on the checkbox row (Checkout=0, Copy=1, checkbox=2).
-                menu.selected = 2;
+                // Keep the highlight on the checkbox row (Favorite=0, Checkout=1, Copy=2, checkbox=3).
+                menu.selected = 3;
             }
         }
         app::KebabAction::CopyCleanupPrompt => {
@@ -2693,8 +2697,9 @@ async fn run_event_loop(
                                 && !app.title_button_hit(mouse.column, mouse.row);
                             if on_divider {
                                 dragging_divider = true;
-                            } else if let Some(selection) =
-                                app.list_selection_at(mouse.column, mouse.row)
+                            } else if let Some(selection) = app
+                                .list_selection_at(mouse.column, mouse.row)
+                                .or_else(|| app.list_footer_selection_at(mouse.column, mouse.row))
                             {
                                 app.selected = selection;
                                 app.user_navigated = true;

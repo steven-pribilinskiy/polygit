@@ -728,6 +728,8 @@ impl Default for RepoPageColumns {
 /// (e.g. a stash-cleanup prompt only appears when there are stashes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KebabAction {
+    /// Toggle this repo's favorite (★) flag.
+    ToggleFavorite,
     /// Check out a different branch (opens the filterable branch picker).
     Checkout,
     /// Copy a state-aware cleanup prompt (all repo facts embedded) for an AI agent.
@@ -916,6 +918,7 @@ pub enum SortColumn {
     PulledCommits,
     PulledFiles,
     PullRequest,
+    Favorite,
 }
 
 impl SortColumn {
@@ -934,6 +937,7 @@ impl SortColumn {
             SortColumn::PulledFiles => "changed",
             SortColumn::Stashes => "stashes",
             SortColumn::PullRequest => "pull-request",
+            SortColumn::Favorite => "favorite",
         }
     }
 }
@@ -1011,6 +1015,9 @@ pub enum StatusFilter {
     Failed,
     /// Failed or skipped — the repos that need attention.
     Issues,
+    /// Favorited repos only (a repo-level filter, not a status — `matches` ignores status for it;
+    /// the favorite check is applied where the filter has repo context).
+    Favorites,
 }
 
 impl StatusFilter {
@@ -1023,6 +1030,9 @@ impl StatusFilter {
             StatusFilter::Skipped => matches!(status, RepoStatus::Skipped),
             StatusFilter::Failed => matches!(status, RepoStatus::Failed),
             StatusFilter::Issues => status.is_retryable(),
+            // Favorites is a repo-level filter applied with repo context (see `repo_passes_filter`);
+            // by status alone it excludes nothing.
+            StatusFilter::Favorites => true,
         }
     }
 
@@ -1035,6 +1045,7 @@ impl StatusFilter {
             StatusFilter::Skipped => Some("skipped"),
             StatusFilter::Failed => Some("failed"),
             StatusFilter::Issues => Some("issues"),
+            StatusFilter::Favorites => Some("favorites"),
         }
     }
 }
