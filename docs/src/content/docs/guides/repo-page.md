@@ -28,8 +28,9 @@ appear when there's something to list.
   fresh ahead/behind vs upstream, an uncommitted-change count, **added / modified / deleted /
   total** change counts vs the base branch, the upstream name, last-commit date, and subject.
 - **`⑂ WORKTREES`** — each linked worktree's branch and path.
-- **`≡ STASHES`** — every stash entry, with its own **added / modified / deleted / total** change
-  counts (from `git stash show`, loaded lazily) shown in the same columns as branches.
+- **`≡ STASHES`** — every stash entry in its **own independent columns** (a stash has no
+  upstream / ahead-behind / base / PR): `stash@{N}` · change stats (`+A ~M -D  Σtotal`, from
+  `git stash show`, loaded lazily) · message.
 - **`◉ COMMITS`** — recent commits: short sha · relative date · author · subject. The **author**
   column grows to the longest name (never truncated) and the **subject** fills the remaining width.
   Commit rows are selectable / hoverable / clickable like the other sections — **`Enter` (or a
@@ -45,9 +46,9 @@ Press `t` (or click the **`t cols ▾`** title-bar trigger) to open the columns 
 pick with the mouse, the `↑↓` arrows + `Enter`, or a row's mnemonic key — `b` ahead/behind, `y` dirty,
 `a` added, `m` modified, `d` deleted, `c` total, `u` upstream, `f` base, `g` age, `r` pr, `s` subject.
 Sorting works the same way via `s` (or the **`s sort ▾`** trigger), or by clicking a column header.
-The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (Branches, Worktrees,
-Stashes); they're **hidden on the Commits tab**, which has its own fixed sha·date·author·subject
-layout. When **maximized**, the page is a single stacked view of every section, so the triggers stay.
+The `t cols ▾` / `s sort ▾` triggers apply to the branch-column layout (Branches, Worktrees);
+they're **hidden on the Commits and Stashes tabs**, which have their own fixed independent layouts.
+When **maximized** (flat), the page stacks every section, so the triggers stay.
 The **pr** column shows the current branch's pull request — open, merged, or closed (a clickable
 `#N`, via `gh`) on the HEAD row, blank on the others. The added/modified/deleted counts are each branch's changes vs the merge-base with the
 repo's default branch, computed in the background (cells show `…` until ready). A column every

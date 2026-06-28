@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.86.1 — 2026-06-28
+Stashes get their own independent columns (no PR / branch columns)
+- the Stashes section/tab rendered through the branch column system, so it showed columns a stash can't have — upstream (`no-up`), ahead/behind, base, and **pr**. Stashes now have their **own independent layout** like commits: `stash@{N}` · change stats (`+A ~M -D  Σtotal`) · message. The `t cols ▾` / `s sort ▾` triggers are hidden on the Stashes tab too (they only apply to the branch-column Branches/Worktrees views).
+
 ## v2.86.0 — 2026-06-28
 Repo page: collapsible accordion sections in the flat view
 - in the flat (stacked) repo page, each section header (Branches / Worktrees / Stashes / Commits) is now a **collapsible accordion** — a `▾`/`▸` chevron shows its state. **Click the header (or press `z`) to collapse/expand** the selected row's section, and **`Z`** expands/collapses them all (the keyboard way back once a collapsed section's rows are hidden). The collapsed set persists; headers hover-highlight, and a collapsed section keeps its header so it's easy to re-open.
