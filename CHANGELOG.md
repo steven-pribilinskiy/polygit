@@ -3,6 +3,10 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.83.1 — 2026-06-28
+Proper Commits section/tab icon
+- the repo page's **Commits** section + tab had a stray `▴` glyph that didn't match the other sections. It now uses a real icon-set glyph — `◉` (Unicode) / `📜` (emoji) — consistent with branches / worktrees / stashes.
+
 ## v2.83.0 — 2026-06-28
 Repo page: fix the maximized view, the commit columns, and tab-aware cols/sort
 - **the maximized repo page was broken** — it showed only the active tab's rows (e.g. just Branches) instead of every section stacked. The active-tab row filter now applies only in tabbed mode, and the **Commits section renders stacked under its own header** in the maximized single view too.

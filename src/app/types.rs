@@ -1507,6 +1507,8 @@ pub struct IconSet {
     pub branches: &'static str,
     pub worktrees: &'static str,
     pub stashes: &'static str,
+    /// The repo page's Commits section/tab.
+    pub commits: &'static str,
     /// Commits the last pull landed (pulled-commits column).
     pub pulled: &'static str,
     /// Files the last pull changed (changed-files column).
@@ -1545,6 +1547,7 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     // Distinct from `branches` (inverted fork) — same OCR block so it renders at the same width.
     worktrees: "⑃",
     stashes: "≡",
+    commits: "◉",
     pulled: "⇣",
     changed: "±",
     ahead: "↑",
@@ -1580,6 +1583,7 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     branches: "🌿",
     worktrees: "🌳",
     stashes: "📦",
+    commits: "📜",
     pulled: "📥",
     changed: "📄",
     // Keep the compact 1-cell arrows for the tight ahead/behind numeric column — emoji arrows
