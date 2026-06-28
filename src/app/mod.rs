@@ -402,6 +402,8 @@ pub struct AppState {
     pub page_sort_click: Option<(u16, u16, u16)>,
     /// Which repo-page branch columns are shown (persisted).
     pub repo_page_columns: RepoPageColumns,
+    /// Which optional Stashes-tab columns are shown — age / stats (persisted).
+    pub repo_page_stash_columns: RepoPageStashColumns,
     /// Repo-page branch-table sort column; `None` = natural order (HEAD first). Session-only.
     pub repo_page_sort: Option<RepoPageSort>,
     /// Direction for `repo_page_sort`.
@@ -880,6 +882,7 @@ impl AppState {
             page_cols_click: None,
             page_sort_click: None,
             repo_page_columns: persisted.repo_page_columns,
+            repo_page_stash_columns: persisted.repo_page_stash_columns,
             repo_page_sort: None,
             repo_page_sort_dir: SortDir::Asc,
             repo_page_sort_click: Vec::new(),

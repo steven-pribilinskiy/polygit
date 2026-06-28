@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{
     Background, BranchCheck, ButtonHoverStyle, ChangedRowEffect, ClaudeAgent, ColumnFlags, Contrast,
-    DesignLayout, HelpTab, IconStyle, RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout,
+    DesignLayout, HelpTab, IconStyle, RepoPageColumns, RepoPageStashColumns, RepoTabsMode,
+    SelectionStyle, SettingsLayout,
     SortColumn, SortDir, SplitterMode, Theme, TooltipPrefs,
 };
 
@@ -96,6 +97,9 @@ pub struct PersistedState {
     pub collapsed_folders: Vec<String>,
     /// Repo-page branch columns (all on by default).
     pub repo_page_columns: RepoPageColumns,
+    /// Which optional Stashes-tab columns are shown — age / stats (default both on).
+    #[serde(default)]
+    pub repo_page_stash_columns: RepoPageStashColumns,
     /// Repo-page bottom info panel shown (default on).
     #[serde(default = "default_true")]
     pub repo_page_info: bool,

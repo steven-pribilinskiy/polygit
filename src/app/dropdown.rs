@@ -55,6 +55,12 @@ const PAGE_COLS: &[(RepoPageColumn, &str, char)] = &[
     (RepoPageColumn::Subject, "subject", 's'),
 ];
 
+/// The toggleable Stashes-tab columns, in dropdown order: `(column, label, mnemonic)`.
+const STASH_COLS: &[(RepoPageStashColumn, &str, char)] = &[
+    (RepoPageStashColumn::Age, "age", 'a'),
+    (RepoPageStashColumn::Stats, "stats", 's'),
+];
+
 /// The sortable repo-page columns, in dropdown order: `(sort, label, mnemonic)`.
 const PAGE_SORTS: &[(RepoPageSort, &str, char)] = &[
     (RepoPageSort::Name, "name", 'n'),
@@ -131,6 +137,31 @@ impl AppState {
                     enabled: true,
                 })
                 .collect(),
+            DropdownKind::StashColumns => STASH_COLS
+                .iter()
+                .map(|&(column, label, mnemonic)| DropdownItem {
+                    label: label.to_string(),
+                    on: self.repo_page_stash_column_on(column),
+                    mnemonic,
+                    enabled: true,
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether a Stashes-tab column is currently shown.
+    fn repo_page_stash_column_on(&self, column: RepoPageStashColumn) -> bool {
+        match column {
+            RepoPageStashColumn::Age => self.repo_page_stash_columns.age,
+            RepoPageStashColumn::Stats => self.repo_page_stash_columns.stats,
+        }
+    }
+
+    /// Toggle a Stashes-tab column on/off.
+    pub fn toggle_repo_page_stash_column(&mut self, column: RepoPageStashColumn) {
+        match column {
+            RepoPageStashColumn::Age => self.repo_page_stash_columns.age = !self.repo_page_stash_columns.age,
+            RepoPageStashColumn::Stats => self.repo_page_stash_columns.stats = !self.repo_page_stash_columns.stats,
         }
     }
 
@@ -178,6 +209,7 @@ impl AppState {
             DropdownKind::ListFilter => LIST_FILTERS.len(),
             DropdownKind::PageColumns => PAGE_COLS.len(),
             DropdownKind::PageSort => PAGE_SORTS.len(),
+            DropdownKind::StashColumns => STASH_COLS.len(),
         })
     }
 
@@ -250,6 +282,13 @@ impl AppState {
                     self.set_repo_page_sort(*sort);
                 }
                 true
+            }
+            DropdownKind::StashColumns => {
+                if let Some((column, ..)) = STASH_COLS.get(index) {
+                    self.toggle_repo_page_stash_column(*column);
+                    self.save_state();
+                }
+                false
             }
         }
     }

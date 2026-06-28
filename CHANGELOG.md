@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.93.0 — 2026-06-28
+Stashes tab gets its own column selector
+- the **Stashes** tab now has a **`t cols ▾`** dropdown to toggle its **age** and **stats** columns
+  (the `stash@{N}` ref and message always show); hiding one gives the message its width. Persisted.
+
 ## v2.92.0 — 2026-06-28
 Settings: changed-row effect is one radio; dropped the "Repo page" row
 - **Changed-row flash** + **Changed-row highlight** (two booleans that looked identical and could

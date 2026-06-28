@@ -720,6 +720,28 @@ impl Default for RepoPageColumns {
     }
 }
 
+/// A toggleable column on the repo page's **Stashes** tab. A stash has its own independent columns
+/// (no upstream / ahead-behind / base / PR); the ref + message always show, age + stats are optional.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoPageStashColumn {
+    Age,
+    Stats,
+}
+
+/// Which optional Stashes-tab columns are shown (the ref + message are always on). Persisted.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepoPageStashColumns {
+    pub age: bool,
+    pub stats: bool,
+}
+
+impl Default for RepoPageStashColumns {
+    fn default() -> Self {
+        Self { age: true, stats: true }
+    }
+}
+
 /// The open base-branch picker: choose which branch a target branch's stats diff against.
 /// The chosen value becomes a persisted per-repo+branch override; the "detected" entry clears it.
 #[derive(Debug, Clone)]
@@ -765,6 +787,7 @@ pub enum DropdownKind {
     ListFilter,
     PageColumns,
     PageSort,
+    StashColumns,
 }
 
 /// One row in an open dropdown: its label, whether it's currently on/active, its mnemonic key, and
