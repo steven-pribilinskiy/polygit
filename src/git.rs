@@ -881,26 +881,11 @@ pub async fn pr_view(dir: &Path, number: u32) -> Option<crate::app::PrView> {
         })
         .unwrap_or_default();
 
-    let mut md = String::new();
-    md.push_str(&format!("# {title}\n\n"));
-    md.push_str(&format!(
-        "**#{}** · {} · `{}` → `{}` · @{} · {}\n",
-        int("number"),
-        string("state").to_lowercase(),
-        string("headRefName"),
-        string("baseRefName"),
-        login(&json),
-        day(&string("createdAt")),
-    ));
-    md.push_str(&format!("`+{} −{}`", int("additions"), int("deletions")));
-    if !labels.is_empty() {
-        md.push_str(&format!("  ·  labels: {}", labels.join(", ")));
-    }
-    md.push_str("\n\n");
     let body = string("body");
-    md.push_str(if body.trim().is_empty() { "_No description._" } else { body.trim() });
-    md.push('\n');
+    let description = if body.trim().is_empty() { "_No description._".to_string() } else { body.trim().to_string() };
 
+    let mut comments: Vec<crate::app::PrSection> = Vec::new();
+    // Reviews first (approved / changes-requested / commented), then issue comments, in API order.
     if let Some(reviews) = json.get("reviews").and_then(|value| value.as_array()) {
         for review in reviews {
             let body = review.get("body").and_then(|value| value.as_str()).unwrap_or("").trim();
@@ -908,29 +893,43 @@ pub async fn pr_view(dir: &Path, number: u32) -> Option<crate::app::PrView> {
             if body.is_empty() && state.is_empty() {
                 continue;
             }
-            md.push_str(&format!(
-                "\n---\n\n### @{} — review: {}\n\n",
-                login(review),
-                state.to_lowercase()
-            ));
-            md.push_str(if body.is_empty() { "_(no comment)_" } else { body });
-            md.push('\n');
+            comments.push(crate::app::PrSection {
+                author: login(review),
+                kind: state.to_lowercase(),
+                day: day(review.get("submittedAt").and_then(|value| value.as_str()).unwrap_or("")),
+                body: if body.is_empty() { "_(no comment)_".to_string() } else { body.to_string() },
+            });
         }
     }
-    if let Some(comments) = json.get("comments").and_then(|value| value.as_array()) {
-        for comment in comments {
+    if let Some(items) = json.get("comments").and_then(|value| value.as_array()) {
+        for comment in items {
             let body = comment.get("body").and_then(|value| value.as_str()).unwrap_or("").trim();
             if body.is_empty() {
                 continue;
             }
-            let when = day(comment.get("createdAt").and_then(|value| value.as_str()).unwrap_or(""));
-            md.push_str(&format!("\n---\n\n### @{} commented · {when}\n\n", login(comment)));
-            md.push_str(body);
-            md.push('\n');
+            comments.push(crate::app::PrSection {
+                author: login(comment),
+                kind: "commented".to_string(),
+                day: day(comment.get("createdAt").and_then(|value| value.as_str()).unwrap_or("")),
+                body: body.to_string(),
+            });
         }
     }
 
-    Some(crate::app::PrView { title, url, markdown: md })
+    Some(crate::app::PrView {
+        title,
+        url,
+        state: string("state").to_lowercase(),
+        head: string("headRefName"),
+        base: string("baseRefName"),
+        author: login(&json),
+        created: day(&string("createdAt")),
+        additions: int("additions"),
+        deletions: int("deletions"),
+        labels,
+        description,
+        comments,
+    })
 }
 
 /// The files a single commit touched, parsed into entries. `--first-parent` so a MERGE commit

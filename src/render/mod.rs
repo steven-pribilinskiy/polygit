@@ -445,6 +445,30 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         }
+    } else if app.pr_modal.is_some() {
+        // PR viewer: only its own controls hover (close, hint chips, scrollbar, the collapsible
+        // section headers, the collapse-all + search rows) — never the panes behind it.
+        if let Some((row, start, end)) = app.pr_modal_close_click.filter(|&(r, s, e)| contains(r, s, e)) {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some(scroll) = scrollbar_col_hit() {
+            hits.push(scroll);
+        } else if let Some(&(row, start, end)) =
+            app.pr_collapse_all_click.as_ref().filter(|&&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end)) =
+            app.pr_search_click.as_ref().filter(|&&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.pr_section_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        }
     } else {
         // No modal: hover follows the cursor across whatever panes rendered this frame (it's
         // independent of focus — so the docked repo page no longer kills the list/info/result
@@ -805,7 +829,7 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
             render_diff_modal(frame, app, area);
         }
         if app.pr_modal.is_some() {
-            render_pr_modal(frame, app, area);
+            render_pr_modal(frame, app, area, tick);
         }
         if app.show_settings {
             render_settings(frame, app, area);
@@ -985,7 +1009,7 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         render_diff_modal(frame, app, area);
     }
     if app.pr_modal.is_some() {
-        render_pr_modal(frame, app, area);
+        render_pr_modal(frame, app, area, tick);
     }
     if app.copy_menu.is_some() {
         render_copy_menu(frame, app, area);

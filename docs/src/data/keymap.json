@@ -928,7 +928,7 @@
   {
     "id": "pr",
     "title": "PR viewer modal",
-    "blurb": "A centered overlay (diff-modal dimensions) showing a pull request — title, state, branches, author, +/− stats, labels, description, and every review/comment — rendered as markdown. Opens by clicking a PR link (info panel, repo-page HEAD #N, or a list PRs cell).",
+    "blurb": "A centered overlay (diff-modal dimensions) showing a pull request — a meta header (state, branches, author, +/- stats, labels) then the description and every review/comment as collapsible sections. Loads via gh pr view (with a loading skeleton). Opens by clicking a PR link (info panel, repo-page HEAD #N, or a list PRs cell).",
     "bindings": [
       {
         "keys": [
@@ -959,6 +959,32 @@
           "PgDn"
         ],
         "action": "Page up / down"
+      },
+      {
+        "keys": [
+          "click"
+        ],
+        "action": "Toggle a section (description / comment)",
+        "note": "click any ▾/▸ section header to fold or unfold it"
+      },
+      {
+        "keys": [
+          "z"
+        ],
+        "action": "Collapse all / expand all sections",
+        "note": "also the [− collapse all] / [+ expand all] control; shown with >1 comment"
+      },
+      {
+        "keys": [
+          "/"
+        ],
+        "action": "Search the PR",
+        "note": "filters to matching sections, highlights hits; Esc clears",
+        "keywords": [
+          "search",
+          "filter",
+          "find"
+        ]
       },
       {
         "keys": [

@@ -141,11 +141,18 @@ page. `Esc` or `q` closes it.
 
 Clicking a pull-request link — the **Pull Request** row in the info panel, the repo page's
 HEAD-branch `#N`, or a **PRs** cell in the list — opens a centered modal (same dimensions as the
-diff modal) that loads the full pull request via `gh pr view` and renders it as markdown.
+diff modal) that loads the full pull request via `gh pr view`. A **loading skeleton** (spinner +
+shimmer bars) shows while the fetch is in flight.
 
-It shows the title, state, base ← head branches, author, date, `+adds −dels`, labels, the full
-description, and **every review and comment** (separated by rules). Markdown is rendered inline:
-headings, bullet lists, blockquotes, horizontal rules, and links.
+The title and number live in the modal's title bar. Below it, a clean meta header shows the state,
+`head → base` branches, author, date, `+adds −dels`, and labels. The **description** and **every
+review and comment** then follow as **collapsible sections** — click any `▾`/`▸` header to fold or
+unfold it. When there's more than one comment, a **`[− collapse all]` / `[+ expand all]`** control
+appears at the top (also toggled with `z`). Bodies render as markdown (headings, bullet lists,
+blockquotes, rules, links), and raw HTML tags (e.g. `<details>` in bot comments) are stripped.
+
+Press **`/` to search** across the description and all comments: matching sections are kept (others
+hidden), a live match count shows, and hits are highlighted. `Esc` clears the search.
 
 Scroll with `j`/`k` (or `↑`/`↓`), `g`/`G` for top/bottom, `PgUp`/`PgDn` to page, or the mouse
 wheel; drag the scrollbar to jump. `o` opens the PR in your browser. `Esc`/`q`, the `[x]` button,
