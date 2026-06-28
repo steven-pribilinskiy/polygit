@@ -1422,10 +1422,27 @@ impl AppState {
         ]
     }
 
-    /// Open the kebab menu for `repo_idx` (building its state-aware items).
+    /// Open the kebab menu for `repo_idx` (building its state-aware items). The menu anchors to the
+    /// repo's `⋮` button (from the last frame's captured regions) so it opens left-aligned under it;
+    /// falls back to the list pane's right edge when the row isn't currently captured.
     pub fn open_kebab(&mut self, repo_idx: usize) {
         let items = self.build_kebab_items(repo_idx);
-        self.kebab = Some(KebabMenu { repo_idx, items, selected: 0 });
+        let anchor = self
+            .kebab_open_click
+            .iter()
+            .find(|(_, _, _, idx)| *idx == repo_idx)
+            .map(|&(row, _, end, _)| (row, end))
+            .unwrap_or((
+                self.list_rows_area.y,
+                self.list_rows_area.x + self.list_rows_area.width,
+            ));
+        self.kebab = Some(KebabMenu {
+            repo_idx,
+            items,
+            selected: 0,
+            anchor_row: anchor.0,
+            anchor_right: anchor.1,
+        });
     }
 
     pub fn close_kebab(&mut self) {

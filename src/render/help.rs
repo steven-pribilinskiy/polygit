@@ -668,9 +668,9 @@ pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<S
                 "Find & sort",
                 &[
                     ("/", "filter by name"),
-                    ("f", "filter by status: a/u/c/s/f/i"),
-                    ("s", "sort: n/s/a/d/l/w/b/k/o (re-pick flips ▲▼); or click a header"),
-                    ("t", "toggle columns: a/d/l/w/b/s"),
+                    ("f", "filter by status: a/u/c/s/f/i/v (v = favorites)"),
+                    ("s", "sort: n/c/s/a/d/l/w/b/k/p/g/v (v = favorite); re-pick flips ▲▼; or click a header"),
+                    ("t", "toggle columns (the dropdown has * select-all · 0 reset)"),
                 ],
             );
             let groups: Sec = (
@@ -704,6 +704,14 @@ pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<S
                 ],
             );
             let run: Sec = ("Run", &[("c", "claude in repo dir"), ("l", "lazygit in repo dir")]);
+            let repo_menu: Sec = (
+                "Favorites & menu",
+                &[
+                    (".", "open the repo's kebab (⋮) menu — or click the ⋮ on a hovered row"),
+                    ("b", "toggle favorite (★)"),
+                    ("B", "pin the ★ Favorites section to the top"),
+                ],
+            );
             let other: Sec = (
                 "Other",
                 &[
@@ -747,6 +755,7 @@ pub(crate) fn help_items_hotkeys(view: HelpView) -> Vec<(Line<'static>, Option<S
                 HelpBlock::Wide(groups),
                 HelpBlock::Wide(pull_retry),
                 HelpBlock::Side(clipboard, run),
+                HelpBlock::Wide(repo_menu),
                 HelpBlock::Side(other, layout),
             ];
             for block in blocks {
