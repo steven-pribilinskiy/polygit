@@ -337,6 +337,64 @@ fn parse_inline_md(text: &str, base: Style) -> Vec<(String, Style)> {
 /// Parse inline markdown in `text` over `base`, then word-wrap to `width` columns preserving each
 /// run's style. Returns wrapped lines, each a list of `(text, style)` segments. The single shared
 /// release-note renderer for the changelog, What's New, and version-picker modals.
+/// Render a full markdown document into wrapped, styled `Line`s for the PR viewer modal. Block-level
+/// handling for headings, `---` rules, fenced code, blockquotes, and bullet lists; inline markdown
+/// (bold / code / links) goes through [`wrap_markdown`]. Width is the inner content width.
+pub(crate) fn markdown_to_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    let base = Style::default().fg(Color::Gray);
+    let heading = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut lines: Vec<Line> = Vec::new();
+    let mut in_code = false;
+    for raw in text.lines() {
+        let trimmed = raw.trim_end();
+        if trimmed.trim_start().starts_with("```") {
+            in_code = !in_code; // swallow the fence markers
+            continue;
+        }
+        if in_code {
+            lines.push(Line::from(Span::styled(format!("    {raw}"), dim)));
+            continue;
+        }
+        if trimmed == "---" {
+            lines.push(Line::from(Span::styled("─".repeat(width.min(80)), dim)));
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("### ") {
+            lines.push(Line::from(Span::styled(rest.to_string(), heading)));
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("## ").or_else(|| trimmed.strip_prefix("# ")) {
+            lines.push(Line::from(Span::styled(
+                rest.to_string(),
+                heading.add_modifier(Modifier::UNDERLINED),
+            )));
+            continue;
+        }
+        if trimmed.is_empty() {
+            lines.push(Line::from(String::new()));
+            continue;
+        }
+        // Blockquote / bullet get a fixed prefix; everything else is a plain paragraph.
+        let (prefix, content, style) = if let Some(rest) = trimmed.strip_prefix("> ") {
+            ("  ▏ ", rest, dim)
+        } else if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+            ("  • ", rest, base)
+        } else {
+            ("", trimmed, base)
+        };
+        let indent = prefix.chars().count();
+        let avail = width.saturating_sub(indent).max(8);
+        for (row, segs) in wrap_markdown(content, style, avail).into_iter().enumerate() {
+            let lead = if row == 0 { prefix.to_string() } else { " ".repeat(indent) };
+            let mut spans = vec![Span::styled(lead, style)];
+            spans.extend(segs.into_iter().map(|(text, style)| Span::styled(text, style)));
+            lines.push(Line::from(spans));
+        }
+    }
+    lines
+}
+
 pub(crate) fn wrap_markdown(text: &str, base: Style, width: usize) -> Vec<Vec<(String, Style)>> {
     let runs = parse_inline_md(text, base);
     if width == 0 {
@@ -593,8 +651,33 @@ pub(crate) fn build_info_lines(
     // detail view. No in-flight "checking…" placeholder either: the line just appears once a PR
     // resolves instead of flipping a placeholder (which shifted the rows below it).
     if let Some(pr) = state.pr.as_ref() {
+        // The value text opens the PR viewer modal; a trailing external-link glyph opens the PR on
+        // GitHub in the browser. Two distinct click regions on the (possibly wrapped) value line.
+        let ext_glyph = app.icons().external;
+        let ext_w = UnicodeWidthStr::width(ext_glyph) as u16;
+        let ext_btn_w = 1 + ext_w; // " " + glyph
         let text = format!("#{} {}", pr.number, pr.title);
-        push_link(&mut lines, &mut clicks, "Pull Request", &text, &pr.url);
+        let segments = wrap_link(&text, value_width.saturating_sub(ext_btn_w as usize).max(1));
+        let last = segments.len().saturating_sub(1);
+        for (index, segment) in segments.into_iter().enumerate() {
+            let line_idx = lines.len();
+            let width = UnicodeWidthStr::width(segment.as_str()) as u16;
+            clicks.push((line_idx, LABEL_W as u16, LABEL_W as u16 + width, InfoAction::OpenPr));
+            let label_span = if index == 0 {
+                Span::styled(format!("{:<13}", "Pull Request"), label)
+            } else {
+                Span::raw(format!("{:<13}", ""))
+            };
+            let mut spans = vec![label_span, Span::styled(segment, link)];
+            if index == last {
+                // External-link button: " ↗" right after the value, opens the PR on the remote.
+                let ext_start = LABEL_W as u16 + width + 1;
+                clicks.push((line_idx, ext_start, ext_start + ext_w, InfoAction::OpenUrl(pr.url.clone())));
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(ext_glyph, copy_icon));
+            }
+            lines.push(Line::from(spans));
+        }
         // Sub-line: a colored state badge (open/merged/closed) + a dim "checked … ago" (per-entry
         // cache timestamp). The badge clarifies why a "ref gone" branch has no link — it merged.
         let mut sub: Vec<Span> = vec![

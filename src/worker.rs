@@ -19,7 +19,7 @@ use crate::git::{
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
-    pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
+    pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
     stash_file_list, stash_files, uncommitted_file_list, PullOutcome,
 };
 
@@ -552,6 +552,41 @@ pub async fn run_all_prs(
     }
     for handle in handles {
         let _ = handle.await;
+    }
+}
+
+/// Load the PR viewer modal's data: `gh pr view <number>` for the open modal's repo, assemble its
+/// markdown (header + description + every review/comment), and store it (clearing the loading
+/// state). A failure shows an inline message so the modal never just hangs on "loading".
+pub async fn run_pr_view(app_state: Arc<Mutex<AppState>>) {
+    let Some((path, number)) = ({
+        let app = app_state.lock().unwrap();
+        app.pr_modal.as_ref().and_then(|modal| {
+            app.repos.get(modal.repo_idx).map(|repo| (repo.lock().unwrap().path.clone(), modal.number))
+        })
+    }) else {
+        return;
+    };
+    let view = pr_view(&path, number).await;
+    let mut app = app_state.lock().unwrap();
+    if let Some(modal) = app.pr_modal.as_mut() {
+        if modal.number != number {
+            return; // the modal changed or closed while we fetched
+        }
+        match view {
+            Some(view) => {
+                modal.title = view.title;
+                modal.url = view.url;
+                modal.markdown = Some(view.markdown);
+            }
+            None => {
+                modal.markdown = Some(
+                    "# Couldn't load this PR\n\n`gh pr view` failed — check that `gh` is installed \
+                     and authenticated and that this is a GitHub repo."
+                        .to_string(),
+                );
+            }
+        }
     }
 }
 

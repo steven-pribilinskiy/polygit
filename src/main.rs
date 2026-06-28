@@ -48,7 +48,7 @@ use worker::{
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
-    run_all_prs, run_pull_request, run_remove_worktree, run_repo_details, run_repo_diff,
+    run_all_prs, run_pr_view, run_pull_request, run_remove_worktree, run_repo_details, run_repo_diff,
     run_repo_page,
 };
 
@@ -2030,6 +2030,34 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // PR viewer modal: the wheel scrolls; the `[x]`/outside-click closes. The scrollbar
+                // drag is handled by the generic scrollbar handler above.
+                if app.pr_modal.is_some() && !app.show_help {
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if region_hit(app.pr_modal_close_click, mouse.column, mouse.row)
+                                || !point_in(app.pr_modal_area, mouse.column, mouse.row)
+                            {
+                                app.pr_modal = None;
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            let step = wheel_step(mouse.modifiers, 3, 10);
+                            if let Some(modal) = app.pr_modal.as_mut() {
+                                modal.scroll = modal.scroll.saturating_add(step);
+                            }
+                        }
+                        MouseEventKind::ScrollUp => {
+                            let step = wheel_step(mouse.modifiers, 3, 10);
+                            if let Some(modal) = app.pr_modal.as_mut() {
+                                modal.scroll = modal.scroll.saturating_sub(step);
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Diff modal: the wheel scrolls; clicks are ignored (esc/q closes it).
                 // Skipped while help is open so the help overlay handles the mouse instead.
                 if app.diff_modal.is_some() && !app.show_help {
@@ -2153,10 +2181,15 @@ async fn run_event_loop(
                                 })
                             {
                                 app.open_dropdown(app::DropdownKind::PageSort, end, row);
-                            } else if let Some(url) = pr_url {
-                                drop(app);
-                                open_url(&url);
-                                continue;
+                            } else if pr_url.is_some() {
+                                // Click the HEAD row's `#N` to open the PR viewer modal.
+                                if let Some(idx) = app.repo_page {
+                                    if app.open_pr_modal_for_repo(idx) {
+                                        drop(app);
+                                        tokio::spawn(run_pr_view(Arc::clone(&app_state)));
+                                        continue;
+                                    }
+                                }
                             } else if let Some(kind) = tab_click {
                                 app.repo_page_select_tab(kind);
                             } else if let Some(tab) = app
@@ -2415,6 +2448,17 @@ async fn run_event_loop(
                             // Click an info-block link / copy button / expandable value.
                             match action {
                                 InfoAction::OpenUrl(url) => open_url(&url),
+                                InfoAction::OpenPr => {
+                                    // The info panel's "Pull Request" value opens the PR viewer modal
+                                    // (its trailing ↗ button uses OpenUrl to open the browser instead).
+                                    if let Some(idx) = app.selected_repo_index() {
+                                        if app.open_pr_modal_for_repo(idx) {
+                                            drop(app);
+                                            tokio::spawn(run_pr_view(Arc::clone(&app_state)));
+                                            continue;
+                                        }
+                                    }
+                                }
                                 InfoAction::CopyText(text) => {
                                     app.show_copy_toast(&text);
                                     copy_to_clipboard(&text);
@@ -2431,16 +2475,20 @@ async fn run_event_loop(
                         {
                             // Click the favorites column's star to toggle that repo's favorite.
                             app.toggle_favorite(repo_idx);
-                        } else if let Some(url) = app
+                        } else if let Some(repo_idx) = app
                             .pr_cell_click
                             .iter()
                             .find(|(row, start, end, _)| {
                                 mouse.row == *row && mouse.column >= *start && mouse.column < *end
                             })
-                            .map(|(_, _, _, url)| url.clone())
+                            .map(|(_, _, _, repo_idx)| *repo_idx)
                         {
-                            // Click the PR column's `#N` to open the pull request in the browser.
-                            open_url(&url);
+                            // Click the PR column's `#N` to open the PR viewer modal.
+                            if app.open_pr_modal_for_repo(repo_idx) {
+                                drop(app);
+                                tokio::spawn(run_pr_view(Arc::clone(&app_state)));
+                                continue;
+                            }
                         } else {
                             let on_divider = (i32::from(mouse.column)
                                 - i32::from(app.divider_col))
@@ -3119,6 +3167,44 @@ async fn run_event_loop(
 
                 // Diff modal: scroll, toggle the dirty-diff mode, or close. Skipped while help is
                 // open so the help overlay (gated below) handles keys instead.
+                // PR viewer modal: scroll with j/k/g/G/PgUp/PgDn, `o` opens it in the browser,
+                // esc/q closes. Captured before the other views so it owns input while open.
+                if app.pr_modal.is_some() && !app.show_help {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    let scroll_by = |app: &mut AppState, set: Option<usize>, delta: isize| {
+                        if let Some(modal) = app.pr_modal.as_mut() {
+                            modal.scroll = match set {
+                                Some(value) => value,
+                                None if delta < 0 => modal.scroll.saturating_sub((-delta) as usize),
+                                None => modal.scroll.saturating_add(delta as usize),
+                            };
+                        }
+                    };
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.pr_modal = None,
+                        KeyCode::Char('o') => {
+                            if let Some(url) = app.pr_modal.as_ref().map(|modal| modal.url.clone()) {
+                                drop(app);
+                                open_url(&url);
+                                continue;
+                            }
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => scroll_by(&mut app, None, 1),
+                        KeyCode::Char('k') | KeyCode::Up => scroll_by(&mut app, None, -1),
+                        KeyCode::Char('g') | KeyCode::Home => scroll_by(&mut app, Some(0), 0),
+                        KeyCode::Char('G') | KeyCode::End => scroll_by(&mut app, Some(usize::MAX), 0),
+                        KeyCode::PageDown => scroll_by(&mut app, None, 15),
+                        KeyCode::PageUp => scroll_by(&mut app, None, -15),
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if app.diff_modal.is_some() && !app.show_help {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)

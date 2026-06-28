@@ -92,7 +92,7 @@ pub struct AppState {
     pub list_rows_area: Rect,
     /// Clickable PR-cell regions in the list (PR column): (row, col_start, col_end, url). Rebuilt
     /// each render; a click opens the PR in the browser.
-    pub pr_cell_click: Vec<(u16, u16, u16, String)>,
+    pub pr_cell_click: Vec<(u16, u16, u16, usize)>,
     /// Clickable favorite-star regions in the list: (row, col_start, col_end, repo_idx). Rebuilt
     /// each render; a click toggles that repo's favorite state.
     pub fav_cell_click: Vec<(u16, u16, u16, usize)>,
@@ -275,6 +275,12 @@ pub struct AppState {
     pub diff_files_area: Rect,
     /// Inner rect of the diff modal's diff panel (wheel routing).
     pub diff_body_area: Rect,
+    /// The PR viewer modal (full PR data + every comment, markdown-rendered), if open. Opened by
+    /// clicking a PR `#N`; the body loads async via `gh pr view`.
+    pub pr_modal: Option<PrModalState>,
+    /// The PR modal's outer rect (outside-click closes) + its `[x]` close button region.
+    pub pr_modal_area: Rect,
+    pub pr_modal_close_click: Option<(u16, u16, u16)>,
     /// The directories/roots being scanned (each may itself be a single repo). Drives the per-root
     /// tree forest; worktree re-discovery derives parents from the repos.
     pub root_dirs: Vec<PathBuf>,
@@ -602,6 +608,19 @@ pub struct AppState {
     pub pulled_seen: bool,
 }
 
+/// The PR viewer modal's state: which repo+PR it shows, the data (None while loading), the remote
+/// URL (for "open in browser"), and the scroll offset. Rendered at a fixed ~90% size like the diff
+/// modal; the markdown is re-wrapped to the width each frame.
+pub struct PrModalState {
+    pub repo_idx: usize,
+    pub number: u32,
+    pub url: String,
+    pub title: String,
+    /// The assembled markdown document, or `None` while the `gh pr view` fetch is in flight.
+    pub markdown: Option<String>,
+    pub scroll: usize,
+}
+
 impl AppState {
     pub fn new(repos: Vec<SharedRepoState>, max_jobs: usize, auto_dark: bool) -> Self {
         // Restore persisted UI preferences (columns, info state, splitter), falling back to
@@ -752,6 +771,9 @@ impl AppState {
             diff_files_viewport: 0,
             diff_files_area: Rect::default(),
             diff_body_area: Rect::default(),
+            pr_modal: None,
+            pr_modal_area: Rect::default(),
+            pr_modal_close_click: None,
             root_dirs: Vec::new(),
             workspaces,
             active_workspace: None,

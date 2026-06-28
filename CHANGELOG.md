@@ -3,6 +3,17 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.88.0 — 2026-06-28
+PR viewer modal — read a pull request in full without leaving the terminal
+- click the **Pull Request** link (info panel), the repo page's HEAD-branch PR, or a list **PRs**
+  cell to open a centered modal (diff-modal dimensions) that loads the full PR via `gh pr view`.
+- shows title, state, base ← head, author, date, `+adds −dels`, labels, the description, and every
+  **review and comment** — all rendered as markdown (headings, bullets, blockquotes, rules, links).
+- `j`/`k`·`↑`/`↓` scroll · `g`/`G` top/bottom · `PgUp`/`PgDn` page · `o` open in browser · `esc`/`q`
+  close · mouse wheel scrolls · drag the scrollbar · click `[x]` or outside to close.
+- the info panel's **Pull Request** value opens the modal; a trailing **↗** button beside it opens
+  the PR on GitHub in your browser.
+
 ## v2.87.0 — 2026-06-28
 Pull timeout default 30s → 10s; the retry queue now honors it too
 - the per-pull timeout default is now **10s** (was 30s) — override with `--timeout S` / `PULL_TIMEOUT`.

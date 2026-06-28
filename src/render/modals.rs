@@ -442,6 +442,62 @@ fn note_line(indent: usize, segs: &[(String, Style)]) -> Line<'static> {
 /// The changelog / What's New modal. `vX.Y.Z` (status bar) opens the full changelog — every release
 /// as a collapsible accordion (header `▸ vX.Y.Z · <ago>`), the latest two expanded. After an update
 /// it opens in What's New mode: only releases newer than the last-seen version, all expanded.
+/// The PR viewer modal: a fixed ~90% modal (like the diff modal) showing the assembled PR markdown
+/// — metadata header, description, and every review/comment — scrollable, with an `o` to open the
+/// PR in the browser. The body loads async (`run_pr_view`); a "loading…" line shows until it lands.
+pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = area.width.saturating_mul(9) / 10;
+    let height = area.height.saturating_mul(9) / 10;
+    let modal = centered_rect(width, height, area);
+    let (number, title, body) = {
+        let pr = app.pr_modal.as_ref().expect("render_pr_modal with no pr_modal");
+        (pr.number, pr.title.clone(), pr.markdown.clone())
+    };
+    let inner_w = (width as usize).saturating_sub(2 + pad as usize).max(8);
+    let lines: Vec<Line> = match &body {
+        None => vec![Line::from(Span::styled("  loading PR…", Style::default().fg(Color::DarkGray)))],
+        Some(md) => super::preview::markdown_to_lines(md, inner_w.saturating_sub(1).max(8)),
+    };
+    let (close_line, close_click) = modal_close_button(modal);
+    let inner_h = (height as usize).saturating_sub(2 + pad as usize);
+    let can_scroll = lines.len() > inner_h;
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip_state("j/k", " scroll", HintKey::Char('j'), can_scroll));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("o", " open in browser", HintKey::Char('o')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(format!(" PR #{number} · {} ", truncate_str(&title, 50)))
+        .title_top(close_line)
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.pr_modal_area = modal;
+    app.pr_modal_close_click = close_click;
+
+    let viewport = inner.height as usize;
+    let max_scroll = lines.len().saturating_sub(viewport);
+    let scroll = app.pr_modal.as_ref().map_or(0, |pr| pr.scroll).min(max_scroll);
+    if let Some(pr) = app.pr_modal.as_mut() {
+        pr.scroll = scroll;
+    }
+    let body_area = Rect { width: inner.width.saturating_sub(1), ..inner };
+    let visible: Vec<Line> = lines.iter().skip(scroll).take(viewport).cloned().collect();
+    frame.render_widget(Paragraph::new(visible), body_area);
+    if lines.len() > viewport {
+        let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
+        super::render_scrollbar(frame, app, track, scroll, lines.len(), viewport, crate::app::ScrollKind::PrModal);
+    }
+}
+
 pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect) {
     if app.changelog_pin_mode {
         render_pin_picker(frame, app, area);

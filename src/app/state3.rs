@@ -1224,6 +1224,30 @@ impl AppState {
     }
 
     /// Open the diff modal in a loading state for `source`.
+    /// Open the PR viewer modal for a repo's current PR (if it has one). Returns whether it opened.
+    pub fn open_pr_modal_for_repo(&mut self, repo_idx: usize) -> bool {
+        let pr = self.repos.get(repo_idx).and_then(|repo| repo.lock().unwrap().pr.clone());
+        match pr {
+            Some(pr) => {
+                self.open_pr_modal(repo_idx, pr.number, pr.url, pr.title);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Open the PR viewer modal in a loading state for a repo's PR (the body loads via `gh pr view`).
+    pub fn open_pr_modal(&mut self, repo_idx: usize, number: u32, url: String, title: String) {
+        self.pr_modal = Some(crate::app::PrModalState {
+            repo_idx,
+            number,
+            url,
+            title,
+            markdown: None,
+            scroll: 0,
+        });
+    }
+
     pub fn open_diff_modal(&mut self, source: DiffSource) {
         self.diff_modal = Some(DiffModal {
             source,

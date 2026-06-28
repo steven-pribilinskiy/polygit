@@ -804,6 +804,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.diff_modal.is_some() {
             render_diff_modal(frame, app, area);
         }
+        if app.pr_modal.is_some() {
+            render_pr_modal(frame, app, area);
+        }
         if app.show_settings {
             render_settings(frame, app, area);
         }
@@ -980,6 +983,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // page draws the same set on its own path above.
     if app.diff_modal.is_some() {
         render_diff_modal(frame, app, area);
+    }
+    if app.pr_modal.is_some() {
+        render_pr_modal(frame, app, area);
     }
     if app.copy_menu.is_some() {
         render_copy_menu(frame, app, area);
