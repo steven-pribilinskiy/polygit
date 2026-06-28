@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.80.0 — 2026-06-28
+Settings: consistent flat-view spacing, and tabbed-view ←→ changes the value
+- **flat layout spacing is now consistent** — it added an extra blank line after the search box only when panel padding was off (so 2 blanks off vs 1 on). Removed it: there's one spacer in both modes, and the **Panel padding** toggle now changes only the uniform border inset (off = flush, on = 1 cell), as everywhere else.
+- **tabbed layout: `←`/`→` now change the selected setting's value** (like the flat layout). Switching tabs moves to **`Tab` / `Shift+Tab`** (or **`Shift+↑`/`Shift+↓`**). The footer hint reads `tab tab · ←→ value` accordingly.
+
 ## v2.79.3 — 2026-06-28
 Harden the settings model so labels/tooltips can't desync again (internal)
 - each setting's **label + tooltip are now co-located in one `SETTINGS` source-of-truth table** (they were parallel index-keyed lists, which is how the alphabetical reorder silently pointed every tooltip at the wrong setting). The label list + tip lookup now derive from it.
