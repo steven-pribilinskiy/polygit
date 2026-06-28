@@ -729,7 +729,8 @@ pub async fn stash_diff_stats(dir: &Path, index: usize) -> Option<BranchStats> {
 pub async fn list_commits(dir: &Path, limit: usize) -> Vec<CommitInfo> {
     let dir_str = dir.to_str().unwrap_or(".");
     let output = match Command::new("git")
-        .args(["-C", dir_str, "log", &format!("-{limit}"), "--format=%h%x1f%s%x1f%an%x1f%cr"])
+        // `%p` = abbreviated parent shas (space-separated) — drives the graph lane layout.
+        .args(["-C", dir_str, "log", &format!("-{limit}"), "--format=%h%x1f%s%x1f%an%x1f%cr%x1f%p"])
         .output()
         .await
     {
@@ -745,6 +746,12 @@ pub async fn list_commits(dir: &Path, limit: usize) -> Vec<CommitInfo> {
                 subject: fields.next().unwrap_or("").to_string(),
                 author: fields.next().unwrap_or("").to_string(),
                 rel_date: fields.next().unwrap_or("").to_string(),
+                parents: fields
+                    .next()
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect(),
             })
         })
         .collect()

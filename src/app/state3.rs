@@ -863,6 +863,7 @@ impl AppState {
                 merge_base_short: branch.merge_base_short.clone(),
                 base: branch.base.clone(),
                 base_is_override: branch.base_is_override,
+                parents: Vec::new(),
             });
         }
         for worktree in &page.worktrees {
@@ -895,6 +896,7 @@ impl AppState {
                 merge_base_short: branch_info.and_then(|info| info.merge_base_short.clone()),
                 base: branch_info.and_then(|info| info.base.clone()),
                 base_is_override: branch_info.is_some_and(|info| info.base_is_override),
+                parents: Vec::new(),
             });
         }
         for stash in &page.stashes {
@@ -920,6 +922,7 @@ impl AppState {
                 merge_base_short: None,
                 base: None,
                 base_is_override: false,
+                parents: Vec::new(),
             });
         }
         for commit in &page.commits {
@@ -944,6 +947,7 @@ impl AppState {
                 merge_base_short: None,
                 base: None,
                 base_is_override: false,
+                parents: commit.parents.clone(),
             });
         }
         // Sort the branch and worktree sections independently by the active column (stashes +

@@ -34,8 +34,11 @@ appear when there's something to list.
   The **age** and **stats** columns are toggleable from the Stashes tab's own **`t cols ▾`**
   dropdown (the ref + message always show); hiding one gives the message its width. The info
   panel (`i`) adds a **created** row for the selected stash.
-- **`◉ COMMITS`** — recent commits: short sha · relative date · author · subject. The **author**
-  column grows to the longest name (never truncated) and the **subject** fills the remaining width.
+- **`◉ COMMITS`** — recent commits with a **commit graph** to the left: GitKraken-style colored
+  branch lanes (24-bit truecolor) with `●` nodes (`◆` for merge commits, 2+ parents) and `│` lane
+  continuations — branches/merges show as parallel colored lanes. Then short sha · relative date ·
+  author · subject. The **author** column grows to the longest name (never truncated) and the
+  **subject** fills the remaining width.
   Commit rows are selectable / hoverable / clickable like the other sections — **`Enter` (or a
   double-click) opens that commit's diff** (`git show`).
 
