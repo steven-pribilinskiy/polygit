@@ -24,7 +24,8 @@ pub struct PersistedState {
     pub show_result_panel: bool,
     /// Info/result split ratio inside the preview (info-panel fraction).
     pub preview_split_ratio: f64,
-    /// 1-cell padding inside every bordered panel/modal.
+    /// 1-cell padding inside every bordered panel/modal (default on).
+    #[serde(default = "default_true")]
     pub panel_padding: bool,
     /// Glyph set (Unicode vs emoji).
     pub icon_style: IconStyle,
@@ -84,7 +85,8 @@ pub struct PersistedState {
     pub sort_dir: SortDir,
     /// Last-active help-modal tab.
     pub help_tab: HelpTab,
-    /// Grouped list view was on at last exit.
+    /// Grouped list view was on at last exit (default on).
+    #[serde(default = "default_true")]
     pub grouping_enabled: bool,
     /// Names (or `folder::name` keys) of collapsed groups.
     pub collapsed_groups: Vec<String>,
@@ -112,15 +114,15 @@ pub struct PersistedState {
     /// view suppresses auto-pull).
     pub auto_pull_in_tree: bool,
     /// Highlight actionable elements under the mouse cursor. Off by default: it enables all-motion
-    /// mouse tracking, which takes over the terminal's own text selection / URL hover.
-    #[serde(default)]
+    /// mouse tracking, which takes over the terminal's own text selection / URL hover. Default on.
+    #[serde(default = "default_true")]
     pub hover_effects: bool,
     /// Draw borders around the two main panes (default on). Off reclaims the border rows/cols.
     #[serde(default = "default_true")]
     pub show_borders: bool,
     /// How the pane splitters are presented: a dedicated 1-cell lane (default) or a thin grip shown
-    /// only on hover. (Replaces the old `show_splitter` bool; unknown old keys are ignored on load.)
-    #[serde(default)]
+    /// only on hover (default). (Replaces the old `show_splitter` bool; unknown old keys ignored.)
+    #[serde(default = "default_splitter_hover")]
     pub splitter_mode: SplitterMode,
     /// Pulse (flash) a repo row's changed cells after a pull/refresh (default on).
     #[serde(default = "default_true")]
@@ -128,8 +130,8 @@ pub struct PersistedState {
     /// Steadily highlight a repo row's changed cells for the attention window (default off).
     #[serde(default)]
     pub changed_row_highlight: bool,
-    /// Split the repo page into branches/worktrees/stashes tabs (off / auto). Default off.
-    #[serde(default)]
+    /// Split the repo page into branches/worktrees/stashes tabs (off / auto). Default auto.
+    #[serde(default = "default_tabs_auto")]
     pub repo_page_tabs: RepoTabsMode,
     /// Repo-page window state: maximized (full-screen) when true, restored (docked panel) when false.
     /// Default restored.
@@ -188,6 +190,14 @@ fn default_true() -> bool {
 
 fn default_auto_pull_max() -> u32 {
     100
+}
+
+fn default_splitter_hover() -> SplitterMode {
+    SplitterMode::Hover
+}
+
+fn default_tabs_auto() -> RepoTabsMode {
+    RepoTabsMode::Auto
 }
 
 /// Deserialize `sort_column` tolerantly: the removed `"discovery"` value and any unknown

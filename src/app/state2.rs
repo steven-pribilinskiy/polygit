@@ -1045,7 +1045,10 @@ impl AppState {
             5 => self.panel_padding = !self.panel_padding,
             6 => self.show_borders = !self.show_borders,
             7 => self.splitter_mode = self.splitter_mode.cycle(),
-            8 => self.repo_page_tabs = self.repo_page_tabs.cycle(),
+            8 => {
+                self.repo_page_tabs = self.repo_page_tabs.cycle();
+                self.repo_page_tabbed_override = None; // changing the preference clears any `v` flip
+            }
             9 => self.maximized = (self.maximized != Some(Pane::RepoPage)).then_some(Pane::RepoPage),
             10 => self.branch_check = self.branch_check.cycle(),
             // Lists
