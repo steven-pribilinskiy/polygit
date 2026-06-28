@@ -1355,11 +1355,14 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         // "terminal" chip) isn't cropped under it.
         (content_w.max(40) + 1, rows)
     } else {
+        // +1 reserves a right-hand scrollbar gutter (like the accordion branch) so the widest row
+        // (Background's "terminal" chip) isn't clipped under the bar when the list overflows.
         let row_count = all_rows.len() as u16;
-        (content_w.max(40), row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16)
+        (content_w.max(40) + 1, row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16)
     };
     let (width, content_rows) = if search_active {
-        (content_w.max(40), filtered_rows.len() as u16 + 1 + search_rows)
+        // +1 scrollbar gutter — the filtered list can overflow too.
+        (content_w.max(40) + 1, filtered_rows.len() as u16 + 1 + search_rows)
     } else {
         (base_width, base_rows + search_rows)
     };

@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.81.0 — 2026-06-28
+Repo-page actions keep the list status in sync; settings wheel + scrollbar-gutter fixes
+- **the list status now stays in sync after a repo-page action** — checking out a branch (or deleting one / discarding / dropping a stash / removing a worktree) re-derives the repo's status from fresh local facts, so a stale pull result (e.g. a `ref gone` whose deleted branch you just switched away from) no longer lingers. The status now reflects the current branch: `dirty` / `no upstream` / `up-to-date` (the Δ column still shows any ahead/behind).
+- **the mouse wheel now scrolls the settings modal** (it did nothing before).
+- **the settings flat / search layouts now reserve a scrollbar gutter** so the widest row (Background's `terminal` option) is no longer clipped under the scrollbar when the list overflows.
+- **emoji-mode maximize/restore glyphs are now `🗖`/`🗗`** (the literal window glyphs) instead of `🔳`/`🔲`.
+
 ## v2.80.0 — 2026-06-28
 Settings: consistent flat-view spacing, and tabbed-view ←→ changes the value
 - **flat layout spacing is now consistent** — it added an extra blank line after the search box only when panel padding was off (so 2 blanks off vs 1 on). Removed it: there's one spacer in both modes, and the **Panel padding** toggle now changes only the uniform border inset (off = flush, on = 1 cell), as everywhere else.
