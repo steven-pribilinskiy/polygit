@@ -1168,14 +1168,15 @@ pub async fn run_pull_all_branches(app_state: Arc<Mutex<AppState>>, repo_idx: us
 pub async fn run_refetch_batch(
     app_state: Arc<Mutex<AppState>>,
     repos: Vec<SharedRepoState>,
+    old_status: Vec<RepoStatus>,
     control: Arc<ThrottleControl>,
     max_jobs: usize,
     timeout_secs: u64,
     icon_style: IconStyle,
 ) {
-    // Snapshot the pre-refetch status of each repo so we can flash a status change.
-    let old_status: Vec<RepoStatus> =
-        repos.iter().map(|repo| repo.lock().unwrap().status.clone()).collect();
+    // `old_status` is the REAL pre-refetch status of each repo, captured by the caller *before* it
+    // re-queued them (a re-queued repo shows the transient `Queued`, which would otherwise read as a
+    // status change on every no-op refetch). Aligned 1:1 with `repos`.
     // Snapshot per-repo worktree counts (worktrees live on AppState, refreshed separately below).
     let old_worktrees: Vec<(String, usize)> = {
         let app = app_state.lock().unwrap();
@@ -1244,7 +1245,11 @@ fn compute_flash(
     old_status: &RepoStatus,
     new_status: &RepoStatus,
 ) -> CellFlash {
-    let status = std::mem::discriminant(old_status) != std::mem::discriminant(new_status);
+    // Flash a status change only when the OLD status was a real terminal state. A transient
+    // baseline (Queued/Running — what a just-re-queued repo shows) is not a meaningful "before",
+    // so Queued→UpToDate must not read as a change (that flashed every no-op refetch).
+    let status = old_status.is_terminal()
+        && std::mem::discriminant(old_status) != std::mem::discriminant(new_status);
     let Some(old) = old else {
         // No baseline (first detail load) — flash nothing but a genuine status change.
         return CellFlash { status, ..CellFlash::default() };
@@ -1347,3 +1352,32 @@ pub async fn run_pin_version(app_state: Arc<Mutex<AppState>>, version: String) {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{RepoDetails, RepoStatus};
+
+    // A re-queued repo shows the transient `Queued` while a refetch runs; comparing the new
+    // terminal status against that transient baseline must NOT register as a change (the bug that
+    // flashed every no-op refetch). Only a real terminal→terminal difference flashes status.
+    #[test]
+    fn no_op_refetch_does_not_flash_status() {
+        let details = RepoDetails::default();
+        // Transient baseline (Queued) → UpToDate: not a status change.
+        let flash = compute_flash(Some(&details), &details, &RepoStatus::Queued, &RepoStatus::UpToDate);
+        assert!(!flash.status, "Queued→UpToDate must not flash");
+        assert!(!flash.any(), "an unchanged repo must not flash at all");
+        // Running baseline → UpToDate: also transient, no flash.
+        let flash = compute_flash(Some(&details), &details, &RepoStatus::Running { pid: 1 }, &RepoStatus::UpToDate);
+        assert!(!flash.status, "Running→UpToDate must not flash");
+    }
+
+    #[test]
+    fn genuine_status_change_still_flashes() {
+        let details = RepoDetails::default();
+        // A real terminal→terminal difference (a repo that was failing now succeeds) flashes.
+        let flash = compute_flash(Some(&details), &details, &RepoStatus::Failed, &RepoStatus::UpToDate);
+        assert!(flash.status, "Failed→UpToDate is a real change and should flash");
+    }
+}

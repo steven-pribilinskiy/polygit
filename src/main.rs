@@ -1225,6 +1225,10 @@ async fn run_event_loop(
                 app.all_done = false;
             }
 
+            // Capture each repo's REAL prior status before re-queueing it — run_refetch_batch flashes
+            // a status change against this, not against the transient `Queued` we set below (which
+            // made every no-op refetch flash). Collected in lockstep with repos_to_retry.
+            let mut old_status: Vec<RepoStatus> = Vec::new();
             let repos_to_retry: Vec<SharedRepoState> = retry_queue
                 .drain(..)
                 .map(|idx| {
@@ -1232,6 +1236,7 @@ async fn run_event_loop(
                     let repo = Arc::clone(&app.repos[idx]);
                     {
                         let mut state = repo.lock().unwrap();
+                        old_status.push(state.status.clone());
                         state.status = RepoStatus::Queued;
                         state.log.clear();
                         state.auto_scroll = true;
@@ -1247,6 +1252,7 @@ async fn run_event_loop(
                 run_refetch_batch(
                     app_state_clone,
                     repos_to_retry,
+                    old_status,
                     control,
                     max_jobs,
                     timeout_secs,

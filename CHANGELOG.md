@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.89.1 — 2026-06-28
+Fix: a no-op refetch no longer flashes the changed-row attention indicator
+- the refetch re-queues each repo (transient `Queued`) before diffing, so the "status changed"
+  flash compared `Queued` → `UpToDate` and fired on **every** refetch even when nothing changed.
+  Now the real pre-refetch status is captured first and only a genuine terminal→terminal change
+  flashes; a transient baseline never counts.
+
 ## v2.89.0 — 2026-06-28
 PR viewer modal — structured, collapsible, searchable; loading skeleton
 - the description and every review/comment are now **collapsible sections** (click the `▾`/`▸`
