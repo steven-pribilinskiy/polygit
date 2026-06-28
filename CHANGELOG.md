@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.90.1 — 2026-06-28
+Fix: reset-to-defaults matches the new defaults
+- the settings **Reset** had its own hardcoded default table that wasn't updated for v2.90.0, so it
+  left Panel padding / Hover / Grouping / splitter / tabs off-default and the confirmation wrongly
+  said "already at defaults". Reset and its diff now mirror the real field defaults; a new test
+  asserts a reset leaves nothing differing.
+
 ## v2.90.0 — 2026-06-28
 New defaults + `v` overrides auto repo-page tabs
 - changed defaults (fresh installs / unset fields): **Hover effects on**, **Panel padding on**,

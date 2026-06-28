@@ -831,6 +831,7 @@ impl AppState {
     pub fn settings_option_labels(row: usize) -> &'static [&'static str] {
         match row {
             0 => &["claude", "codex", "gemini"],
+            7 => &["dedicated", "on hover"],
             8 => &["off", "auto"],
             9 => &["restored", "maximized"],
             10 => &["off", "auto"],
@@ -849,14 +850,14 @@ impl AppState {
     /// `persist.rs` / the enum `#[default]`s). Used to detect what a reset would change.
     pub fn settings_default_option(row: usize) -> usize {
         match row {
-            // Defaults whose active option is the first (on / auto / unicode / restored / claude / …).
-            // 0 AI agent → claude; the Tooltips group (25–30) all default on. Layout: borders(6),
-            // pane-splitter dedicated(7), repo-page-tabs off(8), repo-page restored(9), branch-check
-            // off(10). Sync: auto-pull-on-launch(15). Interaction: changed-row flash(3). Theming:
-            // icons unicode(18), theme(20), background(21), contrast(22), selection(23).
-            0 | 3 | 6 | 7 | 8 | 9 | 10 | 15 | 18 | 20 | 21 | 22 | 23 | 25 | 26 | 27 | 28 | 29 | 30 => 0,
-            // 24 button-hover defaults to `subtle` (index 1), 16 auto-pull-limit to `100` (index 1),
-            // and every remaining boolean defaults off (index 1).
+            // Rows whose DEFAULT is the first option (index 0). Agent: AI agent→claude(0). Interaction:
+            // hover effects on(2), changed-row flash on(3). Layout: panel padding on(5), borders on(6),
+            // repo-page restored(9). Lists: grouping on(11). Sync: auto-pull-on-launch(15). Theming:
+            // icons unicode(18), theme auto(20), background normal(21), contrast normal(22),
+            // selection blue(23). Branch-check off(10). Tooltips (25–30) all on.
+            0 | 2 | 3 | 5 | 6 | 9 | 10 | 11 | 15 | 18 | 20 | 21 | 22 | 23 | 25 | 26 | 27 | 28 | 29 | 30 => 0,
+            // Index-1 defaults: pane splitter on-hover(7), repo-page-tabs auto(8), auto-pull-limit
+            // 100(16), button-hover subtle(24), and every remaining boolean (off).
             _ => 1,
         }
     }
@@ -886,7 +887,10 @@ impl AppState {
     /// Reset every settings-modal preference to its default (data — favorites, workspaces, caches,
     /// collapsed sets — is left untouched). Rebuilds the derived list state and persists.
     pub fn apply_settings_reset(&mut self) {
-        self.grouping_enabled = false;
+        // These MUST mirror the field defaults in persist.rs (and the indices in
+        // `settings_default_option`) — a divergence makes "reset" leave a field off-default or the
+        // confirmation say "already at defaults" when it isn't.
+        self.grouping_enabled = true;
         self.tree_enabled = false;
         self.hide_folder_lines = false;
         self.icon_style = IconStyle::Unicode;
@@ -899,13 +903,14 @@ impl AppState {
         self.auto_pull_on_launch = true;
         self.auto_pull_max_repos = 100;
         self.auto_pull_in_tree = false;
-        self.hover_effects = false;
+        self.hover_effects = true;
         self.changed_row_flash = true;
         self.changed_row_highlight = false;
-        self.panel_padding = false;
+        self.panel_padding = true;
         self.show_borders = true;
-        self.splitter_mode = SplitterMode::Dedicated;
-        self.repo_page_tabs = RepoTabsMode::Off;
+        self.splitter_mode = SplitterMode::Hover;
+        self.repo_page_tabs = RepoTabsMode::Auto;
+        self.repo_page_tabbed_override = None;
         self.maximized = None;
         self.branch_check = BranchCheck::Off;
         self.tooltips = TooltipPrefs::default();
