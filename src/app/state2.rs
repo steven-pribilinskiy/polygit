@@ -817,7 +817,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 31;
+    pub const SETTINGS_ROWS: usize = 29;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -1039,59 +1039,57 @@ impl AppState {
             1 => self.claude_skip_permissions = !self.claude_skip_permissions,
             // Interaction
             2 => self.hover_effects = !self.hover_effects,
-            3 => self.changed_row_flash = !self.changed_row_flash,
-            4 => self.changed_row_highlight = !self.changed_row_highlight,
+            3 => self.changed_row_effect = self.changed_row_effect.cycle(),
             // Layout
-            5 => self.panel_padding = !self.panel_padding,
-            6 => self.show_borders = !self.show_borders,
-            7 => self.splitter_mode = self.splitter_mode.cycle(),
-            8 => {
+            4 => self.panel_padding = !self.panel_padding,
+            5 => self.show_borders = !self.show_borders,
+            6 => self.splitter_mode = self.splitter_mode.cycle(),
+            7 => {
                 self.repo_page_tabs = self.repo_page_tabs.cycle();
                 self.repo_page_tabbed_override = None; // changing the preference clears any `v` flip
             }
-            9 => self.maximized = (self.maximized != Some(Pane::RepoPage)).then_some(Pane::RepoPage),
-            10 => self.branch_check = self.branch_check.cycle(),
+            8 => self.branch_check = self.branch_check.cycle(),
             // Lists
-            11 => {
+            9 => {
                 let prev = self.selected_repo_index();
                 self.grouping_enabled = !self.grouping_enabled;
                 self.reselect_repo(prev);
             }
-            12 => {
+            10 => {
                 let prev = self.selected_repo_index();
                 self.tree_enabled = !self.tree_enabled;
                 self.reselect_repo(prev);
             }
-            13 => self.hide_folder_lines = !self.hide_folder_lines,
+            11 => self.hide_folder_lines = !self.hide_folder_lines,
             // Pull requests
-            14 => self.show_merged_prs = !self.show_merged_prs,
+            12 => self.show_merged_prs = !self.show_merged_prs,
             // Sync
-            15 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
-            16 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
-            17 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            13 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            14 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            15 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
             // Theming
-            18 => {
+            16 => {
                 self.icon_style = match self.icon_style {
                     IconStyle::Unicode => IconStyle::Emoji,
                     IconStyle::Emoji => IconStyle::Unicode,
                 };
             }
             // Inert in emoji mode (always hides zeros); only togglable with the Unicode set.
-            19 if self.icon_style != IconStyle::Emoji => {
+            17 if self.icon_style != IconStyle::Emoji => {
                 self.hide_zero_counts = !self.hide_zero_counts;
             }
-            20 => self.theme = self.theme.cycle(),
-            21 => self.background = self.background.cycle(),
-            22 => self.contrast = self.contrast.cycle(),
-            23 => self.selection_style = self.selection_style.cycle(),
-            24 => self.button_hover_style = self.button_hover_style.cycle(),
+            18 => self.theme = self.theme.cycle(),
+            19 => self.background = self.background.cycle(),
+            20 => self.contrast = self.contrast.cycle(),
+            21 => self.selection_style = self.selection_style.cycle(),
+            22 => self.button_hover_style = self.button_hover_style.cycle(),
             // Tooltips
-            25 => self.tooltips.set_all(!self.tooltips.all_on()),
-            26 => self.tooltips.footer = !self.tooltips.footer,
-            27 => self.tooltips.headers = !self.tooltips.headers,
-            28 => self.tooltips.counts = !self.tooltips.counts,
-            29 => self.tooltips.settings = !self.tooltips.settings,
-            30 => self.tooltips.links = !self.tooltips.links,
+            23 => self.tooltips.set_all(!self.tooltips.all_on()),
+            24 => self.tooltips.footer = !self.tooltips.footer,
+            25 => self.tooltips.headers = !self.tooltips.headers,
+            26 => self.tooltips.counts = !self.tooltips.counts,
+            27 => self.tooltips.settings = !self.tooltips.settings,
+            28 => self.tooltips.links = !self.tooltips.links,
             _ => {}
         }
         self.save_state();

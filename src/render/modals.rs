@@ -1494,12 +1494,12 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             vec![
                 ("Hover effects", vec![("on", app.hover_effects), ("off", !app.hover_effects)]),
                 (
-                    "Changed-row flash",
-                    vec![("on", app.changed_row_flash), ("off", !app.changed_row_flash)],
-                ),
-                (
-                    "Changed-row highlight",
-                    vec![("on", app.changed_row_highlight), ("off", !app.changed_row_highlight)],
+                    "Changed-row effect",
+                    vec![
+                        ("off", app.changed_row_effect == crate::app::ChangedRowEffect::Off),
+                        ("flash", app.changed_row_effect == crate::app::ChangedRowEffect::Flash),
+                        ("highlight", app.changed_row_effect == crate::app::ChangedRowEffect::Highlight),
+                    ],
                 ),
             ],
         ),
@@ -1520,13 +1520,6 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     vec![
                         ("off", app.repo_page_tabs == crate::app::RepoTabsMode::Off),
                         ("auto", app.repo_page_tabs == crate::app::RepoTabsMode::Auto),
-                    ],
-                ),
-                (
-                    "Repo page",
-                    vec![
-                        ("restored", app.maximized != Some(crate::app::Pane::RepoPage)),
-                        ("maximized", app.maximized == Some(crate::app::Pane::RepoPage)),
                     ],
                 ),
                 (

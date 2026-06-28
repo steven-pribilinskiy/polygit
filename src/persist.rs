@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    Background, BranchCheck, ButtonHoverStyle, ClaudeAgent, ColumnFlags, Contrast, DesignLayout,
-    HelpTab, IconStyle, RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout, SortColumn,
-    SortDir, SplitterMode, Theme, TooltipPrefs,
+    Background, BranchCheck, ButtonHoverStyle, ChangedRowEffect, ClaudeAgent, ColumnFlags, Contrast,
+    DesignLayout, HelpTab, IconStyle, RepoPageColumns, RepoTabsMode, SelectionStyle, SettingsLayout,
+    SortColumn, SortDir, SplitterMode, Theme, TooltipPrefs,
 };
 
 /// UI preferences persisted between runs at `~/.config/polygit/state.json`.
@@ -124,12 +124,10 @@ pub struct PersistedState {
     /// only on hover (default). (Replaces the old `show_splitter` bool; unknown old keys ignored.)
     #[serde(default = "default_splitter_hover")]
     pub splitter_mode: SplitterMode,
-    /// Pulse (flash) a repo row's changed cells after a pull/refresh (default on).
-    #[serde(default = "default_true")]
-    pub changed_row_flash: bool,
-    /// Steadily highlight a repo row's changed cells for the attention window (default off).
+    /// Post-change attention indicator on changed cells: off / flash / highlight (default flash).
+    /// (Replaces the old `changed_row_flash` / `changed_row_highlight` bools; old keys are ignored.)
     #[serde(default)]
-    pub changed_row_highlight: bool,
+    pub changed_row_effect: ChangedRowEffect,
     /// Split the repo page into branches/worktrees/stashes tabs (off / auto). Default auto.
     #[serde(default = "default_tabs_auto")]
     pub repo_page_tabs: RepoTabsMode,
