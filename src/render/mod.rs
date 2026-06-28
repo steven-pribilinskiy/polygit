@@ -472,6 +472,12 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                             .map(|&(r, s, e, _)| (r, s, e))
                     })
                     .or_else(|| {
+                        app.repo_page_section_click
+                            .iter()
+                            .find(|&&(r, s, e, _)| contains(r, s, e))
+                            .map(|&(r, s, e, _)| (r, s, e))
+                    })
+                    .or_else(|| {
                         app.repo_page_sort_click
                             .iter()
                             .find(|&&(r, s, e, _)| contains(r, s, e))

@@ -500,6 +500,16 @@ impl PageRow {
             PageRowKind::Commit => None, // commits are read-only — `d` does nothing
         }
     }
+
+    /// The repo-page tab/section this row belongs to.
+    pub fn tab(&self) -> RepoTab {
+        match self.kind {
+            PageRowKind::Branch => RepoTab::Branches,
+            PageRowKind::Worktree => RepoTab::Worktrees,
+            PageRowKind::Stash => RepoTab::Stashes,
+            PageRowKind::Commit => RepoTab::Commits,
+        }
+    }
 }
 
 /// An optional list column the user can toggle on via the `t` leader.
@@ -1347,6 +1357,16 @@ impl RepoTab {
             RepoTab::Worktrees => Some(PageRowKind::Worktree),
             RepoTab::Stashes => Some(PageRowKind::Stash),
             RepoTab::Commits => Some(PageRowKind::Commit),
+        }
+    }
+
+    /// The section's display name — also the key for the flat-view collapse set.
+    pub fn section_name(self) -> &'static str {
+        match self {
+            RepoTab::Branches => "Branches",
+            RepoTab::Worktrees => "Worktrees",
+            RepoTab::Stashes => "Stashes",
+            RepoTab::Commits => "Commits",
         }
     }
 }
