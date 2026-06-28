@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.79.3 — 2026-06-28
+Harden the settings model so labels/tooltips can't desync again (internal)
+- each setting's **label + tooltip are now co-located in one `SETTINGS` source-of-truth table** (they were parallel index-keyed lists, which is how the alphabetical reorder silently pointed every tooltip at the wrong setting). The label list + tip lookup now derive from it.
+- added an **invariant test** that fails the build if labels, tips, option counts, section counts, or the read/write dispatch ever drift out of sync — so adding or reordering a setting stays solid.
+
 ## v2.79.2 — 2026-06-28
 Fix every settings tooltip (stale indices), and scope "Merged PRs" to the list column
 - **the settings tooltips were all wrong** in every layout (tabbed / accordion / flat) — the tip table was keyed by the *pre-alphabetical-reorder* row indices, so e.g. hovering "Merged PRs" showed the changed-row-flash description. Re-keyed the whole table to the current `SETTINGS_LABELS` order and added the missing Agent / Merged PRs tips.

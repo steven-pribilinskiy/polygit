@@ -1366,11 +1366,12 @@ impl RepoTabsMode {
     }
 }
 
-/// The settings sections, in global row order: `(tab label, number of rows)`. Single source of
-/// truth shared by the renderer (tab labels + which rows belong to each tab) and the navigation
-/// helpers (tab ranges). The row *data* (labels/options) is built in `render_settings`; the counts
-/// here must match it. Appending a setting = bump the relevant count (and add its row data + the
-/// `set_setting_option`/`toggle_selected_setting` arm).
+/// The settings sections, in global row order: `(tab label, number of rows)`. Drives the tab
+/// labels + which rows belong to each tab + the nav helpers (tab ranges). Row labels + tips live
+/// in `SETTINGS`; the option values/handlers in `set_setting_option`/`settings_active_option`. The
+/// `settings_tables_stay_consistent` test asserts these counts cover every `SETTINGS` row, so a
+/// missed count bump fails the build. Appending a setting = add a `SETTINGS` entry, bump the count
+/// here, and add the option/handler arms.
 pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Agent", 2),
     ("Interaction", 3),
@@ -1382,41 +1383,78 @@ pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Tooltips", 6),
 ];
 
-/// Every settings row's label in global row order — the single list the search filter matches
-/// against (keep in sync with the inline `sections` in `render_settings`).
-pub const SETTINGS_LABELS: [&str; 31] = [
-    "AI agent",              // 0   Agent
-    "Skip permissions",      // 1
-    "Hover effects",         // 2   Interaction
-    "Changed-row flash",     // 3
-    "Changed-row highlight",  // 4
-    "Panel padding",         // 5   Layout
-    "Borders",               // 6
-    "Pane splitter",         // 7
-    "Repo page tabs",        // 8
-    "Repo page",             // 9
-    "Auto branch-check",     // 10
-    "Grouping",              // 11  Lists
-    "Tree view",             // 12
-    "Hide folder lines",     // 13
-    "Merged PRs",            // 14  Pull requests
-    "Auto-pull on launch",   // 15  Sync
-    "Auto-pull limit",       // 16
-    "Auto-pull in tree",     // 17
-    "Icons",                 // 18  Theming
-    "Hide zeros",            // 19
-    "Theme",                 // 20
-    "Background",            // 21
-    "Contrast",              // 22
-    "List selection",        // 23
-    "Button hover",          // 24
-    "All tooltips",          // 25  Tooltips
-    "Footer commands",       // 26
-    "Column headers",        // 27
-    "Group counts",          // 28
-    "Settings rows",         // 29
-    "Help links",            // 30
+/// Static descriptive data for one settings row: its label, its one-line tooltip, and any
+/// option-specific tips (keyed by option index; empty for most rows). Co-locating the label and
+/// its tip in ONE table is the single source of truth — they cannot drift apart on a reorder /
+/// insert (which is exactly how every tooltip once came to describe the wrong setting). The
+/// *behavior* (reading / writing the underlying field) still lives in `set_setting_option` /
+/// `settings_active_option` keyed by the same global row index; the `settings_tables_consistent`
+/// test guards that, the option labels, and the section counts against drift.
+pub struct SettingInfo {
+    pub label: &'static str,
+    pub tip: &'static str,
+    /// Per-option tips (index = option index). Empty when the single `tip` covers the whole row.
+    pub option_tips: &'static [&'static str],
+}
+
+/// Every settings row in global (alphabetical-section) order — see `SETTINGS_TABS`. The ONLY place
+/// row labels + tips live; everything else derives from this or is asserted against it.
+pub const SETTINGS: [SettingInfo; 31] = [
+    // Agent
+    SettingInfo { label: "AI agent", tip: "Which AI agent `c` launches for the selected repo, run in its directory", option_tips: &[] },
+    SettingInfo { label: "Skip permissions", tip: "Launch the agent with its skip-permissions flag (e.g. claude's --dangerously-skip-permissions)", option_tips: &[] },
+    // Interaction
+    SettingInfo { label: "Hover effects", tip: "Highlight actionable elements under the cursor (enables all-motion mouse tracking, which takes over terminal text selection)", option_tips: &[] },
+    SettingInfo { label: "Changed-row flash", tip: "Pulse a row's changed cells after a pull. The status text column (t u) also marks what changed.", option_tips: &[] },
+    SettingInfo { label: "Changed-row highlight", tip: "Steadily highlight a row's changed cells. The status text column (t u) also marks what changed.", option_tips: &[] },
+    // Layout
+    SettingInfo { label: "Panel padding", tip: "A 1-cell inner padding inside every bordered panel and modal", option_tips: &[] },
+    SettingInfo { label: "Borders", tip: "Draw the rounded borders around the two main panes", option_tips: &[] },
+    SettingInfo { label: "Pane splitter", tip: "Draw the draggable splitter grip between the panes", option_tips: &[] },
+    SettingInfo { label: "Repo page tabs", tip: "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ sections have rows)", option_tips: &[] },
+    SettingInfo { label: "Repo page", tip: "Show the repo page as a docked bottom panel instead of full-screen (toggle with b)", option_tips: &[] },
+    SettingInfo { label: "Auto branch-check", tip: "Periodically refresh each repo's local branch/status (no pull) — auto scales the interval with the repo count", option_tips: &[] },
+    // Lists
+    SettingInfo { label: "Grouping", tip: "Render the repo list as named group sections (from groups.json)", option_tips: &[] },
+    SettingInfo { label: "Tree view", tip: "Render the repos as a collapsible directory tree", option_tips: &[] },
+    SettingInfo { label: "Hide folder lines", tip: "Hide the dash-fill leader lines in group / folder headers", option_tips: &[] },
+    // Pull requests
+    SettingInfo { label: "Merged PRs", tip: "Show merged / closed PRs in the list's Pull Request column too (open PRs always show there; detail views always show the PR regardless)", option_tips: &[] },
+    // Sync
+    SettingInfo { label: "Auto-pull on launch", tip: "Pull every repo automatically on launch (off = pull on demand with e / E)", option_tips: &[] },
+    SettingInfo { label: "Auto-pull limit", tip: "Skip the launch auto-pull above this many repos (∞ = no limit)", option_tips: &[] },
+    SettingInfo { label: "Auto-pull in tree", tip: "Allow the launch auto-pull while the directory-tree view is active", option_tips: &[] },
+    // Theming
+    SettingInfo { label: "Icons", tip: "Glyph set for statuses, columns, and markers", option_tips: &[
+        "Unicode glyphs can be colorized per type (e.g. the branch icon gets its own color); emoji use the font's own fixed colors",
+        "Emoji glyphs render 2 cells wide and use the font's fixed colors",
+    ] },
+    SettingInfo { label: "Hide zeros", tip: "Hide zero-count column cells (a dim 0 becomes blank). Emoji mode always hides them.", option_tips: &[] },
+    SettingInfo { label: "Theme", tip: "Color theme: auto-detect the terminal, or force dark / light", option_tips: &[] },
+    SettingInfo { label: "Background", tip: "Surface tone: normal, soft, or terminal (let the terminal background show)", option_tips: &[] },
+    SettingInfo { label: "Contrast", tip: "Strength of text + accent colors. normal = full-contrast text, vivid accents; soft = dimmer text, desaturated accents (gentler, lower contrast)", option_tips: &[] },
+    SettingInfo { label: "List selection", tip: "Selected list-row highlight: a solid blue bar, or a subtle tint that keeps each column's own color", option_tips: &[] },
+    SettingInfo { label: "Button hover", tip: "Button hover: reverse-video (inverted) or a soft tint, for footer/modal hints, tabs, radio chips, and keyboard keys", option_tips: &[] },
+    // Tooltips
+    SettingInfo { label: "All tooltips", tip: "Master switch for all hover tooltips. Off hides every tooltip; the per-area toggles below have no effect. (Tooltips still need Hover effects on.)", option_tips: &[] },
+    SettingInfo { label: "Footer commands", tip: "Tooltips for the footer / status-bar commands (what each command does)", option_tips: &[] },
+    SettingInfo { label: "Column headers", tip: "Tooltips for the column-title headers — also the source of the clickable [x] hide-column button", option_tips: &[] },
+    SettingInfo { label: "Group counts", tip: "Tooltips for a group / folder header's right-corner count (its breakdown)", option_tips: &[] },
+    SettingInfo { label: "Settings rows", tip: "Tooltips for the settings rows (what each setting does)", option_tips: &[] },
+    SettingInfo { label: "Help links", tip: "Tooltips for the help / About links (the link's URL, browser-style)", option_tips: &[] },
 ];
+
+/// Every settings row's label in global row order — DERIVED from `SETTINGS`, so the label list the
+/// search filter / reset plan match against can never drift from the table.
+pub const SETTINGS_LABELS: [&str; SETTINGS.len()] = {
+    let mut out = [""; SETTINGS.len()];
+    let mut index = 0;
+    while index < SETTINGS.len() {
+        out[index] = SETTINGS[index].label;
+        index += 1;
+    }
+    out
+};
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
