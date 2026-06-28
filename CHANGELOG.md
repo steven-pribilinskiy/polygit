@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.82.1 — 2026-06-28
+Accordion: ←-collapse always lands a visible focus; clearer focused-header band
+- collapsing a section with `←` while focused on one of its **rows** used to leave the selection on a now-hidden row, so nothing read as focused — it was unclear what happened. The focus now moves to the section **header** on collapse, so a `←` always lands somewhere visible.
+- the focused accordion header is now a **full-width highlight band** (not just tinted text), so it's unmistakable which section is focused.
+- reordered the settings footer nav hints to `tab/⇧↑↓ tab · ↑↓ move · ←→ value`.
+
 ## v2.82.0 — 2026-06-28
 Settings footer is now two rows so every hotkey is visible
 - the settings modal's hint footer was a single border row and **truncated the rightmost chips** — `R reset` was cut to `R`, and the `Shift+Tab` / `Shift+↑↓` tab-switch keys weren't shown at all. Split it into two: **navigation** (`↑↓ move · ⇧↑↓/tab tab · ←→ value`, or `fold` in accordion) on the row just inside the bottom border, and **actions** (`space/enter toggle · v <layout> view · R reset · esc close`) on the border. Both rows stay fully clickable.

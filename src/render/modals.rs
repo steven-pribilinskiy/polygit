@@ -1373,17 +1373,17 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let (close_line, close_click) = modal_close_button(modal);
     // Two footer rows so every hotkey fits without truncation: navigation hints on the row just
     // inside the bottom border, actions on the border itself. `↑↓`/`←→` are informational; the rest
-    // inject their key when clicked. `⇧↑↓/tab` switches the tab (Shift+↑↓ or Tab/Shift+Tab); `←→`
+    // inject their key when clicked. `tab/⇧↑↓` switches the tab (Tab/Shift+Tab or Shift+↑↓); `←→`
     // changes the selected value (collapses/expands the section in accordion).
     let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let hint = Style::default().fg(Color::DarkGray);
     let value_or_fold = if accordion { " fold" } else { " value" };
     let footer_nav: Vec<(String, Style, Option<HintKey>)> = vec![
+        ("tab/⇧↑↓".to_string(), key, Some(HintKey::Tab)),
+        (" tab".to_string(), hint, Some(HintKey::Tab)),
+        footer_sep(),
         ("↑↓".to_string(), key, None),
         (" move".to_string(), hint, None),
-        footer_sep(),
-        ("⇧↑↓/tab".to_string(), key, Some(HintKey::Tab)),
-        (" tab".to_string(), hint, Some(HintKey::Tab)),
         footer_sep(),
         ("←→".to_string(), key, None),
         (value_or_fold.to_string(), hint, None),
@@ -1670,9 +1670,20 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     let active = app.settings_on_header == Some(*tab_idx);
                     let header = format!(" {chevron} {name} ");
                     let header_w = UnicodeWidthStr::width(header.as_str()) as u16;
-                    app.settings_section_click.push((screen_y, inner.x, inner.x + header_w, *tab_idx));
-                    let style = if active { active_header } else { section_style };
-                    lines.push(Line::from(Span::styled(header, style)));
+                    // The focused header reads as a full-width highlight band (not just tinted text),
+                    // so it's unmistakable which section is focused — e.g. right after a ←-collapse.
+                    // Leave the last column for the scrollbar gutter. The whole band is clickable.
+                    let band_w = inner.width.saturating_sub(1).max(header_w);
+                    app.settings_section_click.push((screen_y, inner.x, inner.x + band_w, *tab_idx));
+                    if active {
+                        let pad = band_w.saturating_sub(header_w) as usize;
+                        lines.push(Line::from(Span::styled(
+                            format!("{header}{:pad$}", "", pad = pad),
+                            active_header,
+                        )));
+                    } else {
+                        lines.push(Line::from(Span::styled(header, section_style)));
+                    }
                 }
                 AccItem::Row(row) => {
                     let (label, options) = &all_rows[*row];

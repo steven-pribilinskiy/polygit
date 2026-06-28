@@ -916,6 +916,13 @@ impl AppState {
         if self.settings_section_collapsed(tab) != collapse {
             self.toggle_settings_section(tab);
         }
+        // Collapsing hides the section's rows. If focus was on one of those rows, move it to the
+        // section header — otherwise the selection would point at a now-hidden row and nothing would
+        // read as focused (you couldn't tell what just happened). The header then shows its
+        // highlight, so a left-press always lands somewhere visible.
+        if collapse {
+            self.settings_on_header = Some(tab);
+        }
     }
 
     /// Whether every settings section is collapsed (drives the expand/collapse-all label).
