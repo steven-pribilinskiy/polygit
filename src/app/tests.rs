@@ -1594,7 +1594,6 @@
         assert!(state.command_applicable(Command::Settings));
         assert!(state.command_applicable(Command::Help));
         assert!(state.command_applicable(Command::Quit));
-        assert!(state.command_applicable(Command::FilterLeader));
         // Folding needs tree or grouping active — both off by default.
         assert!(!state.command_applicable(Command::NavLeft));
         assert!(!state.command_applicable(Command::FoldCollapseAll));

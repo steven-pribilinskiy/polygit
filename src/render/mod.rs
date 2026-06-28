@@ -1103,8 +1103,8 @@ fn fill_row(frame: &mut Frame, row: u16, left: u16, right: u16, symbol: &str, co
 
 /// Draw the pane splitters per `splitter_mode`. Dedicated mode fills each boundary's reserved lane
 /// with a persistent `▒` grip (full-height column for list|preview, full-width row for the dock and
-/// info/result splits); hover mode keeps the panes flush and shows only a thin grip (`▏` vertical,
-/// `▁` horizontal) under the cursor. Either mode brightens to cyan on hover and `█`/cyan while the
+/// info/result splits); hover mode keeps the panes flush and shows only a short heavy grip (`┃`
+/// vertical, `━` horizontal) under the cursor. Either mode brightens to cyan on hover and `█`/cyan while the
 /// vertical splitter is dragged. The vertical grip stays on `divider_col` only (never `col-1`, the
 /// list's scrollbar column).
 fn render_divider(frame: &mut Frame, app: &AppState) {
@@ -1136,7 +1136,7 @@ fn render_divider(frame: &mut Frame, app: &AppState) {
             let half = (area.height / 5).clamp(3, 9) / 2;
             let start = center.saturating_sub(half).max(top);
             let end = (center + half + 1).min(bottom);
-            let (sym, color) = if dragging { ("█", Color::Cyan) } else { ("▏", Color::Cyan) };
+            let (sym, color) = if dragging { ("█", Color::Cyan) } else { ("┃", Color::Cyan) };
             fill_col(frame, col, start, end, sym, color);
         }
     }
@@ -1149,16 +1149,24 @@ fn render_divider(frame: &mut Frame, app: &AppState) {
             return;
         }
         let (left, right) = (x, x + width);
-        let hovered = hover.is_some_and(|(hc, hr)| hr == row && hc >= left && hc < right);
+        // The boundary is two rows thick — the lower pane's top/title border (`row`) and the upper
+        // pane's bottom border (`row - 1`, a clean box-drawing line) — and the grab zone in the event
+        // loop accepts both. So treat either row as a hover, and draw the handle on the upper pane's
+        // bottom border, where there is no title text to clobber.
+        let hovered =
+            hover.is_some_and(|(hc, hr)| (hr == row || hr + 1 == row) && hc >= left && hc < right);
         if dedicated {
             let (sym, color) = if hovered { ("▒", Color::Cyan) } else { ("▒", Color::Gray) };
             fill_row(frame, row, left, right, sym, color);
         } else if hovered {
+            // A short heavy-horizontal handle, centered and mid-cell so it sits on the `─` border
+            // line it overlays and reads as a thicker, grabbable segment.
+            let grip_row = row.saturating_sub(1);
             let center = x + width / 2;
-            let half = (width / 5).clamp(3, 9) / 2;
+            let half = 3u16;
             let start = center.saturating_sub(half).max(left);
             let end = (center + half + 1).min(right);
-            fill_row(frame, row, start, end, "▁", Color::Cyan);
+            fill_row(frame, grip_row, start, end, "━", Color::Cyan);
         }
     };
     if let Some(row) = app.dock_divider_row {

@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.79.0 — 2026-06-28
+Declutter the footer, rename the filter trigger, and fix the horizontal splitter grip
+- the status-filter is now owned entirely by the list-header trigger — **removed the redundant `f by-status` chip from the status-bar footer** (the active `{status}` reset tag still appears there while a filter is on). Dropped the now-dead `FilterLeader` command.
+- **renamed the header trigger to a single word: `f status ⟪failed⟫ ▾`** (was `f by-status`).
+- **fixed the horizontal pane-splitter hover grip** — it used to draw a bottom-hugging `▁` run on the lower pane's title row, clobbering the title text. It now draws a short heavy `━` handle on the upper pane's clean bottom border (no text to cover), and the vertical grip matches it with a heavy `┃` (was a thin `▏`).
+
 ## v2.78.1 — 2026-06-28
 Bring the `f by-status` trigger to full parity with `s sort` / `t cols`
 - the active filter now **rides on the trigger** like the sort tag does — `f by-status ⟪failed⟫ ▾` (and plain `f by-status ▾` when unfiltered), so you can see the active filter on the header, not only in the footer `{status}` tag.
