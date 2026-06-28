@@ -823,52 +823,68 @@ impl AppState {
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
     /// index (see `SETTINGS_TABS`) and the hovered option, if any.
     pub fn settings_tip(row: usize, option: Option<usize>) -> Option<&'static str> {
+        // Keyed by the GLOBAL row index — must stay in lock-step with `SETTINGS_LABELS` /
+        // `SETTINGS_TABS` (alphabetical section order): Agent · Interaction · Layout · Lists ·
+        // Pull requests · Sync · Theming · Tooltips.
         Some(match (row, option) {
-            (3, Some(0)) => {
+            // Agent
+            (0, _) => "Which AI agent `c` launches for the selected repo, run in its directory",
+            (1, _) => "Launch the agent with its skip-permissions flag (e.g. claude's \
+                       --dangerously-skip-permissions)",
+            // Interaction
+            (2, _) => "Highlight actionable elements under the cursor (enables all-motion mouse \
+                       tracking, which takes over terminal text selection)",
+            (3, _) => "Pulse a row's changed cells after a pull. The status text column (t u) \
+                       also marks what changed.",
+            (4, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
+                       also marks what changed.",
+            // Layout
+            (5, _) => "A 1-cell inner padding inside every bordered panel and modal",
+            (6, _) => "Draw the rounded borders around the two main panes",
+            (7, _) => "Draw the draggable splitter grip between the panes",
+            (8, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
+                       sections have rows)",
+            (9, _) => "Show the repo page as a docked bottom panel instead of full-screen \
+                       (toggle with b)",
+            (10, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
+                        scales the interval with the repo count",
+            // Lists
+            (11, _) => "Render the repo list as named group sections (from groups.json)",
+            (12, _) => "Render the repos as a collapsible directory tree",
+            (13, _) => "Hide the dash-fill leader lines in group / folder headers",
+            // Pull requests
+            (14, _) => "Show merged / closed PRs in the list's Pull Request column too (open PRs \
+                        always show there; detail views always show the PR regardless)",
+            // Sync
+            (15, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
+            (16, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
+            (17, _) => "Allow the launch auto-pull while the directory-tree view is active",
+            // Theming
+            (18, Some(0)) => {
                 "Unicode glyphs can be colorized per type (e.g. the branch icon gets its own \
                  color); emoji use the font's own fixed colors"
             }
-            (3, Some(1)) => "Emoji glyphs render 2 cells wide and use the font's fixed colors",
-            (0, _) => "Render the repo list as named group sections (from groups.json)",
-            (1, _) => "Render the repos as a collapsible directory tree",
-            (2, _) => "Hide the dash-fill leader lines in group / folder headers",
-            (3, _) => "Glyph set for statuses, columns, and markers",
-            (4, _) => "Hide zero-count column cells (a dim 0 becomes blank). Emoji mode always \
-                       hides them.",
-            (5, _) => "Color theme: auto-detect the terminal, or force dark / light",
-            (6, _) => "Surface tone: normal, soft, or terminal (let the terminal background show)",
-            (7, _) => "Strength of text + accent colors. normal = full-contrast text, vivid \
-                       accents; soft = dimmer text, desaturated accents (gentler, lower contrast)",
-            (8, _) => "Selected list-row highlight: a solid blue bar, or a subtle tint that keeps \
-                       each column's own color",
-            (9, _) => "Button hover: reverse-video (inverted) or a soft tint, for footer/modal \
-                       hints, tabs, radio chips, and keyboard keys",
-            (10, _) => "Pull every repo automatically on launch (off = pull on demand with e / E)",
-            (11, _) => "Skip the launch auto-pull above this many repos (∞ = no limit)",
-            (12, _) => "Allow the launch auto-pull while the directory-tree view is active",
-            (13, _) => "Highlight actionable elements under the cursor (enables all-motion mouse \
-                        tracking, which takes over terminal text selection)",
-            (14, _) => "Pulse a row's changed cells after a pull. The status text column (t u) \
-                        also marks what changed.",
-            (15, _) => "Steadily highlight a row's changed cells. The status text column (t u) \
-                        also marks what changed.",
-            (16, _) => "A 1-cell inner padding inside every bordered panel and modal",
-            (17, _) => "Draw the rounded borders around the two main panes",
-            (18, _) => "Draw the draggable splitter grip between the panes",
-            (19, _) => "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ \
-                        sections have rows)",
-            (20, _) => "Show the repo page as a docked bottom panel instead of full-screen \
-                        (toggle with b)",
-            (21, _) => "Periodically refresh each repo's local branch/status (no pull) — auto \
-                        scales the interval with the repo count",
-            (22, _) => "Master switch for all hover tooltips. Off hides every tooltip; the per-area \
+            (18, Some(1)) => "Emoji glyphs render 2 cells wide and use the font's fixed colors",
+            (18, _) => "Glyph set for statuses, columns, and markers",
+            (19, _) => "Hide zero-count column cells (a dim 0 becomes blank). Emoji mode always \
+                        hides them.",
+            (20, _) => "Color theme: auto-detect the terminal, or force dark / light",
+            (21, _) => "Surface tone: normal, soft, or terminal (let the terminal background show)",
+            (22, _) => "Strength of text + accent colors. normal = full-contrast text, vivid \
+                        accents; soft = dimmer text, desaturated accents (gentler, lower contrast)",
+            (23, _) => "Selected list-row highlight: a solid blue bar, or a subtle tint that keeps \
+                        each column's own color",
+            (24, _) => "Button hover: reverse-video (inverted) or a soft tint, for footer/modal \
+                        hints, tabs, radio chips, and keyboard keys",
+            // Tooltips
+            (25, _) => "Master switch for all hover tooltips. Off hides every tooltip; the per-area \
                         toggles below have no effect. (Tooltips still need Hover effects on.)",
-            (23, _) => "Tooltips for the footer / status-bar commands (what each command does)",
-            (24, _) => "Tooltips for the column-title headers — also the source of the clickable \
+            (26, _) => "Tooltips for the footer / status-bar commands (what each command does)",
+            (27, _) => "Tooltips for the column-title headers — also the source of the clickable \
                         [x] hide-column button",
-            (25, _) => "Tooltips for a group / folder header's right-corner count (its breakdown)",
-            (26, _) => "Tooltips for the settings rows (what each setting does)",
-            (27, _) => "Tooltips for the help / About links (the link's URL, browser-style)",
+            (28, _) => "Tooltips for a group / folder header's right-corner count (its breakdown)",
+            (29, _) => "Tooltips for the settings rows (what each setting does)",
+            (30, _) => "Tooltips for the help / About links (the link's URL, browser-style)",
             _ => return None,
         })
     }
