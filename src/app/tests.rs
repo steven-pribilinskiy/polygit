@@ -940,6 +940,45 @@
     }
 
     #[test]
+    fn settings_tables_stay_consistent() {
+        // The single-source `SETTINGS` table drives labels + tips; the section counts
+        // (`SETTINGS_TABS`), option labels, defaults, and read/write dispatch are keyed by the
+        // SAME global row index. This test fails loudly if any of them drifts — so adding or
+        // reordering a setting can't silently desync a tooltip / option / handler again.
+        assert_eq!(SETTINGS.len(), AppState::SETTINGS_ROWS);
+        assert_eq!(SETTINGS_LABELS.len(), AppState::SETTINGS_ROWS);
+        let tab_total: usize = SETTINGS_TABS.iter().map(|(_, count)| count).sum();
+        assert_eq!(tab_total, AppState::SETTINGS_ROWS, "SETTINGS_TABS counts must cover every row");
+
+        let mut state = state_named(&["a"]);
+        for row in 0..AppState::SETTINGS_ROWS {
+            // Reset per row: the Icons round-trip leaves emoji mode on, which would gate the
+            // emoji-dependent Hide-zeros row. Unicode lets every row's options round-trip.
+            state.icon_style = crate::app::IconStyle::Unicode;
+            assert!(!SETTINGS[row].label.is_empty(), "row {row} has no label");
+            assert_eq!(SETTINGS[row].label, SETTINGS_LABELS[row], "label desync at row {row}");
+            assert!(AppState::settings_tip(row, None).is_some(), "row {row} has no tooltip");
+            let options = AppState::settings_option_labels(row);
+            assert!(!options.is_empty(), "row {row} has no options");
+            assert!(
+                AppState::settings_default_option(row) < options.len(),
+                "row {row} default option out of range"
+            );
+            assert!(state.settings_active_option(row) < options.len(), "row {row} active out of range");
+            // Every option must round-trip set → active so the write/read dispatch agree.
+            for opt in 0..options.len() {
+                state.set_setting_option(row, opt);
+                assert_eq!(
+                    state.settings_active_option(row),
+                    opt,
+                    "row {row} ({}) option {opt} did not round-trip",
+                    SETTINGS_LABELS[row]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn stash_rows_carry_their_change_stats() {
         let mut state = state_named(&["a"]);
         state.repos[0].lock().unwrap().page = Some(RepoPageData {
