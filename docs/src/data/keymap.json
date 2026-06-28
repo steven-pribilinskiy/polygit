@@ -633,6 +633,21 @@
         ],
         "action": "Dismiss the new-build notice",
         "note": "only while the notice is up; re-arms if the binary changes again (also the clickable `[^X]`); works from any view or modal"
+      },
+      {
+        "keys": [
+          ".",
+          "right-click"
+        ],
+        "action": "Open the repo's kebab (⋮) menu",
+        "note": "state-aware actions: copy a cleanup prompt (with all repo facts embedded), run the agent, lazygit, diff, refetch, open remote",
+        "keywords": [
+          "kebab",
+          "menu",
+          "context",
+          "cleanup",
+          "prompt"
+        ]
       }
     ]
   },

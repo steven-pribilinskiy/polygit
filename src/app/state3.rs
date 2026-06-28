@@ -202,6 +202,7 @@ impl AppState {
             || self.confirm.is_some()
             || self.diff_modal.is_some()
             || self.copy_menu.is_some()
+            || self.kebab.is_some()
             || self.base_picker.is_some()
             || self.show_changelog
     }
@@ -218,6 +219,7 @@ impl AppState {
         self.confirm = None;
         self.diff_modal = None;
         self.copy_menu = None;
+        self.kebab = None;
         self.base_picker = None;
         self.dropdown = None;
         self.finder = None;
@@ -1268,6 +1270,170 @@ impl AppState {
             search: String::new(),
             search_focused: false,
         });
+    }
+
+    /// A state-aware cleanup prompt for an AI agent — every repo fact already embedded so the agent
+    /// doesn't have to re-run `git`/`gh` to discover the situation. Only includes the sections that
+    /// apply (stashes / extra branches / worktrees), and asks for a concrete cleanup pass.
+    pub fn kebab_cleanup_prompt(&self, repo_idx: usize) -> String {
+        let Some(repo) = self.repos.get(repo_idx) else {
+            return String::new();
+        };
+        let state = repo.lock().unwrap();
+        let branch = state.branch.clone().unwrap_or_else(|| "?".to_string());
+        let details = state.details.as_ref();
+        let ahead = details.and_then(|info| info.ahead).unwrap_or(0);
+        let behind = details.and_then(|info| info.behind).unwrap_or(0);
+        let dirty = details.map(|info| info.dirty_count).unwrap_or(0);
+        let stashes = details.map(|info| info.stash_count).unwrap_or(0);
+        let branches = details.map(|info| info.branch_count).unwrap_or(0);
+        let worktrees = self.worktrees.iter().filter(|wt| wt.repo == state.name).count();
+        let pr = state
+            .pr
+            .as_ref()
+            .map(|pr| format!("#{} \"{}\" ({})", pr.number, pr.title, pr.state.label()));
+
+        let mut prompt = String::new();
+        prompt.push_str(&format!(
+            "Review and help clean up the git repository at `{}`.\n\n",
+            state.path.display()
+        ));
+        prompt.push_str("Current state (already gathered — don't re-run these to discover it):\n");
+        prompt.push_str(&format!("- Branch: `{branch}` (ahead {ahead}, behind {behind} vs upstream)\n"));
+        prompt.push_str(&format!(
+            "- Working tree: {}\n",
+            if dirty == 0 { "clean".to_string() } else { format!("{dirty} uncommitted change(s)") }
+        ));
+        prompt.push_str(&format!("- Stashes: {stashes}\n"));
+        prompt.push_str(&format!("- Local branches (excl. main/dev): {branches}\n"));
+        prompt.push_str(&format!("- Worktrees: {worktrees}\n"));
+        if let Some(pr) = pr {
+            prompt.push_str(&format!("- Open PR for this branch: {pr}\n"));
+        }
+        prompt.push_str("\nPlease do a cleanup pass and run the git/gh commands yourself (don't ask me to run them):\n");
+        let mut step = 1;
+        if stashes > 0 {
+            prompt.push_str(&format!(
+                "{step}. For each stash, check its age and whether its changes are already merged into the current branch or main (`git stash list --date=relative`, `git stash show -p stash@{{i}}`); report which are stale/redundant and drop the safe ones.\n"
+            ));
+            step += 1;
+        }
+        if branches > 0 {
+            prompt.push_str(&format!(
+                "{step}. For each local branch, check if it's merged and whether its upstream is gone; delete the ones that are safely removable.\n"
+            ));
+            step += 1;
+        }
+        if worktrees > 0 {
+            prompt.push_str(&format!(
+                "{step}. For each worktree, check if its branch is merged/stale and prune it if so (`git worktree list`, `git worktree remove`).\n"
+            ));
+            step += 1;
+        }
+        prompt.push_str(&format!("{step}. Summarize exactly what you changed and what you left alone, and why.\n"));
+        prompt
+    }
+
+    /// The text the kebab "Copy cleanup prompt" puts on the clipboard — the bare prompt, or wrapped
+    /// as `cd <repo> && claude '<prompt>'` when the session-prefix checkbox is on (single quotes in
+    /// the prompt are escaped so the shell command stays valid).
+    pub fn kebab_copy_text(&self, repo_idx: usize) -> String {
+        let prompt = self.kebab_cleanup_prompt(repo_idx);
+        if !self.kebab_session_prefix {
+            return prompt;
+        }
+        let Some(repo) = self.repos.get(repo_idx) else {
+            return prompt;
+        };
+        let path = repo.lock().unwrap().path.display().to_string();
+        let escaped = prompt.replace('\'', "'\\''");
+        format!("cd {path} && claude '{escaped}'")
+    }
+
+    /// Build the kebab menu items for a repo from its current state (dynamic — diff only when dirty,
+    /// open-remote only with a remote URL, etc.). The session-prefix checkbox is always present.
+    pub fn build_kebab_items(&self, repo_idx: usize) -> Vec<KebabItem> {
+        let Some(repo) = self.repos.get(repo_idx) else {
+            return Vec::new();
+        };
+        let state = repo.lock().unwrap();
+        let dirty = state.details.as_ref().map(|info| info.dirty_count).unwrap_or(0);
+        let has_remote = state.remote_url.is_some();
+        let agent = self.claude_agent.binary();
+        let checkbox = if self.kebab_session_prefix { "[x]" } else { "[ ]" };
+        vec![
+            KebabItem {
+                label: "Copy cleanup prompt".to_string(),
+                action: KebabAction::CopyCleanupPrompt,
+                enabled: true,
+                hint: None,
+            },
+            KebabItem {
+                label: format!("{checkbox} include `cd … && {agent} '…'`"),
+                action: KebabAction::ToggleSessionPrefix,
+                enabled: true,
+                hint: None,
+            },
+            KebabItem {
+                label: format!("Run {agent}"),
+                action: KebabAction::Claude,
+                enabled: true,
+                hint: Some("c".to_string()),
+            },
+            KebabItem {
+                label: "Open lazygit".to_string(),
+                action: KebabAction::Lazygit,
+                enabled: true,
+                hint: Some("l".to_string()),
+            },
+            KebabItem {
+                label: "View diff".to_string(),
+                action: KebabAction::Diff,
+                enabled: dirty > 0,
+                hint: Some("d".to_string()),
+            },
+            KebabItem {
+                label: "Refetch".to_string(),
+                action: KebabAction::Refetch,
+                enabled: true,
+                hint: Some("e".to_string()),
+            },
+            KebabItem {
+                label: "Open remote".to_string(),
+                action: KebabAction::OpenRemote,
+                enabled: has_remote,
+                hint: Some("o".to_string()),
+            },
+        ]
+    }
+
+    /// Open the kebab menu for `repo_idx` (building its state-aware items).
+    pub fn open_kebab(&mut self, repo_idx: usize) {
+        let items = self.build_kebab_items(repo_idx);
+        self.kebab = Some(KebabMenu { repo_idx, items, selected: 0 });
+    }
+
+    pub fn close_kebab(&mut self) {
+        self.kebab = None;
+    }
+
+    /// Move the kebab highlight by `delta`, skipping disabled rows, clamped to the menu.
+    pub fn kebab_move(&mut self, delta: isize) {
+        let Some(menu) = self.kebab.as_mut() else {
+            return;
+        };
+        let len = menu.items.len();
+        if len == 0 {
+            return;
+        }
+        let mut idx = menu.selected as isize;
+        for _ in 0..len {
+            idx = (idx + delta).rem_euclid(len as isize);
+            if menu.items[idx as usize].enabled {
+                menu.selected = idx as usize;
+                return;
+            }
+        }
     }
 
     pub fn open_diff_modal(&mut self, source: DiffSource) {

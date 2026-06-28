@@ -381,6 +381,19 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         } else if app.copy_menu_click.iter().any(|&(row, _)| row == hrow) {
             hits.push(inner_row(app.copy_menu_area));
         }
+    } else if app.kebab.is_some() {
+        // Kebab menu: its close button + hint chips, and a row tint on the hovered (enabled) item.
+        if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.kebab_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if app.kebab_click.iter().any(|&(row, _)| row == hrow) {
+            hits.push(inner_row(app.kebab_area));
+        }
     } else if app.base_picker.is_some() {
         if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
@@ -848,6 +861,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.copy_menu.is_some() {
             render_copy_menu(frame, app, area);
         }
+        if app.kebab.is_some() {
+            render_kebab(frame, app, area);
+        }
         if app.base_picker.is_some() {
             render_base_picker(frame, app, area);
         }
@@ -1013,6 +1029,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.copy_menu.is_some() {
         render_copy_menu(frame, app, area);
+    }
+    if app.kebab.is_some() {
+        render_kebab(frame, app, area);
     }
     if app.base_picker.is_some() {
         render_base_picker(frame, app, area);
