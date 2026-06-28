@@ -35,7 +35,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
     // Top-border triggers, `·`-separated and ordered `filter · sort · columns`. All three open a
-    // dropdown (`f`/`s`/`t` or a click): `f by-status ⟪filter⟫ ▾`, `s sort ⟪col ▲⟫ ▾`, `t cols ▾`.
+    // dropdown (`f`/`s`/`t` or a click): `f status ⟪filter⟫ ▾`, `s sort ⟪col ▲⟫ ▾`, `t cols ▾`.
     // The active filter / sort rides on its trigger (mirrors the footer `{status}` reset tag);
     // when the filter is `all` the tag is omitted. The maximize button is the rightmost element.
     // (The `/` name filter is left in the status-bar footer where its active needle lives.)
@@ -45,8 +45,8 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let sort_label = format!(" sort {sort_tag} ▾");
     let sort_w = (1 + sort_label.chars().count()) as u16;
     let filter_label = match app.status_filter.tag() {
-        Some(tag) => format!(" by-status ⟪{tag}⟫ ▾"),
-        None => " by-status ▾".to_string(),
+        Some(tag) => format!(" status ⟪{tag}⟫ ▾"),
+        None => " status ▾".to_string(),
     };
     let filter_w = (1 + filter_label.chars().count()) as u16;
     let sep_w = 3u16; // " · "

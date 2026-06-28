@@ -341,7 +341,7 @@
           "f"
         ],
         "action": "Status-filter dropdown",
-        "note": "opens the by-status dropdown: a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues",
+        "note": "opens the status dropdown: a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues",
         "keywords": [
           "filter",
           "status"

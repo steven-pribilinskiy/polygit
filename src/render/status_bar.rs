@@ -458,11 +458,10 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
         row2_segments.push((" ".to_string(), hint, None));
         row2_segments.push((format!("[{filter_text}]"), active, Some(Command::ClearNameFilter)));
     }
-    row2_segments.push((" · ".to_string(), hint, None));
-    row2_segments.push(("f".to_string(), key, Some(Command::FilterLeader)));
-    row2_segments.push((" by-status".to_string(), hint, Some(Command::FilterLeader)));
+    // The status filter lives on the list-header `f status ⟪…⟫ ▾` trigger now; the footer keeps only
+    // the active `{status}` tag as a one-click reset (shown only while a filter is on).
     if let Some(tag) = status_filter.tag() {
-        row2_segments.push((" ".to_string(), hint, None));
+        row2_segments.push((" · ".to_string(), hint, None));
         row2_segments.push((
             format!("{{{tag}}}"),
             active,

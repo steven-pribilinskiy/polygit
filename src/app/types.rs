@@ -1725,7 +1725,6 @@ pub enum Command {
     ToggleResultPanel,
     Help,
     OpenPage,
-    FilterLeader,
     SetFilter(StatusFilter),
     /// Close the active leader menu (the clickable `esc` in the filter/view/fold rows).
     LeaderCancel,
@@ -1798,7 +1797,6 @@ impl Command {
             }
             Command::Help => "Open the help modal (keys, flags, glyphs, about)",
             Command::OpenPage => "Open the selected repo's page: branches, worktrees, stashes",
-            Command::FilterLeader => "Filter the list by status",
             Command::SetFilter(_) => "Filter by this status",
             Command::LeaderCancel => "Close this menu",
             Command::NameFilter => "Filter repos by name (type to match)",

@@ -528,13 +528,6 @@ fn dispatch_command(
         Cmd::ToggleResultPanel => app.toggle_result_panel(),
         Cmd::Help => app.open_help(),
         Cmd::OpenPage => app.open_repo_page(),
-        Cmd::FilterLeader => {
-            // `f` / clicking the `f by-status` chip opens the status-filter dropdown under the list
-            // header's trigger (the same dropdown UI as columns/sort).
-            if let Some((row, _, end)) = app.list_filter_click {
-                app.open_dropdown(app::DropdownKind::ListFilter, end, row);
-            }
-        }
         Cmd::SetFilter(filter) => {
             // Picking a filter applies it and closes the leader (unlike the sticky column menu).
             app.set_status_filter(filter);
