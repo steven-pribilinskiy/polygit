@@ -1599,8 +1599,8 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     // Window controls as single-codepoint Emoji_Presentation glyphs (2 cells, no variation selector):
     // white square button = maximize, black square button = restore, cross mark = close. The button
     // renderer measures display width, so the 2-cell glyphs lay out + hit-test correctly.
-    maximize: "🔳",
-    restore: "🔲",
+    maximize: "🗖",
+    restore: "🗗",
     close: "❌",
     copy: "📋",
 };

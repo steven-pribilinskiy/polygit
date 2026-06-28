@@ -869,6 +869,10 @@ pub async fn run_checkout(app_state: Arc<Mutex<AppState>>, repo_idx: usize, bran
         let mut state = app.repos[repo_idx].lock().unwrap();
         if let Some(details) = new_details {
             state.branch = Some(branch);
+            // HEAD moved — the cached pull status was for the old branch (e.g. a "ref gone" whose
+            // upstream is irrelevant now). Re-derive it from the fresh local facts so the list is
+            // in sync with the branch we just checked out.
+            sync_status_to_details(&mut state, &details);
             state.details = Some(details);
         }
         state.page = None;
@@ -1012,9 +1016,29 @@ async fn finish_repo_mutation(
     app.repo_page_message = Some(message);
     let mut state = app.repos[repo_idx].lock().unwrap();
     if let Some(details) = new_details {
+        // Keep the list status in sync after a repo-page mutation (branch delete, discard, drop
+        // stash, remove worktree) — re-derive it from the fresh local facts so a stale pull result
+        // doesn't linger.
+        sync_status_to_details(&mut state, &details);
         state.details = Some(details);
     }
     state.page = None;
+}
+
+/// Re-derive a repo's LIST status from freshly-loaded local details (no pull) and clear the
+/// pull-specific note + elapsed time. Used after repo-page actions that change HEAD / the working
+/// tree, so the main list reflects the repo's current local state instead of the pre-action pull
+/// result (e.g. a "ref gone" that no longer applies once a branch with an upstream is checked out).
+fn sync_status_to_details(state: &mut RepoState, details: &RepoDetails) {
+    state.status = if details.dirty_count > 0 {
+        RepoStatus::Skipped // the list renders a Skipped repo with a dirty tree as "dirty"
+    } else if details.behind.is_none() {
+        RepoStatus::NoUpstream // `behind` is None exactly when the current branch has no upstream
+    } else {
+        RepoStatus::UpToDate // has an upstream + clean tree; the Δ column shows any ahead/behind
+    };
+    state.status_note = None; // drop any stale pull note (e.g. "ref gone")
+    state.elapsed = None; // a local action, not a pull — no "pull took …" time applies
 }
 
 /// Fast-forward the selected repo-page row (a single branch or worktree), set a result

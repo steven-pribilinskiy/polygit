@@ -1940,6 +1940,15 @@ async fn run_event_loop(
                             app.show_settings = false;
                         }
                     }
+                    // The wheel scrolls the settings list by moving the selection (the render keeps
+                    // the selection visible, so a raw scroll offset would just snap back). The drawn
+                    // scrollbar's drag is handled by the generic scrollbar handler above.
+                    let step = wheel_step(mouse.modifiers, 3, 10) as isize;
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => app.settings_move(step),
+                        MouseEventKind::ScrollUp => app.settings_move(-step),
+                        _ => {}
+                    }
                     continue;
                 }
 
