@@ -2326,6 +2326,110 @@ pub(crate) fn render_copy_menu(frame: &mut Frame, app: &mut AppState, area: Rect
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+/// The repo-row kebab (`⋮`) menu: a floating list of state-aware actions for the selected repo.
+/// When the highlighted row is "Copy cleanup prompt", a preview box of the exact text-to-copy is
+/// drawn to its left (the hover/selection preview the user asked for).
+pub(crate) fn render_kebab(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let Some(menu) = app.kebab.clone() else {
+        return;
+    };
+    let name = app
+        .repos
+        .get(menu.repo_idx)
+        .map(|repo| repo.lock().unwrap().name.clone())
+        .unwrap_or_default();
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let label_w = menu.items.iter().map(|item| item.label.chars().count()).max().unwrap_or(20);
+    let width = ((label_w + 6) as u16 + pad).clamp(28, area.width.saturating_sub(2).max(28));
+    let content_rows = usize::from(!app.panel_padding) + menu.items.len() + 2;
+    let height = (content_rows as u16 + 2 + pad).min(area.height.saturating_sub(2).max(6));
+    let modal = centered_rect(width, height, area);
+    let (close_line, close_click) = modal_close_button(modal);
+    let title = format!(" ⋮ {} ", truncate_str(&name, 28));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(title)
+        .title_top(close_line);
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.kebab_area = modal;
+    app.kebab_close_click = close_click;
+    app.kebab_click.clear();
+
+    let mut lines: Vec<Line> = Vec::new();
+    if !app.panel_padding {
+        lines.push(Line::from(String::new()));
+    }
+    for (index, item) in menu.items.iter().enumerate() {
+        let row_y = inner.y + lines.len() as u16;
+        if item.enabled && row_y < inner.y + inner.height {
+            app.kebab_click.push((row_y, index));
+        }
+        let selected = index == menu.selected;
+        let cursor = if selected { "> " } else { "  " };
+        let style = if !item.enabled {
+            Style::default().fg(Color::DarkGray)
+        } else if selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let mut spans = vec![Span::styled(format!("  {cursor}{}", item.label), style)];
+        if let Some(hint) = &item.hint {
+            spans.push(Span::styled(format!("  {hint}"), Style::default().fg(Color::DarkGray)));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::from(String::new()));
+    let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let footer_hint = Style::default().fg(Color::DarkGray);
+    let footer_row = inner.y + lines.len() as u16;
+    lines.push(build_hint_footer(
+        vec![
+            ("  ".to_string(), footer_hint, None),
+            ("↑↓".to_string(), footer_key, None),
+            (" move · ".to_string(), footer_hint, None),
+            ("enter".to_string(), footer_key, Some(HintKey::Enter)),
+            (" run · ".to_string(), footer_hint, Some(HintKey::Enter)),
+            ("esc".to_string(), footer_key, Some(HintKey::Esc)),
+            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
+        ],
+        inner.x,
+        footer_row,
+        &mut app.hint_click,
+    ));
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    // Preview box (left of the menu) showing exactly what "Copy cleanup prompt" will put on the
+    // clipboard — the hover/selection preview. Only when that row is highlighted and there's room.
+    if menu.items.get(menu.selected).map(|item| item.action) == Some(crate::app::KebabAction::CopyCleanupPrompt)
+    {
+        let preview = app.kebab_copy_text(menu.repo_idx);
+        let pv_w = 60u16.min(modal.x.saturating_sub(2));
+        if pv_w >= 24 {
+            let pv_h = height.min(area.height.saturating_sub(2));
+            let pv = Rect { x: modal.x.saturating_sub(pv_w + 1), y: modal.y, width: pv_w, height: pv_h };
+            let pv_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" will copy ");
+            let pv_inner = pv_block.inner(pv);
+            cast_shadow(frame, pv);
+            frame.render_widget(Clear, pv);
+            frame.render_widget(pv_block, pv);
+            let body = super::preview::markdown_to_lines(&preview, pv_inner.width.max(8) as usize);
+            let shown: Vec<Line> = body.into_iter().take(pv_inner.height as usize).collect();
+            frame.render_widget(Paragraph::new(shown), pv_inner);
+        }
+    }
+}
+
 /// The base-branch picker modal: row 0 is "auto-detect" (clears any override), then every
 /// candidate branch. The current override is checked; the detected fork parent is tagged. Scrolls
 /// to keep the highlighted row in view when there are more candidates than fit.

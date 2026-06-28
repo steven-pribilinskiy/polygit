@@ -351,6 +351,7 @@ impl AppState {
             splitter_mode: self.splitter_mode,
             changed_row_effect: self.changed_row_effect,
             tooltips: self.tooltips,
+            kebab_session_prefix: self.kebab_session_prefix,
             design_layout: self.design_layout,
             last_seen_version: env!("CARGO_PKG_VERSION").to_string(),
             cli_help_mode: self.cli_builder.help_mode,

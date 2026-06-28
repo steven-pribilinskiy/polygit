@@ -724,6 +724,44 @@ impl Default for RepoPageColumns {
     }
 }
 
+/// An action in a repo row's kebab (`⋮`) menu. Items are built dynamically from the repo's state
+/// (e.g. a stash-cleanup prompt only appears when there are stashes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KebabAction {
+    /// Copy a state-aware cleanup prompt (all repo facts embedded) for an AI agent.
+    CopyCleanupPrompt,
+    /// Toggle the "wrap the copied prompt in `cd <repo> && claude '<prompt>'`" checkbox.
+    ToggleSessionPrefix,
+    /// Launch the configured AI agent in the repo.
+    Claude,
+    /// Launch lazygit in the repo.
+    Lazygit,
+    /// Open the repo's working-tree diff.
+    Diff,
+    /// Refetch (re-pull + refresh) this repo.
+    Refetch,
+    /// Open the repo's remote in the browser.
+    OpenRemote,
+}
+
+/// One row in the kebab menu: its label, the action it fires, whether it's enabled, and an optional
+/// trailing key hint (so the menu doubles as a discoverability cheat-sheet for the row's hotkeys).
+#[derive(Debug, Clone)]
+pub struct KebabItem {
+    pub label: String,
+    pub action: KebabAction,
+    pub enabled: bool,
+    pub hint: Option<String>,
+}
+
+/// The open kebab (`⋮`) menu for a repo row: which repo, the built items, and the highlighted index.
+#[derive(Debug, Clone)]
+pub struct KebabMenu {
+    pub repo_idx: usize,
+    pub items: Vec<KebabItem>,
+    pub selected: usize,
+}
+
 /// A toggleable column on the repo page's **Stashes** tab. A stash has its own independent columns
 /// (no upstream / ahead-behind / base / PR); the ref + message always show, age + stats are optional.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

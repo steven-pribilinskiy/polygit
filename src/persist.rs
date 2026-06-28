@@ -156,6 +156,9 @@ pub struct PersistedState {
     /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). All default on.
     #[serde(default)]
     pub tooltips: TooltipPrefs,
+    /// Kebab-menu "wrap copied prompt in `cd <repo> && claude '…'`" checkbox (default off).
+    #[serde(default)]
+    pub kebab_session_prefix: bool,
     /// Help Design System tab layout (flat / tabbed). Default flat.
     #[serde(default)]
     pub design_layout: DesignLayout,

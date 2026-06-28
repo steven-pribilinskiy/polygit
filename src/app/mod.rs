@@ -356,6 +356,14 @@ pub struct AppState {
     /// The accordion expand/collapse-all button region: (row, col_start, col_end). Rebuilt each render.
     pub settings_collapse_all_click: Option<(u16, u16, u16)>,
     /// The repo-page `y` copy menu, when open: the selected option (0 = path, 1 = branch, 2 = both).
+    /// The open kebab (`⋮`) row menu, if any (state-aware actions for the selected repo).
+    pub kebab: Option<KebabMenu>,
+    /// The kebab menu's outer rect (outside-click closes) + per-row item click regions + close button.
+    pub kebab_area: Rect,
+    pub kebab_click: Vec<(u16, usize)>,
+    pub kebab_close_click: Option<(u16, u16, u16)>,
+    /// The "wrap copied prompt in `cd <repo> && claude '…'`" checkbox state (persisted).
+    pub kebab_session_prefix: bool,
     pub copy_menu: Option<usize>,
     /// A transient toast (auto-dismisses after `TOAST_DURATION`).
     pub toast: Option<Toast>,
@@ -854,6 +862,11 @@ impl AppState {
             settings_tab_click: Vec::new(),
             settings_section_click: Vec::new(),
             settings_collapse_all_click: None,
+            kebab: None,
+            kebab_area: Rect::default(),
+            kebab_click: Vec::new(),
+            kebab_close_click: None,
+            kebab_session_prefix: persisted.kebab_session_prefix,
             copy_menu: None,
             toast: None,
             settings_area: Rect::default(),

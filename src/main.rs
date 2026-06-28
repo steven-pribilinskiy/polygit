@@ -485,6 +485,68 @@ fn cursor_tip(cursor: Option<(u16, u16)>, text: String) -> Option<app::HoverTip>
     })
 }
 
+/// Run the kebab menu's currently-highlighted action. Mutates `app` + the loop's pending/queue
+/// state, mirroring the equivalent top-level hotkeys. Toggling the session-prefix checkbox keeps the
+/// menu open (rebuilds its items); every other action closes it.
+fn kebab_activate(
+    app: &mut AppState,
+    retry_queue: &mut Vec<usize>,
+    pending_claude: &mut Option<std::path::PathBuf>,
+    pending_lazygit: &mut Option<std::path::PathBuf>,
+) {
+    let Some(menu) = app.kebab.as_ref() else {
+        return;
+    };
+    let idx = menu.repo_idx;
+    let Some(item) = menu.items.get(menu.selected) else {
+        return;
+    };
+    if !item.enabled {
+        return;
+    }
+    match item.action {
+        app::KebabAction::ToggleSessionPrefix => {
+            app.kebab_session_prefix = !app.kebab_session_prefix;
+            app.save_state();
+            app.open_kebab(idx); // rebuild so the checkbox label updates
+            if let Some(menu) = app.kebab.as_mut() {
+                menu.selected = 1; // keep the highlight on the checkbox row
+            }
+        }
+        app::KebabAction::CopyCleanupPrompt => {
+            let text = app.kebab_copy_text(idx);
+            app.show_copy_toast(&text);
+            app.close_kebab();
+            copy_to_clipboard(&text);
+        }
+        app::KebabAction::Claude => {
+            *pending_claude = Some(app.repos[idx].lock().unwrap().path.clone());
+            app.close_kebab();
+        }
+        app::KebabAction::Lazygit => {
+            *pending_lazygit = Some(app.repos[idx].lock().unwrap().path.clone());
+            app.close_kebab();
+        }
+        app::KebabAction::Diff => {
+            app.close_kebab();
+            app.toggle_diff_view();
+        }
+        app::KebabAction::Refetch => {
+            if app.repos[idx].lock().unwrap().status.is_terminal() {
+                retry_queue.push(idx);
+            }
+            app.close_kebab();
+        }
+        app::KebabAction::OpenRemote => {
+            let url = app.repos[idx].lock().unwrap().remote_url.clone();
+            app.close_kebab();
+            if let Some(url) = url {
+                open_url(&url);
+            }
+        }
+    }
+}
+
 fn dispatch_command(
     command: Cmd,
     app: &mut AppState,
@@ -1994,6 +2056,52 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Kebab (⋮) row menu: click an item to run it, the checkbox to toggle it, [x] or
+                // outside to close. Scroll/other events are swallowed while it's open.
+                if app.kebab.is_some() {
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        let item = app
+                            .kebab_click
+                            .iter()
+                            .find(|(row, _)| *row == mouse.row)
+                            .map(|(_, index)| *index);
+                        if region_hit(app.kebab_close_click, mouse.column, mouse.row)
+                            || !point_in(app.kebab_area, mouse.column, mouse.row)
+                        {
+                            app.close_kebab();
+                        } else if let Some(index) = item {
+                            if let Some(menu) = app.kebab.as_mut() {
+                                menu.selected = index;
+                            }
+                            kebab_activate(
+                                &mut app,
+                                &mut retry_queue,
+                                &mut pending_claude,
+                                &mut pending_lazygit,
+                            );
+                        }
+                    }
+                    continue;
+                }
+
+                // Right-click a repo row opens its kebab (⋮) menu (the mouse counterpart of `.`).
+                // Only over the bare list — never while an overlay/picker is up.
+                if let MouseEventKind::Down(MouseButton::Right) = mouse.kind {
+                    if !app.any_modal_open()
+                        && app.dropdown.is_none()
+                        && app.picker.is_none()
+                        && app.finder.is_none()
+                    {
+                        if let Some(selection) = app.list_selection_at(mouse.column, mouse.row) {
+                            app.selected = selection;
+                            if let Some(idx) = app.selected_repo_index() {
+                                app.open_kebab(idx);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // Copy menu: click an option to copy it, [x] or outside to close.
                 if app.copy_menu.is_some() {
                     if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
@@ -3062,6 +3170,30 @@ async fn run_event_loop(
                 }
 
                 // Copy menu (`y` on the repo page): pick path / branch / both, then copy.
+                if app.kebab.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('.') => app.close_kebab(),
+                        KeyCode::Char('j') | KeyCode::Down => app.kebab_move(1),
+                        KeyCode::Char('k') | KeyCode::Up => app.kebab_move(-1),
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            kebab_activate(
+                                &mut app,
+                                &mut retry_queue,
+                                &mut pending_claude,
+                                &mut pending_lazygit,
+                            );
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if app.copy_menu.is_some() {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -3988,6 +4120,13 @@ async fn run_event_loop(
                     }
                     (KeyCode::Char('b'), _) => app.toggle_selected_favorite(),
                     (KeyCode::Char('B'), _) => app.toggle_favorites_first(),
+
+                    // `.` opens the kebab (⋮) menu for the selected repo (state-aware actions).
+                    (KeyCode::Char('.'), _) => {
+                        if let Some(idx) = app.selected_repo_index() {
+                            app.open_kebab(idx);
+                        }
+                    }
 
                     // Open the fuzzy finder overlay (jump to any repo across all folders).
                     (KeyCode::Char('P'), _) => app.open_finder(),

@@ -3,6 +3,17 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.95.0 — 2026-06-28
+Kebab (`⋮`) row menu with a state-aware cleanup prompt
+- press **`.`** (or right-click a repo) to open a per-repo kebab menu of state-aware actions.
+- **Copy cleanup prompt** copies a prompt with every repo fact already embedded (branch,
+  ahead/behind, working tree, stash/branch/worktree counts, open PR) plus a tailored cleanup
+  checklist — so an agent doesn't re-run `git`/`gh` to discover the situation. A **`[ ] include
+  cd … && claude '…'`** checkbox wraps it as a ready-to-run session command; hovering the item
+  shows a **live preview** of exactly what will be copied.
+- the menu also surfaces Run agent · lazygit · diff · refetch · open remote (each with its hotkey).
+- (next: a "Checkout branch…" item with a filterable fetch+local branch picker.)
+
 ## v2.94.0 — 2026-06-28
 Commit graph on the Commits tab (GitKraken-style, truecolor lanes)
 - the Commits tab now draws a **commit graph** left of each row: 24-bit truecolor branch lanes with
