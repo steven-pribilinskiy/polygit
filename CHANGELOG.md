@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.91.0 — 2026-06-28
+Stash creation time on the repo page
+- the **Stashes** tab now has an **age** column ("3 days ago") between the ref and the change stats,
+  and the bottom info panel shows a **created** row for the selected stash — both in relative
+  "time ago" format, read from the stash commit's committer date (`git stash list --format=%cr`).
+
 ## v2.90.1 — 2026-06-28
 Fix: reset-to-defaults matches the new defaults
 - the settings **Reset** had its own hardcoded default table that wasn't updated for v2.90.0, so it

@@ -530,6 +530,17 @@ pub(crate) fn build_repo_page_info_lines(
             let stash_ref = format!("stash@{{{}}}", row.stash_index.unwrap_or(0));
             lines.push(pair("stash", stash_ref));
             lines.push(pair("label", row.branch.clone()));
+            if !row.last_commit_rel.is_empty() {
+                lines.push(pair("created", row.last_commit_rel.clone()));
+            }
+            let changes = match row.stats {
+                Some(stats) => format!(
+                    "+{} ~{} -{}  (Σ {})",
+                    stats.added, stats.modified, stats.deleted, stats.total()
+                ),
+                None => "computing…".to_string(),
+            };
+            lines.push(pair("changes", changes));
         }
         PageRowKind::Branch | PageRowKind::Worktree => {
             let head = if row.is_head { "  (HEAD)" } else { "" };
@@ -1174,8 +1185,8 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             ));
         }
         // Stashes have their OWN columns (a stash has no upstream / ahead-behind / base / PR): the
-        // `stash@{N}` ref, its change stats (added/modified/deleted/total from `git stash show`),
-        // and the stash message. The ref column grows to its longest entry; the message fills.
+        // `stash@{N}` ref, its relative **age**, its change stats (added/modified/deleted/total from
+        // `git stash show`), and the message. The ref + age columns grow to fit; the message fills.
         let stats_text = |row: &PageRow| match row.stats {
             Some(stats) => {
                 format!("+{} ~{} -{}  Σ{}", stats.added, stats.modified, stats.deleted, stats.total())
@@ -1188,12 +1199,17 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             .max()
             .unwrap_or(10)
             .clamp(8, 16);
+        let age_w = stash_rows()
+            .map(|row| UnicodeWidthStr::width(row.last_commit_rel.as_str()))
+            .max()
+            .unwrap_or(0)
+            .clamp(4, 16);
         let stats_w = stash_rows()
             .map(|row| UnicodeWidthStr::width(stats_text(row).as_str()))
             .max()
             .unwrap_or(8)
             .clamp(4, 24);
-        let used = 2 + ref_w + 2 + stats_w + 2;
+        let used = 2 + ref_w + 2 + age_w + 2 + stats_w + 2;
         let subject_w = (inner.width as usize).saturating_sub(used).max(10);
         for (sel_index, row) in rows.iter().enumerate() {
             if row.kind != PageRowKind::Stash {
@@ -1206,6 +1222,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
                         format!("  {:<ref_w$}", truncate_str(&stash_ref, ref_w)),
                         Style::default().fg(Color::Magenta),
                     ),
+                    Span::styled(format!("  {:<age_w$}", truncate_str(&row.last_commit_rel, age_w)), label),
                     Span::styled(format!("  {:<stats_w$}", truncate_str(&stats_text(row), stats_w)), label),
                     Span::raw(format!("  {}", truncate_str(&row.branch, subject_w))),
                 ]),

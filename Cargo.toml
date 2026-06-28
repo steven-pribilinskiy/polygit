@@ -7,7 +7,7 @@ resolver = "2"
 
 [package]
 name = "polygit"
-version = "2.90.1"
+version = "2.91.0"
 edition = "2024"
 
 [[bin]]

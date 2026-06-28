@@ -682,8 +682,11 @@ async fn run_diff(args: &[&str]) -> Vec<String> {
 /// List stash entries (`git stash list`), newest (`stash@{0}`) first.
 pub async fn list_stashes(dir: &Path) -> Vec<StashInfo> {
     let dir_str = dir.to_str().unwrap_or(".");
+    // `%gs` = stash subject, `%cr` = committer date relative ("3 days ago"), `%ct` = committer Unix
+    // timestamp (for sorting). A stash is a real commit, so it carries both dates. Fields are split
+    // on the unit separator (\x1f) so a subject containing spaces / colons stays intact.
     let output = match Command::new("git")
-        .args(["-C", dir_str, "stash", "list", "--format=%gs"])
+        .args(["-C", dir_str, "stash", "list", "--format=%gs%x1f%cr%x1f%ct"])
         .output()
         .await
     {
@@ -694,10 +697,12 @@ pub async fn list_stashes(dir: &Path) -> Vec<StashInfo> {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .enumerate()
-        .map(|(index, label)| StashInfo {
-            index,
-            label: label.to_string(),
-            stats: None,
+        .map(|(index, line)| {
+            let mut fields = line.split('\u{1f}');
+            let label = fields.next().unwrap_or("").to_string();
+            let date_rel = fields.next().unwrap_or("").to_string();
+            let created_secs = fields.next().and_then(|secs| secs.trim().parse().ok()).unwrap_or(0);
+            StashInfo { index, label, date_rel, created_secs, stats: None }
         })
         .collect()
 }
