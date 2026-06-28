@@ -732,12 +732,26 @@ pub async fn run_branch_stats(repo: SharedRepoState) {
         let Some(page) = state.page.as_ref() else {
             return;
         };
-        // Each job carries the branch name + its override (if any) — resolved off-lock below.
-        let jobs: Vec<(String, Option<String>)> = page
+        // The open PR's target branch is the HEAD branch's base (it's where it'll merge). Only the
+        // current branch has a resolved PR, so this applies to the `is_head` row.
+        let pr_base = state
+            .pr
+            .as_ref()
+            .filter(|pr| pr.state == crate::app::PrState::Open && !pr.base_ref.is_empty())
+            .map(|pr| pr.base_ref.clone());
+        // Each job carries the branch name + its override (if any) + the PR base (HEAD only) —
+        // resolved off-lock below.
+        let jobs: Vec<(String, Option<String>, Option<String>)> = page
             .branches
             .iter()
             .filter(|branch| branch.stats.is_none())
-            .map(|branch| (branch.name.clone(), state.base_overrides.get(&branch.name).cloned()))
+            .map(|branch| {
+                (
+                    branch.name.clone(),
+                    state.base_overrides.get(&branch.name).cloned(),
+                    if branch.is_head { pr_base.clone() } else { None },
+                )
+            })
             .collect();
         (state.path.clone(), jobs)
     };
@@ -746,14 +760,16 @@ pub async fn run_branch_stats(repo: SharedRepoState) {
     }
     let semaphore = Arc::new(Semaphore::new(4));
     let mut handles = Vec::new();
-    for (name, override_ref) in jobs {
+    for (name, override_ref, pr_base) in jobs {
         let repo = Arc::clone(&repo);
         let path = path.clone();
         let semaphore = Arc::clone(&semaphore);
         handles.push(tokio::spawn(async move {
             let _permit = semaphore.acquire_owned().await.ok();
             let is_override = override_ref.as_deref().is_some_and(|over| !over.is_empty());
-            let Some(base) = resolve_base(&path, &name, override_ref.as_deref()).await else {
+            let Some(base) =
+                resolve_base(&path, &name, override_ref.as_deref(), pr_base.as_deref()).await
+            else {
                 return;
             };
             let merge_base = merge_base_with(&path, &base, &name).await;

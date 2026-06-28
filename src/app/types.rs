@@ -133,6 +133,10 @@ pub struct PrInfo {
     /// cache entries written before this field existed.
     #[serde(default)]
     pub state: PrState,
+    /// The PR's target branch (`baseRefName`) — used as the branch's base when the PR is open, so
+    /// the repo-page `base` column matches where the branch will actually merge. Empty if unknown.
+    #[serde(default)]
+    pub base_ref: String,
 }
 
 /// One collapsible block in the PR viewer below the meta header: the description, or a single
@@ -226,6 +230,9 @@ pub struct BranchInfo {
     pub name: String,
     pub is_head: bool,
     pub upstream: Option<String>,
+    /// The configured upstream's remote ref was deleted (`%(upstream:track)` == `gone`) — e.g. the
+    /// branch's PR merged and its remote branch was auto-deleted. Shown as a "ref gone" marker.
+    pub upstream_gone: bool,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub last_commit_rel: String,
@@ -529,6 +536,8 @@ pub struct PageRow {
     pub base_is_override: bool,
     /// Abbreviated parent shas — set for **commit** rows only (drives the Commits-tab graph lanes).
     pub parents: Vec<String>,
+    /// Branch rows: the tracked upstream's remote ref was deleted ("ref gone").
+    pub upstream_gone: bool,
 }
 
 impl PageRow {
@@ -708,12 +717,14 @@ pub struct RepoPageColumns {
 
 impl Default for RepoPageColumns {
     fn default() -> Self {
+        // A leaner default set: the per-status add/mod/del breakdown is off (the `total` Σ covers it
+        // at a glance; enable them via `t cols ▾` when you want the split).
         Self {
             ahead_behind: true,
             dirty: true,
-            added: true,
-            modified: true,
-            deleted: true,
+            added: false,
+            modified: false,
+            deleted: false,
             total: true,
             upstream: true,
             base: true,

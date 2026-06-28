@@ -3,6 +3,20 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.100.0 — 2026-06-29
+Repo page: smarter base, flexible upstream/base columns, ref-gone marker, leaner defaults
+- **base resolution fixed** — the `base` column now only ever resolves to a **conventional
+  integration branch** (`dev` / `stage` / `main` / …), never a sibling feature branch the branch
+  happened to fork from. Priority: explicit override → the **open PR's target** branch (so it matches
+  where the branch actually merges) → the closest conventional branch → the repo's default branch.
+- the **upstream** and **base** columns now **grow to fit** their longest value (up to 40 cols)
+  instead of truncating at a fixed 28 — long refs are readable, and leftover width still flows to the
+  subject column.
+- a branch whose tracked upstream was deleted now shows a **`✗` "ref gone"** marker (red) in the
+  `upstream` column and an explicit note in the info panel.
+- the repo page's **default columns are leaner** — the per-status `+a ~m -d` breakdown is **off** by
+  default (the `Σ` total covers it; enable the split via `t cols ▾`).
+
 ## v2.99.0 — 2026-06-28
 Kebab menu looks like a dropdown; help lists favorites + the kebab menu
 - the kebab (`⋮`) menu now renders like the header dropdowns: **anchored under the `⋮` button**

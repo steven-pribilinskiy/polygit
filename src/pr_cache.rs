@@ -95,6 +95,7 @@ mod tests {
                     title: "fix".into(),
                     url: "https://x/pull/42".into(),
                     state: crate::app::PrState::Open,
+                    base_ref: "main".into(),
                 }),
                 checked_at: 123,
             },

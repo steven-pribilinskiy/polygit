@@ -58,11 +58,21 @@ opens the stash columns dropdown (age / stats) instead of the branch columns —
 the Commits tab (fixed layout). When **maximized** (flat), the page stacks every section.
 The **pr** column shows the current branch's pull request — open, merged, or closed (a clickable
 `#N`, via `gh`) on the HEAD row, blank on the others. Clicking it opens the [PR viewer
-modal](#pr-viewer-modal). The added/modified/deleted counts are each branch's changes vs the merge-base with the
-repo's default branch, computed in the background (cells show `…` until ready). A column every
-branch leaves empty auto-hides and its dropdown row goes dim and inert. Choices persist across runs.
-The page distributes its width across the visible columns — hiding columns reclaims that space
-for the **branch** and **subject** text columns (they expand to fill it instead of truncating).
+modal](#pr-viewer-modal). The change counts are each branch's changes vs the merge-base with its
+**base branch**, computed in the background (cells show `…` until ready). The per-status
+**added / modified / deleted** columns are **off by default** (the `Σ` total covers them at a glance;
+enable the split via `t cols ▾`). A column every branch leaves empty auto-hides and its dropdown row
+goes dim and inert. Choices persist across runs. The page distributes its width across the visible
+columns — hiding columns reclaims that space for the **branch** and **subject** text columns (they
+expand to fill it), and the **upstream** / **base** columns also **grow to fit** their longest value
+instead of truncating. A branch whose tracked upstream's remote ref was deleted shows a red **`✗`
+"ref gone"** marker in the upstream column.
+
+**Base branch resolution.** A branch's base (what its change stats diff against) resolves in this
+order: an explicit **override** (set via the base picker) → the **open PR's target** branch (so it
+matches where the branch will actually merge) → the closest **conventional integration branch**
+(`dev` / `stage` / `main` / `master` / `develop` / `staging`) → the repo's **default branch**. It
+never resolves to a sibling feature branch the branch merely forked from.
 
 `i` toggles a bottom **info panel** detailing the selected row: branch, upstream, base branch
 plus merge-base sha, ahead/behind, change stats, and the tip commit (sha · author · date ·
