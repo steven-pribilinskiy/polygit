@@ -1367,43 +1367,39 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         (base_width, base_rows + search_rows)
     };
     let width = (width + 2 + pad).min(area.width.saturating_sub(2)).max(20);
-    let height = (content_rows + 2 + pad).min(area.height.saturating_sub(2).max(6));
+    // +1 for the in-content navigation footer row (the action footer is on the bottom border).
+    let height = (content_rows + 3 + pad).min(area.height.saturating_sub(2).max(6));
     let modal = centered_rect(width, height, area);
     let (close_line, close_click) = modal_close_button(modal);
-    // One clickable footer on the bottom border — the single source of every settings hint (the
-    // old layout doubled them: an in-content key row AND a plain border line). `move` is
-    // informational; tab / space / enter / v / esc inject their keys.
+    // Two footer rows so every hotkey fits without truncation: navigation hints on the row just
+    // inside the bottom border, actions on the border itself. `↑↓`/`←→` are informational; the rest
+    // inject their key when clicked. `⇧↑↓/tab` switches the tab (Shift+↑↓ or Tab/Shift+Tab); `←→`
+    // changes the selected value (collapses/expands the section in accordion).
     let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let hint = Style::default().fg(Color::DarkGray);
-    let mut footer: Vec<(String, Style, Option<HintKey>)> =
-        vec![("↑↓".to_string(), key, None), (" move".to_string(), hint, None), footer_sep()];
-    if tabbed {
-        // Tab / Shift+Tab (or Shift+↑↓) switch the tab; ←/→ change the selected value.
-        footer.push(("tab".to_string(), key, Some(HintKey::Tab)));
-        footer.push((" tab".to_string(), hint, Some(HintKey::Tab)));
-        footer.push(footer_sep());
-        footer.push(("←→".to_string(), key, None));
-        footer.push((" value".to_string(), hint, None));
-        footer.push(footer_sep());
-    } else if accordion {
-        footer.push(("←→".to_string(), key, None));
-        footer.push((" fold".to_string(), hint, None));
-        footer.push(footer_sep());
-    } else {
-        footer.push(("←→".to_string(), key, None));
-        footer.push((" value".to_string(), hint, None));
-        footer.push(footer_sep());
-    }
-    footer.push(("space".to_string(), key, Some(HintKey::Char(' '))));
-    footer.push(("/".to_string(), hint, None));
-    footer.push(("enter".to_string(), key, Some(HintKey::Enter)));
-    footer.push((" toggle".to_string(), hint, Some(HintKey::Enter)));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("v", app.settings_layout.next_label(), HintKey::Char('v')));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("R", " reset", HintKey::Char('R')));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let value_or_fold = if accordion { " fold" } else { " value" };
+    let footer_nav: Vec<(String, Style, Option<HintKey>)> = vec![
+        ("↑↓".to_string(), key, None),
+        (" move".to_string(), hint, None),
+        footer_sep(),
+        ("⇧↑↓/tab".to_string(), key, Some(HintKey::Tab)),
+        (" tab".to_string(), hint, Some(HintKey::Tab)),
+        footer_sep(),
+        ("←→".to_string(), key, None),
+        (value_or_fold.to_string(), hint, None),
+    ];
+    let mut footer_actions: Vec<(String, Style, Option<HintKey>)> = vec![
+        ("space".to_string(), key, Some(HintKey::Char(' '))),
+        ("/".to_string(), hint, None),
+        ("enter".to_string(), key, Some(HintKey::Enter)),
+        (" toggle".to_string(), hint, Some(HintKey::Enter)),
+        footer_sep(),
+    ];
+    footer_actions.extend(footer_chip("v", app.settings_layout.next_label(), HintKey::Char('v')));
+    footer_actions.push(footer_sep());
+    footer_actions.extend(footer_chip("R", " reset", HintKey::Char('R')));
+    footer_actions.push(footer_sep());
+    footer_actions.extend(footer_chip("esc", " close", HintKey::Esc));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -1411,11 +1407,25 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         .border_style(Style::default().fg(Color::Cyan))
         .title(" Settings ")
         .title_top(close_line)
-        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
+        .title_bottom(modal_border_footer(footer_actions, modal, &mut app.hint_click));
     let inner = block.inner(modal);
+    // Reserve the last inner row for the navigation footer line (the action hints sit on the bottom
+    // border); rendering both as one row truncated the rightmost chips (e.g. `R reset`).
+    let nav_footer_row = inner.y + inner.height.saturating_sub(1);
+    let inner = Rect { height: inner.height.saturating_sub(1), ..inner };
+    let nav_line = crate::render::status_bar::build_hint_footer(
+        footer_nav,
+        inner.x,
+        nav_footer_row,
+        &mut app.hint_click,
+    );
     cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
+    frame.render_widget(
+        Paragraph::new(nav_line),
+        Rect { x: inner.x, y: nav_footer_row, width: inner.width, height: 1 },
+    );
     app.settings_area = modal;
     app.settings_close_click = close_click;
     app.settings_click.clear();
