@@ -545,7 +545,12 @@ pub(crate) fn build_repo_page_info_lines(
         PageRowKind::Branch | PageRowKind::Worktree => {
             let head = if row.is_head { "  (HEAD)" } else { "" };
             lines.push(pair("branch", format!("{}{head}", row.branch)));
-            lines.push(pair("upstream", row.upstream.clone().unwrap_or_else(|| "(none)".to_string())));
+            let upstream_text = match (&row.upstream, row.upstream_gone) {
+                (Some(name), true) => format!("{name} — ref gone (remote branch deleted)"),
+                (Some(name), false) => name.clone(),
+                (None, _) => "(none)".to_string(),
+            };
+            lines.push(pair("upstream", upstream_text));
             // The open PR (resolved for the repo's current branch) shows on the HEAD row only.
             if row.is_head {
                 if let Some(pr) = pr {
@@ -839,14 +844,37 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     // the text columns instead of leaving them truncated.
     let inner_w = inner.width as usize;
     let count_cell_w = 1 + count_w; // count_cell prefixes a single space
+    // `upstream` / `base` grow to fit their longest value (so a long ref isn't truncated when there's
+    // room), capped so they can't crowd out the text columns; the leftover still flows to `subject`.
+    const COL_FLEX_MAX: usize = 40;
+    let upstream_w = if columns.upstream {
+        rows.iter()
+            .filter_map(|row| row.upstream.as_deref().map(|name| name.chars().count() + if row.upstream_gone { 2 } else { 0 }))
+            .max()
+            .unwrap_or(0)
+            .max("upstream".len())
+            .min(COL_FLEX_MAX)
+    } else {
+        0
+    };
+    let base_w = if columns.base {
+        rows.iter()
+            .filter_map(|row| row.base.as_deref().map(|name| name.chars().count() + usize::from(row.base_is_override)))
+            .max()
+            .unwrap_or(0)
+            .max("base".len())
+            .min(COL_FLEX_MAX)
+    } else {
+        0
+    };
     let fixed_after_branch = if columns.ahead_behind { 12 } else { 0 } // "  " + 10
         + usize::from(columns.dirty) * count_cell_w
         + usize::from(columns.added) * count_cell_w
         + usize::from(columns.modified) * count_cell_w
         + usize::from(columns.deleted) * count_cell_w
         + usize::from(columns.total) * count_cell_w
-        + if columns.upstream { 30 } else { 0 } // "  " + 28
-        + if columns.base { 30 } else { 0 } // "  " + 28
+        + if columns.upstream { 2 + upstream_w } else { 0 }
+        + if columns.base { 2 + base_w } else { 0 }
         + if columns.age { 16 } else { 0 } // "  " + 14
         + if columns.pull_request { 9 } else { 0 }; // "  " + 7
     let branch_floor = "branch".len() + 1; // +1 so the sort ▲/▼ never overflows the header
@@ -871,6 +899,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
                       stats: Option<crate::app::BranchStats>,
                       dirty: Option<u32>,
                       upstream: &str,
+                      upstream_gone: bool,
                       base: &str,
                       base_override: bool,
                       base_clickable: bool,
@@ -901,9 +930,15 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             spans.push(count_cell("Σ", stats.map(|stat| stat.total()), count_w, Color::Gray));
         }
         if columns.upstream {
-            // Pad to the header's fixed 28-cell width so the following `base` column starts at a
-            // stable screen column regardless of upstream length (or its absence on no-up rows).
-            spans.push(Span::styled(format!("  {:<28}", truncate_str(upstream, 28)), label));
+            // Pad to the (now flexible) upstream width so the following `base` column starts at a
+            // stable screen column regardless of upstream length (or its absence on no-up rows). A
+            // "gone" upstream (its remote ref was deleted) renders red with a `✗` marker.
+            let (text, style) = if upstream_gone && !upstream.is_empty() {
+                (format!("✗ {}", truncate_str(upstream, upstream_w.saturating_sub(2))), Style::default().fg(Color::Red))
+            } else {
+                (truncate_str(upstream, upstream_w), label)
+            };
+            spans.push(Span::styled(format!("  {text:<upstream_w$}"), style));
         }
         if columns.base {
             if base_clickable {
@@ -911,12 +946,12 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
                 let inner = if base.is_empty() {
                     "…".to_string()
                 } else if base_override {
-                    format!("{}*", truncate_str(base, 27))
+                    format!("{}*", truncate_str(base, base_w.saturating_sub(1)))
                 } else {
-                    truncate_str(base, 28)
+                    truncate_str(base, base_w)
                 };
-                // Pad to the header's fixed 28-cell width so `age`/`subject` stay aligned.
-                let text = format!("  {inner:<28}");
+                // Pad to the flexible base width so `age`/`subject` stay aligned.
+                let text = format!("  {inner:<base_w$}");
                 let style = if base.is_empty() {
                     label
                 } else if base_override {
@@ -927,7 +962,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
                 spans.push(Span::styled(text, style));
             } else {
                 // Stash rows have no base branch — keep the column slot blank (and not clickable).
-                spans.push(Span::styled(format!("  {:<28}", ""), label));
+                spans.push(Span::styled(format!("  {:<base_w$}", ""), label));
             }
         }
         if columns.age {
@@ -999,10 +1034,10 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             cell(&mut spans, &mut hcol, " ", "Σ", count_w, RepoPageSort::Total);
         }
         if columns.upstream {
-            cell(&mut spans, &mut hcol, "  ", "upstream", 28, RepoPageSort::Upstream);
+            cell(&mut spans, &mut hcol, "  ", "upstream", upstream_w, RepoPageSort::Upstream);
         }
         if columns.base {
-            cell(&mut spans, &mut hcol, "  ", "base", 28, RepoPageSort::Base);
+            cell(&mut spans, &mut hcol, "  ", "base", base_w, RepoPageSort::Base);
         }
         if columns.age {
             cell(&mut spans, &mut hcol, "  ", "age", 14, RepoPageSort::Age);
@@ -1120,6 +1155,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             row.stats,
             Some(row.dirty_count),
             &row.upstream.clone().unwrap_or_default(),
+            row.upstream_gone,
             &row.base.clone().unwrap_or_default(),
             row.base_is_override,
             true,
@@ -1169,6 +1205,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
                 row.stats,
                 Some(row.dirty_count),
                 &row.upstream.clone().unwrap_or_default(),
+                row.upstream_gone,
                 &row.base.clone().unwrap_or_default(),
                 row.base_is_override,
                 true,

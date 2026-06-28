@@ -494,8 +494,8 @@ pub async fn pull_request(dir: &Path, branch: &str) -> Option<PrInfo> {
     // upstream goes away ("ref gone"), and surfacing it explains the deleted branch.
     let output = Command::new("gh")
         .args([
-            "pr", "list", "--head", branch, "--state", "all", "--json", "number,title,url,state",
-            "--limit", "10",
+            "pr", "list", "--head", branch, "--state", "all", "--json",
+            "number,title,url,state,baseRefName", "--limit", "10",
         ])
         .current_dir(dir)
         .output()
@@ -524,6 +524,11 @@ pub fn parse_pr_list(json: &str) -> Option<PrInfo> {
                 .and_then(|state| state.as_str())
                 .map(PrState::from_gh)
                 .unwrap_or(PrState::Open),
+            base_ref: value
+                .get("baseRefName")
+                .and_then(|base| base.as_str())
+                .unwrap_or("")
+                .to_string(),
         })
     };
     array
@@ -1033,16 +1038,25 @@ pub struct BaseCandidate {
 /// integration branch, so this caps the per-branch `git rev-list` calls on branch-heavy repos.
 const BASE_CANDIDATE_CAP: usize = 50;
 
-/// Rank conventional integration-branch names so ties resolve toward the usual base. Lower wins.
-/// The remote prefix (`origin/`) is ignored — only the final path segment is matched.
+/// Rank conventional integration-branch names (the usual merge targets). Lower wins; `u8::MAX` means
+/// "not a conventional integration branch". The remote prefix (`origin/`) is ignored — only the
+/// final path segment is matched. `choose_base` ranks these AHEAD of non-conventional candidates, so
+/// a branch shows its `dev`/`stage`/`main` base rather than a sibling feature branch it was cut from.
 fn base_name_rank(name: &str) -> u8 {
     match name.rsplit('/').next().unwrap_or(name) {
         "main" => 0,
         "master" => 1,
         "develop" => 2,
         "dev" => 3,
-        _ => 4,
+        "staging" => 4,
+        "stage" => 5,
+        _ => u8::MAX,
     }
+}
+
+/// Whether `name` is a conventional integration branch (a known merge target).
+fn is_conventional_base(name: &str) -> bool {
+    base_name_rank(name) != u8::MAX
 }
 
 /// Pick the branch a feature branch most directly forked from, given each candidate's divergence.
@@ -1061,8 +1075,11 @@ pub fn choose_base(candidates: &[BaseCandidate]) -> Option<usize> {
         if any_real && candidate.ahead == 0 {
             continue;
         }
+        // Conventional integration branches (dev/stage/main) win over non-conventional siblings
+        // FIRST, then the closest such base (smallest ahead), then behind, name rank, remote, name.
         let key = |cand: &BaseCandidate| {
             (
+                u8::from(!is_conventional_base(&cand.name)),
                 cand.ahead,
                 cand.behind,
                 base_name_rank(&cand.name),
@@ -1158,7 +1175,14 @@ pub async fn detect_base_branch(dir: &Path, branch: &str) -> Option<String> {
         return default_base_branch(dir).await;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let refs = collect_base_candidate_refs(&stdout, branch, BASE_CANDIDATE_CAP);
+    // Only weigh CONVENTIONAL integration branches (dev/stage/main/…) as bases — a feature branch is
+    // never a meaningful base, even when this branch happens to have forked from it. This is what the
+    // `base` column / change-stats diff is about: where the branch integrates, not a sibling it was
+    // cut from. With no conventional candidate, fall back to the repo's default branch.
+    let refs: Vec<(String, bool)> = collect_base_candidate_refs(&stdout, branch, BASE_CANDIDATE_CAP)
+        .into_iter()
+        .filter(|(name, _)| is_conventional_base(name))
+        .collect();
     let mut candidates = Vec::with_capacity(refs.len());
     for (name, is_remote) in refs {
         let Some((ahead, behind)) = branch_divergence(dir, &name, branch).await else {
@@ -1172,12 +1196,25 @@ pub async fn detect_base_branch(dir: &Path, branch: &str) -> Option<String> {
     }
 }
 
-/// Resolve the base branch for `branch`: an explicit user override wins (no git calls), then
-/// auto-detection ([`detect_base_branch`]), then the conventional default ([`default_base_branch`]).
-pub async fn resolve_base(dir: &Path, branch: &str, override_ref: Option<&str>) -> Option<String> {
+/// Resolve the base branch for `branch`, in priority order:
+/// 1. an explicit user **override** (no git calls);
+/// 2. the **open PR's target** branch (`pr_base`) — so the base matches where it'll actually merge;
+/// 3. **auto-detection** ([`detect_base_branch`], conventional integration branch preferred);
+/// 4. the conventional **default** ([`default_base_branch`]).
+pub async fn resolve_base(
+    dir: &Path,
+    branch: &str,
+    override_ref: Option<&str>,
+    pr_base: Option<&str>,
+) -> Option<String> {
     if let Some(over) = override_ref {
         if !over.is_empty() {
             return Some(over.to_string());
+        }
+    }
+    if let Some(base) = pr_base {
+        if !base.is_empty() {
+            return Some(base.to_string());
         }
     }
     detect_base_branch(dir, branch).await
@@ -1406,6 +1443,7 @@ fn parse_branch_line(line: &str) -> Option<BranchInfo> {
         is_head: fields[0] == "*",
         name: fields[1].to_string(),
         upstream,
+        upstream_gone: fields[3].trim() == "gone",
         ahead,
         behind,
         last_commit_rel: fields[4].to_string(),

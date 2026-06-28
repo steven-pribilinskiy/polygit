@@ -795,6 +795,7 @@
             name: name.to_string(),
             is_head: false,
             upstream: upstream.map(str::to_string),
+            upstream_gone: false,
             ahead: upstream.map(|_| 0),
             behind: upstream.map(|_| 0),
             last_commit_rel: "1 day ago".into(),
@@ -839,6 +840,7 @@
             base: base.map(str::to_string),
             base_is_override: false,
             parents: Vec::new(),
+            upstream_gone: false,
         };
         let zed = row("zed", 100, Some("origin/main"));
         let abe = row("abe", 200, Some("origin/dev"));
@@ -949,7 +951,7 @@
         state.repo_page = Some(0);
         assert!(!state.repo_page_column_available(RepoPageColumn::PullRequest));
         state.repos[0].lock().unwrap().pr =
-            Some(PrInfo { number: 42, title: "x".into(), url: "http://e/42".into(), state: PrState::Open });
+            Some(PrInfo { number: 42, title: "x".into(), url: "http://e/42".into(), state: PrState::Open, base_ref: String::new() });
         assert!(state.repo_page_column_available(RepoPageColumn::PullRequest));
         // Toggling flips the stored flag (default on).
         assert!(state.repo_page_columns.pull_request);
@@ -959,7 +961,7 @@
 
     #[test]
     fn pr_shown_gates_merged_and_closed_on_the_setting() {
-        let pr = |state| PrInfo { number: 1, title: "x".into(), url: "u".into(), state };
+        let pr = |state| PrInfo { number: 1, title: "x".into(), url: "u".into(), state, base_ref: String::new() };
         // Open PRs always show, regardless of the setting.
         assert!(pr(PrState::Open).shown(false));
         assert!(pr(PrState::Open).shown(true));
