@@ -863,6 +863,23 @@ pub enum DropdownKind {
     StashColumns,
 }
 
+impl DropdownKind {
+    /// Whether this is a multi-toggle **columns** dropdown (gets the select/deselect-all + reset
+    /// footer buttons); sort/filter dropdowns are single-select and don't.
+    pub fn is_columns(self) -> bool {
+        matches!(self, DropdownKind::ListColumns | DropdownKind::PageColumns | DropdownKind::StashColumns)
+    }
+}
+
+/// A bulk action on a columns dropdown's footer buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropdownColAction {
+    /// Turn every column on, or — when all are already on — off (dynamic, by current selection).
+    ToggleAll,
+    /// Reset the column selection to its defaults.
+    Reset,
+}
+
 /// One row in an open dropdown: its label, whether it's currently on/active, its mnemonic key, and
 /// whether it's selectable (a column with no data anywhere renders dim + inert).
 pub struct DropdownItem {

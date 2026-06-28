@@ -24,10 +24,22 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
     // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for a radio (`● `)
     // and 4 for columns (`[x] `), plus the mnemonic key and a space.
     let marker_w = if is_radio { 2 } else { 4 };
-    let inner_w =
-        items.iter().map(|item| item.label.chars().count()).max().unwrap_or(6) + marker_w + 2;
+    // Columns dropdowns get a footer: a separator + select/deselect-all + reset buttons. Account for
+    // their width (the "* deselect all" button can be wider than short column labels like "age").
+    let is_columns = dropdown.kind.is_columns();
+    let all_on = is_columns && app.dropdown_all_columns_on();
+    let toggle_label = if all_on { "deselect all" } else { "select all" };
+    let footer_rows = if is_columns { 3u16 } else { 0 };
+    let footer_w = if is_columns { toggle_label.len() + 3 } else { 0 }; // "* " + label
+    let inner_w = items
+        .iter()
+        .map(|item| item.label.chars().count() + marker_w + 2)
+        .chain(std::iter::once(footer_w))
+        .max()
+        .unwrap_or(8);
     let width = (inner_w as u16 + 2).clamp(14, area.width.saturating_sub(2).max(14));
-    let height = (items.len() as u16 + 2).min(area.height.saturating_sub(2).max(3));
+    let height =
+        (items.len() as u16 + footer_rows + 2).min(area.height.saturating_sub(2).max(3));
     // Below the chip, flipping above when there's no room.
     let below = dropdown.anchor_row + 1;
     let y = if below + height <= area.y + area.height {
@@ -52,9 +64,11 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
     app.dropdown_area = modal;
     app.dropdown_close_click = close_click;
     app.dropdown_item_click.clear();
+    app.dropdown_action_click.clear();
+    let item_rows = (body.height as usize).saturating_sub(footer_rows as usize);
     let mut lines: Vec<Line> = Vec::new();
     for (index, item) in items.iter().enumerate() {
-        if index as u16 >= body.height {
+        if index >= item_rows {
             break;
         }
         let marker = if is_radio {
@@ -95,6 +109,25 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
             app.dropdown_item_click.push((row, body.x, body.x + body.width, index));
         }
         lines.push(line);
+    }
+    // Footer (columns dropdowns only): a divider + dynamic select/deselect-all + reset buttons.
+    if is_columns {
+        let dim = Style::default().fg(Color::DarkGray);
+        let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let label_style = Style::default().fg(Color::Gray);
+        lines.push(Line::from(Span::styled("\u{2500}".repeat(body.width as usize), dim)));
+        let toggle_row = body.y + lines.len() as u16;
+        lines.push(Line::from(vec![
+            Span::styled("* ", key),
+            Span::styled(toggle_label.to_string(), label_style),
+        ]));
+        let reset_row = body.y + lines.len() as u16;
+        lines.push(Line::from(vec![
+            Span::styled("0 ", key),
+            Span::styled("reset", label_style),
+        ]));
+        app.dropdown_action_click.push((toggle_row, body.x, body.x + body.width, crate::app::DropdownColAction::ToggleAll));
+        app.dropdown_action_click.push((reset_row, body.x, body.x + body.width, crate::app::DropdownColAction::Reset));
     }
     frame.render_widget(Paragraph::new(lines), body);
 }

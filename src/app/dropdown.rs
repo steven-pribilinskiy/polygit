@@ -246,6 +246,73 @@ impl AppState {
         }
     }
 
+    /// Whether every column in the open columns dropdown is currently on (drives the dynamic
+    /// select/deselect-all label). False for non-columns dropdowns.
+    pub fn dropdown_all_columns_on(&self) -> bool {
+        match self.dropdown.map(|dropdown| dropdown.kind) {
+            Some(DropdownKind::ListColumns) => LIST_COLS.iter().all(|&(column, ..)| self.column_on(column)),
+            Some(DropdownKind::PageColumns) => {
+                PAGE_COLS.iter().all(|&(column, ..)| self.repo_page_column_on(column))
+            }
+            Some(DropdownKind::StashColumns) => {
+                STASH_COLS.iter().all(|&(column, ..)| self.repo_page_stash_column_on(column))
+            }
+            _ => false,
+        }
+    }
+
+    /// Turn every column in the open columns dropdown on — or, when all are already on, off
+    /// (dynamic select/deselect-all). No-op for non-columns dropdowns.
+    pub fn dropdown_toggle_all_columns(&mut self) {
+        let target = !self.dropdown_all_columns_on(); // all-on → turn off; otherwise turn on
+        match self.dropdown.map(|dropdown| dropdown.kind) {
+            Some(DropdownKind::ListColumns) => {
+                for &(column, ..) in LIST_COLS {
+                    if self.column_on(column) != target {
+                        self.toggle_column(column);
+                    }
+                }
+            }
+            Some(DropdownKind::PageColumns) => {
+                for &(column, ..) in PAGE_COLS {
+                    if self.repo_page_column_on(column) != target {
+                        self.toggle_repo_page_column(column);
+                    }
+                }
+            }
+            Some(DropdownKind::StashColumns) => {
+                for &(column, ..) in STASH_COLS {
+                    if self.repo_page_stash_column_on(column) != target {
+                        self.toggle_repo_page_stash_column(column);
+                    }
+                }
+            }
+            _ => return,
+        }
+        self.save_state();
+    }
+
+    /// Reset the open columns dropdown's selection to its defaults. No-op for non-columns dropdowns.
+    pub fn dropdown_reset_columns(&mut self) {
+        match self.dropdown.map(|dropdown| dropdown.kind) {
+            Some(DropdownKind::ListColumns) => self.columns = ColumnFlags::default(),
+            Some(DropdownKind::PageColumns) => self.repo_page_columns = RepoPageColumns::default(),
+            Some(DropdownKind::StashColumns) => {
+                self.repo_page_stash_columns = RepoPageStashColumns::default()
+            }
+            _ => return,
+        }
+        self.save_state();
+    }
+
+    /// Run a columns-dropdown footer action (the select/deselect-all + reset buttons).
+    pub fn dropdown_run_action(&mut self, action: DropdownColAction) {
+        match action {
+            DropdownColAction::ToggleAll => self.dropdown_toggle_all_columns(),
+            DropdownColAction::Reset => self.dropdown_reset_columns(),
+        }
+    }
+
     /// Activate the item at `index`: toggle a column (dropdown stays open) or set a sort (closes).
     /// Returns whether the dropdown should now close.
     pub fn dropdown_activate(&mut self, index: usize) -> bool {
