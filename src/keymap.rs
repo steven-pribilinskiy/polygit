@@ -195,6 +195,8 @@ pub fn keycode_to_code(code: KeyCode, mods: KeyModifiers) -> Option<&'static str
         KeyCode::End => "End",
         KeyCode::PageUp => "PageUp",
         KeyCode::PageDown => "PageDown",
+        KeyCode::Insert => "Insert",
+        KeyCode::Delete => "Delete",
         KeyCode::Backspace => "Backspace",
         KeyCode::CapsLock => "CapsLock",
         // A bare modifier press (needs the kitty REPORT_ALL_KEYS flag) arrives as its own KeyCode.
@@ -279,9 +281,13 @@ const fn key(code: &'static str, label: &'static str, width: u16) -> KeyDef {
 /// The main keyboard rows, mirroring the docs. `os` selects the bottom modifier row labels.
 /// The renderer pairs these with `cluster()` (the nav/arrow block) for the full board.
 pub fn layout(os: Os) -> Vec<Vec<KeyDef>> {
+    // Key widths give the rows their real-keyboard horizontal stagger: each left modifier is one
+    // cell wider than the row above, so the first letter steps right going down — `(+5) < q(+6) <
+    // a(+7) < z(+8). `esc` is narrower than `tab`, so the backtick (not esc) is the column's left
+    // edge; the left shift is wider than caps, so `z` staggers right of `a` like `a` does of `q`.
     let mut rows = vec![
         vec![
-            key("Escape", "esc", 5), key("Backquote", "`", 3), key("Digit1", "1", 3), key("Digit2", "2", 3), key("Digit3", "3", 3), key("Digit4", "4", 3), key("Digit5", "5", 3), key("Digit6", "6", 3), key("Digit7", "7", 3), key("Digit8", "8", 3), key("Digit9", "9", 3), key("Digit0", "0", 3), key("Minus", "-", 3), key("Equal", "=", 3), key("Backspace", "⌫", 4),
+            key("Escape", "esc", 4), key("Backquote", "`", 3), key("Digit1", "1", 3), key("Digit2", "2", 3), key("Digit3", "3", 3), key("Digit4", "4", 3), key("Digit5", "5", 3), key("Digit6", "6", 3), key("Digit7", "7", 3), key("Digit8", "8", 3), key("Digit9", "9", 3), key("Digit0", "0", 3), key("Minus", "-", 3), key("Equal", "=", 3), key("Backspace", "⌫", 4),
         ],
         vec![
             key("Tab", "tab", 5), key("KeyQ", "q", 3), key("KeyW", "w", 3), key("KeyE", "e", 3), key("KeyR", "r", 3), key("KeyT", "t", 3), key("KeyY", "y", 3), key("KeyU", "u", 3), key("KeyI", "i", 3), key("KeyO", "o", 3), key("KeyP", "p", 3), key("BracketLeft", "[", 3), key("BracketRight", "]", 3), key("Backslash", "\\", 4),
@@ -290,7 +296,7 @@ pub fn layout(os: Os) -> Vec<Vec<KeyDef>> {
             key("CapsLock", "caps", 6), key("KeyA", "a", 3), key("KeyS", "s", 3), key("KeyD", "d", 3), key("KeyF", "f", 3), key("KeyG", "g", 3), key("KeyH", "h", 3), key("KeyJ", "j", 3), key("KeyK", "k", 3), key("KeyL", "l", 3), key("Semicolon", ";", 3), key("Quote", "'", 3), key("Enter", "⏎", 6),
         ],
         vec![
-            key("ShiftLeft", "⇧", 6), key("KeyZ", "z", 3), key("KeyX", "x", 3), key("KeyC", "c", 3), key("KeyV", "v", 3), key("KeyB", "b", 3), key("KeyN", "n", 3), key("KeyM", "m", 3), key("Comma", ",", 3), key("Period", ".", 3), key("Slash", "/", 3), key("ShiftRight", "⇧", 7),
+            key("ShiftLeft", "⇧", 7), key("KeyZ", "z", 3), key("KeyX", "x", 3), key("KeyC", "c", 3), key("KeyV", "v", 3), key("KeyB", "b", 3), key("KeyN", "n", 3), key("KeyM", "m", 3), key("Comma", ",", 3), key("Period", ".", 3), key("Slash", "/", 3), key("ShiftRight", "⇧", 7),
         ],
     ];
     rows.push(match os {
@@ -307,12 +313,13 @@ pub fn layout(os: Os) -> Vec<Vec<KeyDef>> {
     rows
 }
 
-/// The nav + arrow cluster shown to the right of the main block.
+/// The nav + arrow cluster shown to the right of the main block — the standard 3-wide PC nav block:
+/// `ins/home/pgup` over `del/end/pgdn`, then the inverted-T arrows.
 pub fn cluster() -> Vec<Vec<KeyDef>> {
     vec![
-        vec![key("Home", "home", 6), key("PageUp", "pgup", 6)],
-        vec![key("End", "end", 6), key("PageDown", "pgdn", 6)],
-        vec![key("__gap", "", 6), key("ArrowUp", "↑", 6)],
+        vec![key("Insert", "ins", 6), key("Home", "home", 6), key("PageUp", "pgup", 6)],
+        vec![key("Delete", "del", 6), key("End", "end", 6), key("PageDown", "pgdn", 6)],
+        vec![key("__gap", "", 6), key("ArrowUp", "↑", 6), key("__gap", "", 6)],
         vec![key("ArrowLeft", "←", 6), key("ArrowDown", "↓", 6), key("ArrowRight", "→", 6)],
     ]
 }

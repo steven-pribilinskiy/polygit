@@ -759,6 +759,75 @@ fn truncate_str(s: &str, max_width: usize) -> String {
     }
 }
 
+/// Parse inline markdown — `**bold**`, `*italic*`, and `` `code` `` — over `base`, returning styled
+/// runs with the markers stripped. Code spans get a distinct color; bold/italic add their modifier
+/// to `base`. A lone/unmatched marker renders literally. Shared by the changelog/PR prose, the help
+/// modal, and tooltips. Authored content only — keymap.json actions stay marker-free (the web docs
+/// render them verbatim).
+pub(crate) fn inline_md_runs(text: &str, base: Style) -> Vec<(String, Style)> {
+    let code_style = Style::default().fg(Color::Yellow);
+    let style_now = |bold: bool, italic: bool, code: bool| {
+        if code {
+            return code_style;
+        }
+        let mut style = base;
+        if bold {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        if italic {
+            style = style.add_modifier(Modifier::ITALIC);
+        }
+        style
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let mut runs: Vec<(String, Style)> = Vec::new();
+    let mut buf = String::new();
+    let (mut bold, mut italic, mut code) = (false, false, false);
+    let mut idx = 0;
+    while idx < chars.len() {
+        if !code && chars[idx] == '*' && chars.get(idx + 1) == Some(&'*') {
+            if !buf.is_empty() {
+                runs.push((std::mem::take(&mut buf), style_now(bold, italic, code)));
+            }
+            bold = !bold;
+            idx += 2;
+            continue;
+        }
+        if !code && chars[idx] == '*' {
+            if !buf.is_empty() {
+                runs.push((std::mem::take(&mut buf), style_now(bold, italic, code)));
+            }
+            italic = !italic;
+            idx += 1;
+            continue;
+        }
+        if chars[idx] == '`' {
+            if !buf.is_empty() {
+                runs.push((std::mem::take(&mut buf), style_now(bold, italic, code)));
+            }
+            code = !code;
+            idx += 1;
+            continue;
+        }
+        buf.push(chars[idx]);
+        idx += 1;
+    }
+    if !buf.is_empty() {
+        runs.push((buf, style_now(bold, italic, code)));
+    }
+    runs
+}
+
+/// [`inline_md_runs`] as owned `Span`s — the common case for building a `Line`.
+pub(crate) fn inline_md_spans(text: &str, base: Style) -> Vec<Span<'static>> {
+    inline_md_runs(text, base).into_iter().map(|(run, style)| Span::styled(run, style)).collect()
+}
+
+/// The visible width of `text` with markdown markers stripped (for layout/centering).
+pub(crate) fn md_display_width(text: &str) -> usize {
+    inline_md_runs(text, Style::default()).iter().map(|(run, _)| UnicodeWidthStr::width(run.as_str())).sum()
+}
+
 /// Truncate from the *left*, keeping the tail (a leading `…`). For file paths the filename at
 /// the end is the informative part, so `…features/Foo.tsx` beats `src/features/Fo…`.
 fn truncate_left(s: &str, max_width: usize) -> String {
@@ -808,7 +877,7 @@ fn render_tooltip(frame: &mut Frame, app: &mut AppState) {
     }
     // A `[x]` hide-column button trails the text when the tooltip is for an optional column.
     let x_label = " [x]";
-    let text_width = UnicodeWidthStr::width(tip.text.as_str()) as u16;
+    let text_width = md_display_width(tip.text.as_str()) as u16;
     let extra = if tip.hide_column.is_some() { x_label.len() as u16 } else { 0 };
     // border (2) + 1-cell horizontal padding (2) around the text (+ the optional `[x]`).
     let width = (text_width + extra + 4).min(area.width);
@@ -831,17 +900,16 @@ fn render_tooltip(frame: &mut Frame, app: &mut AppState) {
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
     app.tooltip_rect = rect;
+    let base = Style::default();
     if let Some(column) = tip.hide_column {
-        let line = Line::from(vec![
-            Span::raw(tip.text.clone()),
-            Span::styled(x_label, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-        ]);
-        frame.render_widget(Paragraph::new(line), inner);
+        let mut spans = inline_md_spans(&tip.text, base);
+        spans.push(Span::styled(x_label, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)));
+        frame.render_widget(Paragraph::new(Line::from(spans)), inner);
         // The `[x]` sits after the text + a leading space (3 cells wide).
         let x_start = inner.x + text_width + 1;
         app.tooltip_hide_click = Some((inner.y, x_start, x_start + 3, column));
     } else {
-        frame.render_widget(Paragraph::new(tip.text.clone()), inner);
+        frame.render_widget(Paragraph::new(Line::from(inline_md_spans(&tip.text, base))), inner);
     }
 }
 

@@ -1422,6 +1422,22 @@ async fn run_event_loop(
                         cli_cmd_tip.filter(|_| tips.settings).and_then(|tip| cursor_tip(cursor, tip))
                     })
                     .or_else(|| {
+                        // A truncated Hotkeys row (…): hover shows the full action text.
+                        if !(app.show_help && app.help_tab == app::HelpTab::Hotkeys && tips.links) {
+                            return None;
+                        }
+                        cursor
+                            .and_then(|(col, row)| {
+                                app.help_trunc_tips
+                                    .iter()
+                                    .find(|(tip_row, start, end, _)| {
+                                        *tip_row == row && col >= *start && col < *end
+                                    })
+                                    .map(|(_, _, _, full)| full.clone())
+                            })
+                            .and_then(|full| cursor_tip(cursor, full))
+                    })
+                    .or_else(|| {
                         cursor.and_then(|(col, row)| app.tooltip_at(col, row)).and_then(
                             |(text, anchor, placement, hide_column, area)| {
                                 let allowed = match area {

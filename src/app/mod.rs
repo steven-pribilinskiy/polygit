@@ -148,6 +148,9 @@ pub struct AppState {
     pub help_scroll: usize,
     /// Clickable links in the help modal: (absolute screen row, url). Rebuilt each render.
     pub help_links: Vec<(u16, String)>,
+    /// Hotkeys rows whose action was truncated with `…`: (row, col start, col end, full text).
+    /// Hovering one shows the full action as a dwell tooltip. Rebuilt each render.
+    pub help_trunc_tips: Vec<(u16, u16, u16, String)>,
     /// Active filter over the Hotkeys help tab (`/` to start; `Some` = filtering). Session-only.
     pub help_filter: Option<String>,
     /// Whether the collapsible "Notes" link group in the About tab is expanded. Session-only.
@@ -777,6 +780,7 @@ impl AppState {
             help_tab_persist: persisted.help_tab,
             help_scroll: 0,
             help_links: Vec::new(),
+            help_trunc_tips: Vec::new(),
             help_filter: None,
             help_notes_expanded: false,
             help_notes_toggle_row: None,
