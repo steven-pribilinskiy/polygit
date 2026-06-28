@@ -490,6 +490,7 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 app.list_cols_click
                     .filter(|&(r, s, e)| contains(r, s, e))
                     .or_else(|| app.list_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| app.list_filter_click.filter(|&(r, s, e)| contains(r, s, e)))
             })
             .flatten();
         let header_col = if list_visible { app.header_sort_at(hcol, hrow) } else { None };

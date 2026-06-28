@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.78.1 — 2026-06-28
+Bring the `f by-status` trigger to full parity with `s sort` / `t cols`
+- the active filter now **rides on the trigger** like the sort tag does — `f by-status ⟪failed⟫ ▾` (and plain `f by-status ▾` when unfiltered), so you can see the active filter on the header, not only in the footer `{status}` tag.
+- the trigger gained the **`▾` dropdown indicator** it was missing, matching `s sort … ▾` / `t cols ▾`.
+- the trigger now **highlights on hover** like the other two — `list_filter_click` was registered as clickable but never added to `apply_hover`, so it was clickable-but-dead on hover.
+
 ## v2.78.0 — 2026-06-27
 List header filter trigger is now a status-filter **dropdown** (`f by-status`), not the name filter
 - the header's filter trigger is the **status filter** (`f by-status · s sort ▾ · t cols ▾`), not the name filter — pressing `f`, clicking the `f by-status` trigger, or clicking the footer hint opens a **dropdown** matching `s sort` / `t cols`, with radio rows `all` / `updated` / `up-to-date` / `skipped` / `failed` / `issues`. Pick by hover+click, `↑↓`+Enter, or the row's mnemonic letter; the active filter shows a `●` marker.
