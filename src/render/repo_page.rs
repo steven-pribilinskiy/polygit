@@ -990,7 +990,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             (crate::app::RepoTab::Branches, icons.branches, "Branches", full_branches),
             (crate::app::RepoTab::Worktrees, icons.worktrees, "Worktrees", full_worktrees),
             (crate::app::RepoTab::Stashes, icons.stashes, "Stashes", full_stashes),
-            (crate::app::RepoTab::Commits, "◴", "Commits", full_commits),
+            (crate::app::RepoTab::Commits, icons.commits, "Commits", full_commits),
         ];
         let mut spans: Vec<Span> = Vec::new();
         let mut col = inner.x;
@@ -1169,7 +1169,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             .unwrap_or_default();
         if !tabbed {
             items.push((Line::from(String::new()), None, None));
-            items.push(section_header("\u{25b4}", Color::Yellow, format!("COMMITS ({full_commits})")));
+            items.push(section_header(icons.commits, Color::Yellow, format!("COMMITS ({full_commits})")));
         }
         // The author column grows to the longest name (not truncated to a fixed width); the subject
         // then fills whatever horizontal space is left.
