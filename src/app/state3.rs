@@ -201,6 +201,7 @@ impl AppState {
             || self.show_build_info
             || self.confirm.is_some()
             || self.diff_modal.is_some()
+            || self.pr_modal.is_some()
             || self.copy_menu.is_some()
             || self.kebab.is_some()
             || self.base_picker.is_some()
@@ -219,6 +220,7 @@ impl AppState {
         self.show_build_info = false;
         self.confirm = None;
         self.diff_modal = None;
+        self.pr_modal = None;
         self.copy_menu = None;
         self.kebab = None;
         self.base_picker = None;

@@ -128,3 +128,98 @@
             }
         }
     }
+
+    /// Render the PR viewer to a `TestBackend` and return (every visible row, the title-bar row).
+    /// The title bar is the modal's top border row (row 1 — the panes' own borders are row 0).
+    fn render_pr_modal_rows(app: &mut AppState, width: u16, height: u16) -> (Vec<String>, String) {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+        term.draw(|frame| crate::render::render(frame, app, 0)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let mut rows = Vec::new();
+        for y in 0..height {
+            let mut line = String::new();
+            for x in 0..width {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            rows.push(line);
+        }
+        let title_bar = rows.get(1).cloned().unwrap_or_default();
+        (rows, title_bar)
+    }
+
+    fn demo_pr_modal() -> AppState {
+        use crate::app::{PrModalState, PrSection, PrView};
+        let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+            "demo",
+            std::path::PathBuf::from("/tmp/demo"),
+        )))];
+        let mut app = AppState::new(repos, 4, true);
+        let title = "fix(widget): skeleton rows while the next page loads during infinite scroll so \
+                     the table never shows a bare spinner anywhere"
+            .to_string();
+        let view = PrView {
+            title: title.clone(),
+            url: "https://example/pr/426".to_string(),
+            state: "open".to_string(),
+            head: "fix/next-page-skeletons".to_string(),
+            base: "dev".to_string(),
+            author: "demo-user".to_string(),
+            created: "2026-06-23T14:32:10Z".to_string(),
+            additions: 361,
+            deletions: 24,
+            labels: vec!["reviewed".to_string()],
+            description: "Tables now show skeleton rows while the next page loads.".to_string(),
+            comments: vec![PrSection {
+                author: "reviewer".to_string(),
+                kind: "approved".to_string(),
+                day: "2026-06-24".to_string(),
+                body: "LGTM".to_string(),
+            }],
+        };
+        app.pr_modal = Some(PrModalState {
+            repo_idx: 0,
+            number: 426,
+            url: "https://example/pr/426".to_string(),
+            title,
+            view: Some(view),
+            scroll: 0,
+            collapsed: std::collections::HashSet::new(),
+            search: String::new(),
+            search_focused: false,
+        });
+        app
+    }
+
+    // The full PR title leads the body and the created date renders relative ("ago"); the absolute
+    // date/time is captured for the hover tooltip, and the title bar stays bare until you scroll.
+    #[test]
+    fn pr_modal_shows_full_title_in_body_and_timeago() {
+        let mut app = demo_pr_modal();
+        // Wide enough that the full title fits one body line (as on a real ~200-col terminal).
+        let (rows, title_bar) = render_pr_modal_rows(&mut app, 200, 24);
+        let body = rows.join("\n");
+        assert!(body.contains("table never shows a bare spinner anywhere"), "full title shows in body\n{body}");
+        assert!(body.contains(" ago"), "created renders as a relative 'time ago' label\n{body}");
+        assert!(!body.contains("2026-06-23"), "the raw date is not shown inline (only on hover)");
+        let region = app.pr_created_region.clone().expect("created region captured while meta on-screen");
+        assert_eq!(region.3, "2026-06-23 14:32 UTC");
+        assert!(title_bar.contains("PR #426"), "title bar shows the number\n{title_bar}");
+        assert!(!title_bar.contains("skeleton rows"), "title bar omits the title until it scrolls off\n{title_bar}");
+    }
+
+    // Scrolling past the hero title reveals it (truncated) in the title bar — the sticky-header
+    // behaviour — and drops the meta tooltip region (it's no longer on-screen).
+    #[test]
+    fn pr_modal_title_bar_reveals_title_after_scroll() {
+        let mut app = demo_pr_modal();
+        if let Some(modal) = app.pr_modal.as_mut() {
+            modal.scroll = 8;
+        }
+        let (_, title_bar) = render_pr_modal_rows(&mut app, 200, 14);
+        assert!(title_bar.contains("PR #426"), "number stays\n{title_bar}");
+        assert!(title_bar.contains("fix(widget)"), "title bar reveals the (truncated) title after scroll\n{title_bar}");
+        assert!(app.pr_created_region.is_none(), "meta scrolled off → no tooltip region");
+    }
+

@@ -3,6 +3,18 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.103.0 — 2026-06-29
+PR viewer: full title in body · sticky title bar · "time ago" with hover · no hover bleed
+- **full PR title** now leads the modal body (word-wrapped, untruncated). The title bar shows only
+  `PR #N` until you scroll past the title, then reveals the truncated title — a **sticky header**
+  that appears on scroll, like a landing page.
+- the meta line's created date renders as a **relative "time ago"** label ("6 days ago"); **hover**
+  it (dwell) to see the exact date/time (`2026-06-23 14:32 UTC`). New `timeago` helper.
+- **fixed hover bleed-through** behind the PR modal — a pane scrollbar still registered for the
+  frame could tint its column *on top of* the modal; hover scrollbar matching is now scoped to the
+  modal's own scrollbar, the pane splitter is suppressed under any overlay, and the PR modal counts
+  as a real modal (`any_modal_open`) so the panes behind it dim and absorb stray clicks.
+
 ## v2.102.0 — 2026-06-29
 Real-keyboard viewer layout · help columns fill width · hover tooltips · markdown
 - **keyboard viewer** (`K`) now reads like a real keyboard: rows **stagger** (`esc` is narrower

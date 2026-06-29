@@ -167,8 +167,14 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     // A scroll track spans the full pane width (for wheel hit-testing), so highlighting the whole
     // track on hover tints the entire pane. Only the scrollbar column (the draggable bar) should
     // react, and only when the pane actually overflows.
-    let scrollbar_col_hit = || -> Option<Rect> {
+    // `allow` restricts which scrollbars can match: a modal passes only its own kind(s) so a pane
+    // scrollbar still sitting in `scroll_hits` (registered earlier this frame, now behind the modal)
+    // can't light up through it. `None` = any (the no-modal case).
+    let scrollbar_col_hit = |allow: Option<&[crate::app::ScrollKind]>| -> Option<Rect> {
         app.scroll_hits.iter().find_map(|hit| {
+            if allow.is_some_and(|kinds| !kinds.contains(&hit.kind)) {
+                return None;
+            }
             let bar_col = hit.track.x + hit.track.width.saturating_sub(1);
             (hit.total > hit.viewport
                 && hcol == bar_col
@@ -362,7 +368,7 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         } else if let Some(scroll) =
-            scrollbar_col_hit()
+            scrollbar_col_hit(Some(&[crate::app::ScrollKind::DiffFiles, crate::app::ScrollKind::DiffBody]))
         {
             hits.push(scroll);
         } else if let Some(idx) = app.diff_modal_file_at(hrow) {
@@ -483,7 +489,7 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
-        } else if let Some(scroll) = scrollbar_col_hit() {
+        } else if let Some(scroll) = scrollbar_col_hit(Some(&[crate::app::ScrollKind::PrModal])) {
             hits.push(scroll);
         } else if let Some(&(row, start, end)) =
             app.pr_collapse_all_click.as_ref().filter(|&&(r, s, e)| contains(r, s, e))
@@ -605,7 +611,7 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         } else if let Some((row, start, end)) = kebab_hit {
             // The rightmost `⋮` kebab affordance on the hovered row.
             button_hits.push(row_rect(row, start, end));
-        } else if let Some(scroll) = scrollbar_col_hit() {
+        } else if let Some(scroll) = scrollbar_col_hit(None) {
             hits.push(scroll);
         } else if let Some(sel_index) = repo_row {
             // A selectable repo-page body row (branch / worktree / stash).
@@ -1091,8 +1097,12 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
 
     // The splitter grips: a persistent lane fill (dedicated mode) or a thin on-hover grip (hover
     // mode). No divider when a single pane is maximized (no boundary then). render_divider decides
-    // what to draw per mode + cursor.
-    if max_main.is_none() {
+    // what to draw per mode + cursor. Suppressed while any overlay is up — a modal blocks the panes,
+    // so a hover grip cyan-bleeding beside (or, via the tinted scrollbar column, on top of) it is
+    // pure noise.
+    let overlay_up =
+        app.any_modal_open() || app.dropdown.is_some() || app.picker.is_some() || app.finder.is_some();
+    if max_main.is_none() && !overlay_up {
         render_divider(frame, app);
     }
 

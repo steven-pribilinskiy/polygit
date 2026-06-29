@@ -499,45 +499,37 @@ fn note_line(indent: usize, segs: &[(String, Style)]) -> Line<'static> {
 /// — metadata header, description, and every review/comment — scrollable, with an `o` to open the
 /// PR in the browser. The body loads async (`run_pr_view`); a "loading…" line shows until it lands.
 pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
+    use unicode_width::UnicodeWidthStr;
     let width = area.width.saturating_mul(9) / 10;
     let height = area.height.saturating_mul(9) / 10;
     let modal = centered_rect(width, height, area);
     app.pr_section_click.clear();
     app.pr_collapse_all_click = None;
     app.pr_search_click = None;
+    app.pr_created_region = None;
 
     let (number, title) = {
         let pr = app.pr_modal.as_ref().expect("render_pr_modal with no pr_modal");
         (pr.number, pr.title.clone())
     };
-    let (close_line, close_click) = modal_close_button(modal);
-    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
-    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("/", " search", HintKey::Char('/')));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("o", " open", HintKey::Char('o')));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("esc", " close", HintKey::Esc));
-    let block = Block::default()
+
+    // The inner content rect depends only on the border + padding (the title text lives on the
+    // border row and doesn't shrink it), so derive it from a probe block up-front. The titled block
+    // is built last — its title text is decided by the scroll position (sticky-header reveal).
+    let inner = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(format!(" PR #{number} · {} ", truncate_str(&title, 50)))
-        .title_top(close_line)
-        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
-    let inner = block.inner(modal);
-    cast_shadow(frame, modal);
-    frame.render_widget(Clear, modal);
-    frame.render_widget(block, modal);
-    app.pr_modal_area = modal;
-    app.pr_modal_close_click = close_click;
+        .inner(modal);
 
     let body_w = (inner.width as usize).saturating_sub(1).max(8); // -1 for the scrollbar gutter
     let icons = app.icons();
     let dim = Style::default().fg(Color::DarkGray);
     let label = Style::default().fg(Color::Gray);
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0);
 
     // Build the full document as styled lines, tracking where the clickable controls land so the
     // post-scroll window can register their on-screen rows (capture-then-hit-test).
@@ -545,6 +537,21 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
     let mut section_at: Vec<(usize, usize)> = Vec::new(); // (line_idx, section_idx)
     let mut collapse_all_at: Option<usize> = None;
     let mut search_at: Option<usize> = None;
+    // The "created" timeago span, captured for the dwell tooltip: (line_idx, col_offset, width, abs).
+    let mut created_at: Option<(usize, u16, u16, String)> = None;
+
+    // Hero title: the FULL (untruncated) title at the very top of the body, word-wrapped — the modal
+    // title bar only carries it (truncated) once it scrolls out of view (see `sticky` below).
+    // `title_lines` counts the title text rows (excludes the trailing blank) — the sticky threshold.
+    let title_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let title_lines = {
+        let wrapped = super::preview::wrap_chars(&title, body_w.saturating_sub(2).max(8));
+        for chunk in &wrapped {
+            lines.push(Line::from(vec![Span::raw("  "), Span::styled(chunk.clone(), title_style)]));
+        }
+        lines.push(Line::from(String::new()));
+        wrapped.len()
+    };
 
     let view = app.pr_modal.as_ref().and_then(|modal| modal.view.clone());
     let (query, search_focused) = app
@@ -575,7 +582,7 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
             }
         }
         Some(view) => {
-            // Meta header (the title/number live in the modal title bar — not repeated here).
+            // Meta header (the title lives in the hero block above + the sticky title bar).
             let state_color = match view.state.as_str() {
                 "open" => Color::Green,
                 "merged" => Color::Magenta,
@@ -601,7 +608,20 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
             }
             if !view.created.is_empty() {
                 meta.push(Span::styled("  ·  ", dim));
-                meta.push(Span::styled(view.created.clone(), dim));
+                // "time ago" label, with the absolute date/time captured for the hover tooltip. The
+                // column offset is the display width of everything on the meta line so far.
+                let rel = crate::timeago::parse_iso8601(&view.created)
+                    .map(|then| crate::timeago::relative(now_secs, then))
+                    .unwrap_or_else(|| view.created.clone());
+                let col_offset: usize =
+                    meta.iter().map(|span| UnicodeWidthStr::width(span.content.as_ref())).sum();
+                created_at = Some((
+                    lines.len(),
+                    col_offset as u16,
+                    UnicodeWidthStr::width(rel.as_str()) as u16,
+                    crate::timeago::absolute_label(&view.created),
+                ));
+                meta.push(Span::styled(rel, dim));
             }
             lines.push(Line::from(meta));
             let mut stats: Vec<Span> = vec![
@@ -736,6 +756,40 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
     if let Some(pr) = app.pr_modal.as_mut() {
         pr.scroll = scroll;
     }
+
+    // Sticky title bar: bare `PR #N` while the hero title is still on-screen, gaining the (truncated)
+    // title once the body has scrolled past it — like a page header that reveals on scroll. The
+    // truncation is generous (the modal is wide); the full title always lives in the body.
+    let sticky = scroll >= title_lines.max(1);
+    let bar_title = if sticky {
+        let room = (modal.width as usize).saturating_sub(14);
+        format!(" PR #{number} · {} ", truncate_str(&title, room.max(20)))
+    } else {
+        format!(" PR #{number} ")
+    };
+    let (close_line, close_click) = modal_close_button(modal);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("/", " search", HintKey::Char('/')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("o", " open", HintKey::Char('o')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(bar_title)
+        .title_top(close_line)
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.pr_modal_area = modal;
+    app.pr_modal_close_click = close_click;
+
     let body_area = Rect { width: inner.width.saturating_sub(1), ..inner };
     let visible: Vec<Line> = lines.iter().skip(scroll).take(viewport).cloned().collect();
     frame.render_widget(Paragraph::new(visible), body_area);
@@ -757,6 +811,12 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
     if let Some(line_idx) = search_at {
         if let Some(row) = on_screen(line_idx) {
             app.pr_search_click = Some((row, inner.x, inner.x + inner.width));
+        }
+    }
+    if let Some((line_idx, col_offset, width, absolute)) = created_at {
+        if let Some(row) = on_screen(line_idx) {
+            let start = inner.x + col_offset;
+            app.pr_created_region = Some((row, start, start + width, absolute));
         }
     }
     if lines.len() > viewport {
