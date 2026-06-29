@@ -940,7 +940,9 @@ pub async fn pr_view(dir: &Path, number: u32) -> Option<crate::app::PrView> {
         head: string("headRefName"),
         base: string("baseRefName"),
         author: login(&json),
-        created: day(&string("createdAt")),
+        // Raw ISO-8601 instant — the modal renders a "time ago" label and the absolute date/time on
+        // hover (see `crate::timeago`). Keep the full stamp, not the day, so both are available.
+        created: string("createdAt"),
         additions: int("additions"),
         deletions: int("deletions"),
         labels,

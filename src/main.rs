@@ -12,6 +12,7 @@ mod pr_cache;
 mod profile;
 mod render;
 mod theme;
+mod timeago;
 mod treeview;
 mod update;
 mod worker;
@@ -1420,6 +1421,19 @@ async fn run_event_loop(
                     })
                     .or_else(|| {
                         cli_cmd_tip.filter(|_| tips.settings).and_then(|tip| cursor_tip(cursor, tip))
+                    })
+                    .or_else(|| {
+                        // PR-modal "created" timeago: dwell shows the absolute date/time.
+                        if app.pr_modal.is_none() || tips.all_off() {
+                            return None;
+                        }
+                        cursor
+                            .and_then(|(col, row)| {
+                                app.pr_created_region.as_ref().and_then(|(tip_row, start, end, abs)| {
+                                    (*tip_row == row && col >= *start && col < *end).then(|| abs.clone())
+                                })
+                            })
+                            .and_then(|abs| cursor_tip(cursor, abs))
                     })
                     .or_else(|| {
                         // A truncated Hotkeys row (…): hover shows the full action text.

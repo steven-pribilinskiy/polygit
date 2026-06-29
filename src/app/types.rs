@@ -164,6 +164,8 @@ pub struct PrView {
     pub head: String,
     pub base: String,
     pub author: String,
+    /// Raw ISO-8601 `createdAt` instant (UTC) — rendered as a "time ago" label with the absolute
+    /// date/time shown on hover. Empty when unknown.
     pub created: String,
     pub additions: i64,
     pub deletions: i64,

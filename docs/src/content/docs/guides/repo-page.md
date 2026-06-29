@@ -161,12 +161,15 @@ HEAD-branch `#N`, or a **PRs** cell in the list — opens a centered modal (same
 diff modal) that loads the full pull request via `gh pr view`. A **loading skeleton** (spinner +
 shimmer bars) shows while the fetch is in flight.
 
-The title and number live in the modal's title bar. Below it, a clean meta header shows the state,
-`head → base` branches, author, date, `+adds −dels`, and labels. The **description** and **every
-review and comment** then follow as **collapsible sections** — click any `▾`/`▸` header to fold or
-unfold it. When there's more than one comment, a **`[− collapse all]` / `[+ expand all]`** control
-appears at the top (also toggled with `z`). Bodies render as markdown (headings, bullet lists,
-blockquotes, rules, links), and raw HTML tags (e.g. `<details>` in bot comments) are stripped.
+The **full (untruncated) title** leads the body, word-wrapped above a clean meta header showing the
+state, `head → base` branches, author, **relative age** ("6 days ago" — **hover** it to see the
+exact date/time), `+adds −dels`, and labels. The title bar carries only `PR #N` until you scroll
+past the title, at which point it gains the (truncated) title — a sticky header that reveals on
+scroll. The **description** and **every review and comment** then follow as **collapsible
+sections** — click any `▾`/`▸` header to fold or unfold it. When there's more than one comment, a
+**`[− collapse all]` / `[+ expand all]`** control appears at the top (also toggled with `z`).
+Bodies render as markdown (headings, bullet lists, blockquotes, rules, links), and raw HTML tags
+(e.g. `<details>` in bot comments) are stripped.
 
 Press **`/` to search** across the description and all comments: matching sections are kept (others
 hidden), a live match count shows, and hits are highlighted. `Esc` clears the search.

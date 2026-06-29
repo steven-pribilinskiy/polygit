@@ -300,6 +300,9 @@ pub struct AppState {
     pub pr_collapse_all_click: Option<(u16, u16, u16)>,
     /// PR-modal search box region (click to focus, then type to filter).
     pub pr_search_click: Option<(u16, u16, u16)>,
+    /// PR-modal "created" timeago region + the absolute date/time to show on dwell:
+    /// `(row, col_start, col_end, absolute_label)`. Only set while the meta line is on-screen.
+    pub pr_created_region: Option<(u16, u16, u16, String)>,
     /// The directories/roots being scanned (each may itself be a single repo). Drives the per-root
     /// tree forest; worktree re-discovery derives parents from the repos.
     pub root_dirs: Vec<PathBuf>,
@@ -856,6 +859,7 @@ impl AppState {
             pr_section_click: Vec::new(),
             pr_collapse_all_click: None,
             pr_search_click: None,
+            pr_created_region: None,
             root_dirs: Vec::new(),
             workspaces,
             active_workspace: None,
