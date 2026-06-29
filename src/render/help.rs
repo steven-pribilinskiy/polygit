@@ -621,6 +621,65 @@ pub(crate) fn filter_help_items(
         .collect()
 }
 
+/// Hotkeys search results: a flat, single-column list of the bindings matching `query`
+/// (case-insensitive). A leading `@` restricts the match to the **key tokens** (`binding.keys`) —
+/// matched directly, not against a fixed-width slice of the rendered two-column line, which is why
+/// `filter_help_items` mis-matched `@p` against description words like "o**p**en"/"dro**p**down".
+/// A plain query matches keys, action, and keywords. Single-column avoids the paired-line problem.
+pub(crate) fn help_items_hotkeys_filtered(
+    view: HelpView,
+    col_w: usize,
+    query: &str,
+) -> Vec<(Line<'static>, Option<String>)> {
+    let (needle, keys_only) = match query.strip_prefix('@') {
+        Some(rest) => (rest.to_lowercase(), true),
+        None => (query.to_lowercase(), false),
+    };
+    let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let key_style = Style::default().fg(Color::Cyan);
+    let desc_style = Style::default().fg(Color::Gray);
+    let section_id = help_section_id(view);
+    let mut items: Vec<(Line<'static>, Option<String>)> =
+        vec![(Line::from(Span::styled(format!("HOTKEYS — {}", view.label()), header_style)), None)];
+    let Some(section) = crate::keymap::sections().iter().find(|section| section.id == section_id)
+    else {
+        return items;
+    };
+    // One full-width column (the two column budgets + the gap between them).
+    let width = (col_w * 2 + HOTKEYS_GAP).max(28);
+    let key_w = section
+        .bindings
+        .iter()
+        .map(|binding| UnicodeWidthStr::width(binding.keys.join(" / ").as_str()))
+        .max()
+        .unwrap_or(0)
+        .clamp(6, 24);
+    let action_max = width.saturating_sub(4 + key_w + 2).max(10);
+    for binding in &section.bindings {
+        let keys = binding.keys.join(" / ");
+        let matched = if keys_only {
+            keys.to_lowercase().contains(&needle)
+        } else {
+            keys.to_lowercase().contains(&needle)
+                || binding.action.to_lowercase().contains(&needle)
+                || binding.keywords.iter().any(|kw| kw.to_lowercase().contains(&needle))
+        };
+        if !matched {
+            continue;
+        }
+        let shown = truncate_str(&binding.action, action_max);
+        let full = (md_display_width(&shown) < md_display_width(&binding.action))
+            .then(|| binding.action.clone());
+        let mut spans = vec![Span::styled(format!("    {keys:<key_w$}"), key_style), Span::raw("  ")];
+        spans.extend(inline_md_spans(&shown, desc_style));
+        items.push((Line::from(spans), full));
+    }
+    if items.len() == 1 {
+        items.push((Line::from(Span::styled("    (no matching keys)".to_string(), desc_style)), None));
+    }
+    items
+}
+
 /// The id of the keymap section the help shows for `view`.
 pub(crate) fn help_section_id(view: HelpView) -> &'static str {
     match view {
@@ -825,7 +884,13 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let filtering = app.help_filter.as_deref().is_some_and(|query| !query.is_empty());
     let filtered: Vec<(Line<'static>, Option<String>)> = if filtering {
         let query = app.help_filter.as_deref().unwrap_or_default();
-        filter_help_items(unfiltered, query, app.help_tab == HelpTab::Hotkeys)
+        if app.help_tab == HelpTab::Hotkeys {
+            // Hotkeys search is binding-level (single column) so `@key` matches real key tokens, not
+            // a slice of the paired two-column line; other tabs stay a plain rendered-line filter.
+            help_items_hotkeys_filtered(view, col_w, query)
+        } else {
+            filter_help_items(unfiltered, query, false)
+        }
     } else {
         Vec::new()
     };

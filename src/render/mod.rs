@@ -883,11 +883,14 @@ fn render_tooltip(frame: &mut Frame, app: &mut AppState) {
     }
     // A `[x]` hide-column button trails the text when the tooltip is for an optional column.
     let x_label = " [x]";
-    let text_width = md_display_width(tip.text.as_str()) as u16;
+    // The text may be multi-line (`\n`): e.g. an action description over its resolved target URL.
+    let rows: Vec<&str> = tip.text.split('\n').collect();
+    let text_width =
+        rows.iter().map(|row| md_display_width(row)).max().unwrap_or(0) as u16;
     let extra = if tip.hide_column.is_some() { x_label.len() as u16 } else { 0 };
     // border (2) + 1-cell horizontal padding (2) around the text (+ the optional `[x]`).
     let width = (text_width + extra + 4).min(area.width);
-    let height = 3;
+    let height = rows.len() as u16 + 2;
     let rect = tui_pick::position(
         tip.anchor,
         (width, height),
@@ -915,7 +918,9 @@ fn render_tooltip(frame: &mut Frame, app: &mut AppState) {
         let x_start = inner.x + text_width + 1;
         app.tooltip_hide_click = Some((inner.y, x_start, x_start + 3, column));
     } else {
-        frame.render_widget(Paragraph::new(Line::from(inline_md_spans(&tip.text, base))), inner);
+        let lines: Vec<Line> =
+            rows.iter().map(|row| Line::from(inline_md_spans(row, base))).collect();
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 

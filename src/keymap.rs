@@ -15,6 +15,9 @@ pub struct Binding {
     /// Sub-group within the section (drives the grouped help layout, e.g. "Navigate").
     #[serde(default)]
     pub group: Option<String>,
+    /// Extra search synonyms (don't appear verbatim in the action) — matched by the `/` help search.
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

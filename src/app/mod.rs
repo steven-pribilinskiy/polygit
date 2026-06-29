@@ -129,6 +129,9 @@ pub struct AppState {
     pub list_scroll: usize,
     /// What the right pane shows for the selected repo (log, info, or diff).
     pub right_view: RightView,
+    /// The render style for the Result pane's diff view (raw / unified / split) — the flat
+    /// `log · raw · unified · split` chip row. Separate from `diff_view` (the diff modal's style).
+    pub pane_diff_view: DiffView,
     /// Whether a compact info section is pinned above the log/diff (`I`).
     pub info_pinned: bool,
     /// Clickable regions in the info block / log copy button: `(row, col_start, col_end, action)`.
@@ -774,7 +777,8 @@ impl AppState {
             divider_dragging: false,
             list_offset: 0,
             list_scroll: 0,
-            right_view: RightView::Log,
+            right_view: persisted.right_view,
+            pane_diff_view: persisted.pane_diff_view,
             info_pinned: persisted.info_pinned,
             info_click: Vec::new(),
             info_expanded: HashSet::new(),

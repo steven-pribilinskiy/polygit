@@ -458,6 +458,10 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
         row2_segments.push((" ".to_string(), hint, None));
         row2_segments.push((format!("[{filter_text}]"), active, Some(Command::ClearNameFilter)));
     }
+    // The fuzzy finder (jump to any repo) — `^p`; sits right after the name filter.
+    row2_segments.push((" · ".to_string(), hint, None));
+    row2_segments.push(("^p".to_string(), key, Some(Command::OpenFinder)));
+    row2_segments.push((" find".to_string(), hint, Some(Command::OpenFinder)));
     // The status filter lives on the list-header `f status ⟪…⟫ ▾` trigger now; the footer keeps only
     // the active `{status}` tag as a one-click reset (shown only while a filter is on).
     if let Some(tag) = status_filter.tag() {
@@ -526,6 +530,12 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
         (" · ".to_string(), hint, None),
         ("o".to_string(), key, Some(Command::OpenRemote)),
         (" open".to_string(), hint, Some(Command::OpenRemote)),
+        (" · ".to_string(), hint, None),
+        ("p".to_string(), key, Some(Command::OpenPr)),
+        (" pr".to_string(), hint, Some(Command::OpenPr)),
+        (" · ".to_string(), hint, None),
+        ("P".to_string(), key, Some(Command::OpenPrWeb)),
+        (" gh-pr".to_string(), hint, Some(Command::OpenPrWeb)),
         (" · ".to_string(), hint, None),
         ("y/".to_string(), key, Some(Command::CopyPath)),
         ("Y ".to_string(), key, Some(Command::CopyRemote)),

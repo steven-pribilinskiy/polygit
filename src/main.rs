@@ -50,8 +50,8 @@ use worker::{
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
-    run_all_prs, run_pr_view, run_pull_request, run_remove_worktree, run_repo_details, run_repo_diff,
-    run_repo_page,
+    run_all_prs, run_open_pr_web, run_pr_view, run_pull_request, run_remove_worktree,
+    run_repo_details, run_repo_diff, run_repo_page,
 };
 
 /// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
@@ -228,7 +228,7 @@ async fn watch_theme(app_state: Arc<Mutex<AppState>>) {
 }
 
 /// Open a URL in the user's browser via the first available opener, detached.
-fn open_url(url: &str) {
+pub(crate) fn open_url(url: &str) {
     let mut candidates: Vec<String> = Vec::new();
     if let Ok(browser) = std::env::var("BROWSER") {
         if !browser.is_empty() {
@@ -564,6 +564,8 @@ fn dispatch_command(
     retry_queue: &mut Vec<usize>,
     pending_claude: &mut Option<std::path::PathBuf>,
     pending_lazygit: &mut Option<std::path::PathBuf>,
+    pending_pr_view: &mut Option<usize>,
+    pending_pr_web: &mut Option<usize>,
 ) -> Option<i32> {
     match command {
         Cmd::Retry => {
@@ -638,7 +640,9 @@ fn dispatch_command(
         Cmd::FoldExpandAll => app.expand_all(),
         Cmd::FoldExpandSubtree => app.expand_subtree(),
         Cmd::ToggleGroupCollapsed(group_idx) => app.toggle_group_collapsed(group_idx, None),
-        Cmd::DiffView => app.toggle_diff_view(),
+        Cmd::DiffView => app.cycle_result_view(),
+        Cmd::SetResultLog => app.set_result_view(app::RightView::Log, app.pane_diff_view),
+        Cmd::SetResultDiff(style) => app.set_result_view(app::RightView::Diff, style),
         Cmd::Claude => {
             if let Some(idx) = app.selected_repo_index() {
                 *pending_claude = Some(app.repos[idx].lock().unwrap().path.clone());
@@ -655,6 +659,17 @@ fn dispatch_command(
                 .and_then(|idx| app.repos[idx].lock().unwrap().remote_url.clone());
             if let Some(url) = url {
                 open_url(&url);
+            }
+        }
+        Cmd::OpenFinder => app.open_finder(),
+        Cmd::OpenPr => {
+            if let Some(idx) = app.selected_repo_index() {
+                *pending_pr_view = Some(idx);
+            }
+        }
+        Cmd::OpenPrWeb => {
+            if let Some(idx) = app.selected_repo_index() {
+                *pending_pr_web = Some(idx);
             }
         }
         Cmd::CopyPath => {
@@ -1195,6 +1210,10 @@ async fn run_event_loop(
     let mut pending_claude: Option<std::path::PathBuf> = None;
     // Set when `l` is pressed; the TUI is suspended to run lazygit after event handling.
     let mut pending_lazygit: Option<std::path::PathBuf> = None;
+    // Set by `p` / `P` (or their footer chips); consumed after event handling to open the PR viewer
+    // (`pending_pr_view`) or the PR/compare page on GitHub (`pending_pr_web`). Repo index.
+    let mut pending_pr_view: Option<usize> = None;
+    let mut pending_pr_web: Option<usize> = None;
 
     // Last left-click (time, selection) for synthesizing double-click → open repo page.
     let mut last_click: Option<(Instant, usize)> = None;
@@ -1219,6 +1238,22 @@ async fn run_event_loop(
                 (app.claude_agent, app.claude_skip_permissions)
             };
             launch_claude(terminal, &path, agent, skip)?;
+        }
+
+        // Open the PR viewer for the selected repo's detected PR (loads via `gh pr view`), or toast
+        // when none is detected. Shared by the `p` key and the `p pr` footer chip.
+        if let Some(idx) = pending_pr_view.take() {
+            let mut app = app_state.lock().unwrap();
+            if app.open_pr_modal_for_repo(idx) {
+                drop(app);
+                tokio::spawn(run_pr_view(Arc::clone(&app_state)));
+            } else {
+                app.show_toast("No open PR detected for this repo");
+            }
+        }
+        // Open the PR on GitHub (existing PR, else compare-vs-base). Base resolves off-thread.
+        if let Some(idx) = pending_pr_web.take() {
+            tokio::spawn(run_open_pr_web(Arc::clone(&app_state), idx));
         }
 
         // Suspend the TUI and run lazygit when requested, or note that it isn't installed.
@@ -1473,7 +1508,7 @@ async fn run_event_loop(
                         }
                         cursor
                             .and_then(|(col, row)| app.command_at(col, row))
-                            .and_then(|cmd| cursor_tip(cursor, cmd.tooltip().to_string()))
+                            .and_then(|cmd| cursor_tip(cursor, app.command_tooltip(cmd)))
                     });
                 let dwell_text = dwell.as_ref().map(|tip| tip.text.clone());
                 if dwell_text != hover_dwell_text {
@@ -1810,6 +1845,8 @@ async fn run_event_loop(
                             &mut retry_queue,
                             &mut pending_claude,
                             &mut pending_lazygit,
+                            &mut pending_pr_view,
+                            &mut pending_pr_web,
                         ) {
                             drop(app);
                             return Ok(code);
@@ -4333,8 +4370,21 @@ async fn run_event_loop(
                         }
                     }
 
-                    // Open the fuzzy finder overlay (jump to any repo across all folders).
-                    (KeyCode::Char('P'), _) => app.open_finder(),
+                    // `Ctrl+P` opens the fuzzy finder overlay (jump to any repo across all folders).
+                    (KeyCode::Char('p'), KeyModifiers::CONTROL) => app.open_finder(),
+                    // `p` opens the selected repo's PR in polygit's PR viewer (when one is detected);
+                    // `P` opens it on GitHub (existing PR, else compare-vs-base). Both defer to the
+                    // shared consumer below (same as the footer-chip clicks), so there's one path.
+                    (KeyCode::Char('p'), _) => {
+                        if let Some(idx) = app.selected_repo_index() {
+                            pending_pr_view = Some(idx);
+                        }
+                    }
+                    (KeyCode::Char('P'), _) => {
+                        if let Some(idx) = app.selected_repo_index() {
+                            pending_pr_web = Some(idx);
+                        }
+                    }
 
                     // Open the folder picker to add a folder/repo to the workspace.
                     (KeyCode::Char('A'), _) => app.open_picker(),
@@ -4396,9 +4446,9 @@ async fn run_event_loop(
                     }
                     // Toggle the result/log panel (bottom of the preview); hidden, info fills it.
                     (KeyCode::Char('I'), _) => app.toggle_result_panel(),
-                    // Toggle the per-repo diff view in the right pane.
+                    // Cycle the result view: log → raw → unified → split → log.
                     (KeyCode::Char('d'), _) => {
-                        app.toggle_diff_view();
+                        app.cycle_result_view();
                     }
                     // Open the selected repo's remote in the browser.
                     (KeyCode::Char('o'), _) => {

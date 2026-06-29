@@ -63,7 +63,8 @@ impl RepoStatus {
 
 /// What the right pane shows for the selected repo. The info block is an additive overlay
 /// (`info_pinned`) drawn above whichever of these is active, not a separate variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RightView {
     #[default]
     Log,
@@ -2030,14 +2031,24 @@ pub enum Command {
     FoldExpandAll,
     /// Expand the selected header's subtree recursively (`*` / `z O`).
     FoldExpandSubtree,
-    /// Toggle the per-repo diff view in the preview pane (same as `d`).
+    /// Cycle the Result pane's view: log → raw → unified → split → log (same as `d`).
     DiffView,
+    /// Set the Result pane to the command-log view (the `log` chip).
+    SetResultLog,
+    /// Set the Result pane to a diff view with the given render style (the raw/unified/split chips).
+    SetResultDiff(DiffView),
     /// Start claude code in the selected repo (same as `c`).
     Claude,
     /// Open lazygit in the selected repo (same as `l`).
     Lazygit,
     /// Open the selected repo's remote in the browser (same as `o`).
     OpenRemote,
+    /// Open the fuzzy finder overlay to jump to any repo (same as `Ctrl+P`).
+    OpenFinder,
+    /// Open the selected repo's PR in polygit's PR viewer (same as `p`).
+    OpenPr,
+    /// Open the selected repo's PR on GitHub — existing PR, else compare-vs-base (same as `P`).
+    OpenPrWeb,
     /// Copy the selected repo's absolute path (same as `y`).
     CopyPath,
     /// Copy the selected repo's remote URL (same as `Y`).
@@ -2090,10 +2101,17 @@ impl Command {
             Command::FoldCollapseAll => "Collapse all folders and groups",
             Command::FoldExpandAll => "Expand all folders and groups",
             Command::FoldExpandSubtree => "Expand the selected subtree",
-            Command::DiffView => "Toggle the diff view in the preview pane",
+            Command::DiffView => "Cycle the result view: log → raw → unified → split",
+            Command::SetResultLog => "Show the command log (pull output)",
+            Command::SetResultDiff(DiffView::Raw) => "Show the pull diff (raw, git-colored)",
+            Command::SetResultDiff(DiffView::Unified) => "Show the pull diff (unified, syntax-highlighted)",
+            Command::SetResultDiff(DiffView::Split) => "Show the pull diff (split, syntax-highlighted)",
             Command::Claude => "Start claude code in the selected repo's directory",
             Command::Lazygit => "Open lazygit in the selected repo",
             Command::OpenRemote => "Open the selected repo's remote in your browser",
+            Command::OpenFinder => "Open the fuzzy finder to jump to any repo",
+            Command::OpenPr => "Open the selected repo's pull request in polygit's PR viewer",
+            Command::OpenPrWeb => "Open the PR on GitHub (or the compare page for this branch)",
             Command::CopyPath => "Copy the selected repo's absolute path",
             Command::CopyRemote => "Copy the selected repo's remote (origin) URL",
             Command::Settings => "Open settings",

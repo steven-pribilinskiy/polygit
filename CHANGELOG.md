@@ -3,6 +3,26 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.104.0 — 2026-06-29
+Result pane (panel 3): one colored diffstat + a flat `log · raw · unified · split` view switcher
+- **fixed the duplicate diffstat** in the log view — `git pull` now runs with `merge.stat=false`, so
+  the file list no longer prints twice (once uncolored from git, once colored from polygit). Exactly
+  one diffstat, always colored.
+- **flat view switcher** in panel 3's bottom border: `d log · raw · unified · split`. `d` cycles;
+  each chip jumps straight to that view. Clickable + hover-highlighted, active chip bold.
+- **rich diff views** — `raw` keeps git's colored output; `unified`/`split` are syntax-highlighted,
+  GitHub-PR-style, reusing the diff modal's exact renderer (now shared via `diff_body_lines`). A
+  multi-file pull diff highlights each file with its own lexer.
+- the chosen view (log/raw/unified/split) persists across restarts.
+- **PR keys**: `p` opens the selected repo's pull request in polygit's PR viewer; `P` opens it on
+  GitHub (the existing PR, else the compare page vs the base branch; no-op on the base branch).
+  Both appear in the footer after `o open`, and their tooltips show the resolved target.
+- the **fuzzy finder** moved from `P` to **`Ctrl+P`** (its `^p find` chip now sits after `/ filter`).
+- **dynamic tooltips**: a footer command's tooltip now shows a second line with the concrete target
+  resolved from the selected repo — e.g. `o open` shows the remote URL, `p`/`P` the PR/compare URL.
+- **fixed `@`-prefixed help search** (`@p`): it now matches real key tokens instead of a slice of the
+  rendered two-column line, so `@p` no longer mis-matches rows like `t`/`s` (via "o**p**en"/"dro**p**down").
+
 ## v2.103.0 — 2026-06-29
 PR viewer: full title in body · sticky title bar · "time ago" with hover · no hover bleed
 - **full PR title** now leads the modal body (word-wrapped, untruncated). The title bar shows only
