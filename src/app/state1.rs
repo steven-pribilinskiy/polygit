@@ -185,24 +185,53 @@ impl AppState {
         self.groups.iter().any(|group| group.source.is_dynamic())
     }
 
-    /// Toggle the per-repo diff view in the preview pane (shared by the `d` key and the
-    /// status-bar hint).
+    /// Toggle the Result pane between the command log and the diff view, keeping the current diff
+    /// render style (the kebab "Diff" action — a simple on/off, distinct from the `d` cycle).
     pub fn toggle_diff_view(&mut self) {
-        if self.right_view == RightView::Diff {
-            // Toggling off: drop the cached diff so it refreshes next time.
-            if let Some(repo_idx) = self.selected_repo_index() {
-                self.repos[repo_idx].lock().unwrap().diff = None;
-            }
-            self.right_view = RightView::Log;
+        let target = if self.right_view == RightView::Diff {
+            RightView::Log
         } else {
-            // Entering Diff: start at the top, not the log's scroll position.
-            if let Some(repo_idx) = self.selected_repo_index() {
-                let mut state = self.repos[repo_idx].lock().unwrap();
+            RightView::Diff
+        };
+        self.apply_result_view(target, self.pane_diff_view);
+    }
+
+    /// Cycle the Result pane's flat view row: log → raw → unified → split → log. Shared by the
+    /// `d` key and the status-bar `d diff` hint.
+    pub fn cycle_result_view(&mut self) {
+        let (view, style) = match (self.right_view, self.pane_diff_view) {
+            (RightView::Log, _) => (RightView::Diff, DiffView::Raw),
+            (RightView::Diff, DiffView::Raw) => (RightView::Diff, DiffView::Unified),
+            (RightView::Diff, DiffView::Unified) => (RightView::Diff, DiffView::Split),
+            (RightView::Diff, DiffView::Split) => (RightView::Log, self.pane_diff_view),
+        };
+        self.apply_result_view(view, style);
+    }
+
+    /// Jump the Result pane directly to a chip's view (the `log` / `raw` / `unified` / `split`
+    /// clicks). `RightView::Log` ignores `style`; diff views adopt it.
+    pub fn set_result_view(&mut self, view: RightView, style: DiffView) {
+        self.apply_result_view(view, style);
+    }
+
+    /// Apply a Result-pane view change: manage the per-repo diff buffer (dropped only when leaving
+    /// Diff, so switching styles never refetches) and the scroll, then persist. The diff body is
+    /// (re)loaded lazily by the event loop when `right_view == Diff && diff.is_none()`.
+    fn apply_result_view(&mut self, view: RightView, style: DiffView) {
+        let leaving_diff = self.right_view == RightView::Diff && view == RightView::Log;
+        self.right_view = view;
+        self.pane_diff_view = style;
+        if let Some(repo_idx) = self.selected_repo_index() {
+            let mut state = self.repos[repo_idx].lock().unwrap();
+            if view == RightView::Diff {
+                // Entering diff or switching style: start at the top, not the log's scroll.
                 state.preview_scroll = 0;
                 state.auto_scroll = false;
+            } else if leaving_diff {
+                state.diff = None;
             }
-            self.right_view = RightView::Diff;
         }
+        self.save_state();
     }
 
     /// Toggle the grouped list view, keeping the selection on the same repo (shared by the
@@ -356,6 +385,8 @@ impl AppState {
             last_seen_version: env!("CARGO_PKG_VERSION").to_string(),
             cli_help_mode: self.cli_builder.help_mode,
             diff_view: self.diff_view,
+            right_view: self.right_view,
+            pane_diff_view: self.pane_diff_view,
             show_merged_prs: self.show_merged_prs,
         });
     }

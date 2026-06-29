@@ -88,6 +88,13 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         (false, true) => area,
     };
 
+    // A single repo's log/diff view shows the flat `log · raw · unified · split` switcher (in the
+    // bottom border) and, in a diff view, renders the body through `diff_body_lines`.
+    let single_repo_view =
+        selected_repo.is_some() && !overlay && selected_group.is_none() && selected_folder.is_none();
+    let pane_diff_active = single_repo_view && app.right_view == RightView::Diff;
+    let pane_diff_style = app.pane_diff_view;
+
     let (header_text, content_lines, scroll_offset) = if show_errors {
         (" Errors ".to_string(), build_error_summary(app), 0usize)
     } else if show_result {
@@ -113,7 +120,13 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
                 .diff
                 .clone()
                 .unwrap_or_else(|| vec!["(loading…)".to_string()]);
-            (format!(" {} · diff ", state.name), lines, state.preview_scroll)
+            // `content_lines` stays the RAW diff text; the chosen style (raw/unified/split) is
+            // rendered at the tail via `diff_body_lines` (see `pane_diff_active`).
+            (
+                format!(" {} · {} ", state.name, app.pane_diff_view.label()),
+                lines,
+                state.preview_scroll,
+            )
         } else {
             // The git subprocess PID is only meaningful while the pull is actually running; show it
             // then and omit it otherwise (a settled repo has no process, so `pid —` was just noise).
@@ -219,19 +232,68 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
             spans.push(Span::styled(text, style));
         }
         block = block.title_bottom(Line::from(spans).right_aligned());
+    } else if single_repo_view {
+        // Flat view switcher in the bottom border: `d log · raw · unified · split`. `d` cycles;
+        // each chip jumps straight to that view. Active chip is bold/accent, the rest dim. Hover +
+        // click come free via `app.clickable` (apply_hover highlights the region under the cursor).
+        let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let hint = Style::default().fg(Color::DarkGray);
+        let active = Style::default().add_modifier(Modifier::BOLD);
+        let rv = app.right_view;
+        let st = app.pane_diff_view;
+        let chip = |label: &str, on: bool, command: Command| -> (String, Style, Option<Command>) {
+            (label.to_string(), if on { active } else { hint }, Some(command))
+        };
+        let footer: Vec<(String, Style, Option<Command>)> = vec![
+            ("d".to_string(), key, Some(Command::DiffView)),
+            (" ".to_string(), hint, None),
+            chip("log", rv == RightView::Log, Command::SetResultLog),
+            (" · ".to_string(), hint, None),
+            chip("raw", rv == RightView::Diff && st == DiffView::Raw, Command::SetResultDiff(DiffView::Raw)),
+            (" · ".to_string(), hint, None),
+            chip(
+                "unified",
+                rv == RightView::Diff && st == DiffView::Unified,
+                Command::SetResultDiff(DiffView::Unified),
+            ),
+            (" · ".to_string(), hint, None),
+            chip("split", rv == RightView::Diff && st == DiffView::Split, Command::SetResultDiff(DiffView::Split)),
+            (" ".to_string(), hint, None),
+        ];
+        let footer_width: u16 =
+            footer.iter().map(|(text, _, _)| UnicodeWidthStr::width(text.as_str()) as u16).sum();
+        let footer_row = area.y + area.height.saturating_sub(1);
+        let mut col = area.x + area.width.saturating_sub(footer_width + 1);
+        let mut spans = Vec::new();
+        for (text, style, command) in footer {
+            let text_width = UnicodeWidthStr::width(text.as_str()) as u16;
+            if let Some(command) = command {
+                app.clickable.push(ClickRegion {
+                    row: footer_row,
+                    col_start: col,
+                    col_end: col + text_width,
+                    command,
+                });
+            }
+            col += text_width;
+            spans.push(Span::styled(text, style));
+        }
+        block = block.title_bottom(Line::from(spans).right_aligned());
     }
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let inner_height = inner.height as usize;
-    let total_lines = content_lines.len();
 
-    // Convert lines to ratatui Text with ANSI color support
-    let text_lines: Vec<Line> = content_lines
-        .iter()
-        .map(|line| ansi_line_to_ratatui(line))
-        .collect();
+    // The diff view renders the raw diff text through the modal's shared styler (raw keeps git's
+    // colors; unified/split are syntax-highlighted). Everything else is plain ANSI lines.
+    let text_lines: Vec<Line> = if pane_diff_active {
+        diff_body_lines(&content_lines, pane_diff_style, None, inner.width, &app.palette())
+    } else {
+        content_lines.iter().map(|line| ansi_line_to_ratatui(line)).collect()
+    };
+    let total_lines = text_lines.len();
 
     let max_scroll = total_lines.saturating_sub(inner_height);
     let effective_scroll = scroll_offset.min(max_scroll);

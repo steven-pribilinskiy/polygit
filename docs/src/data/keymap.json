@@ -329,7 +329,15 @@
         "keys": [
           "d"
         ],
-        "action": "Toggle the per-repo diff view",
+        "action": "Cycle the result view: log → raw → unified → split",
+        "note": "log = pull output; raw = git-colored diff; unified/split = syntax-highlighted. Click any chip in the pane footer to jump directly; the choice persists",
+        "keywords": [
+          "diff",
+          "unified",
+          "split",
+          "raw",
+          "log"
+        ],
         "group": "Panes & views"
       },
       {
@@ -386,6 +394,35 @@
           "o"
         ],
         "action": "Open the selected repo's remote in the browser",
+        "group": "Clipboard & run"
+      },
+      {
+        "keys": [
+          "p"
+        ],
+        "action": "Open the selected repo's pull request in polygit's PR viewer",
+        "note": "uses the detected open PR (gh); toasts when none is detected. Ctrl+P is the fuzzy finder",
+        "keywords": [
+          "pull request",
+          "pr",
+          "review",
+          "github"
+        ],
+        "group": "Clipboard & run"
+      },
+      {
+        "keys": [
+          "P"
+        ],
+        "action": "Open the PR on GitHub — the existing PR, else the compare page for this branch vs its base",
+        "note": "opens the detected PR's url, or `…/compare/<base>...<branch>?expand=1`; no-op when already on the base branch or there's no remote",
+        "keywords": [
+          "pull request",
+          "pr",
+          "compare",
+          "github",
+          "browser"
+        ],
         "group": "Clipboard & run"
       },
       {
@@ -609,6 +646,7 @@
       },
       {
         "keys": [
+          "Ctrl",
           "P"
         ],
         "action": "Open the fuzzy finder overlay — search every repo across all folders and jump to one",

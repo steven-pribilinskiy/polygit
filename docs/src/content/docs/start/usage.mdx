@@ -88,11 +88,14 @@ polygit has up to four focusable panels, each with a stable number in its title:
 - **`[2]` info** — the **info panel** (`i`, top of the right pane): repo facts, clickable
   branch/commit/remote/PR links, and whole-line copy on the Path / Worktrees / non-link Branch
   rows (each marked by a `⧉`).
-- **`[3]` result/log** — the **result/log panel** (`I`, bottom of the right pane): a live log
-  of the pull output, or with `d` the working-tree / last-pull diff. When both `[2]` and `[3]`
-  show, a **draggable boundary** splits them (set by `preview_split_ratio`); hide one and the
-  other fills the right pane. Both toggles are persisted, with clickable `i info` / `I log`
-  footer hints.
+- **`[3]` result/log** — the **result/log panel** (`I`, bottom of the right pane). A flat view
+  switcher in its footer — `log · raw · unified · split` — picks what it shows: `log` is the live
+  pull/command output (with a single colored diffstat on an update); `raw` is git's own colored
+  diff; `unified` and `split` are syntax-highlighted, GitHub-PR-style renders of the same diff
+  (working-tree changes, else the last pull's). `d` cycles the four; clicking a chip jumps straight
+  to it; the choice persists. When both `[2]` and `[3]` show, a **draggable boundary** splits them
+  (set by `preview_split_ratio`); hide one and the other fills the right pane. Both toggles are
+  persisted, with clickable `i info` / `I log` footer hints.
 - **`[4]` repo page** — the [repo page](#) for the selected repo (opened with `Enter`). By
   default it's **restored**: a docked panel across the bottom, so the list above stays live
   (selecting a repo retargets the panel — master-detail). Press `m` (or the `m▢` title-bar

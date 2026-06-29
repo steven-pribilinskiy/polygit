@@ -173,6 +173,9 @@
         state.active_workspace = None;
         state.info_pinned = false;
         state.show_result_panel = true;
+        // Result-pane view (log/raw/unified/split) persists — pin to the log default.
+        state.right_view = crate::app::RightView::Log;
+        state.pane_diff_view = crate::app::DiffView::Raw;
         state.dock_ratio = AppState::DOCK_DEFAULT;
         // Auto-pull policy comes from the user's real state.json — pin it to the defaults so the
         // gate/settle tests are hermetic.

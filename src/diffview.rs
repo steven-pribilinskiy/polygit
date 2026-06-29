@@ -31,6 +31,52 @@ fn strip_ansi(line: &str) -> String {
     String::from_utf8_lossy(&strip_ansi_escapes::strip(line.as_bytes())).into_owned()
 }
 
+/// Split a (possibly multi-file) unified diff into per-file segments, each paired with the file's
+/// path — so the renderer can pick the right syntax lexer per file. Splits on `diff --git` headers;
+/// any preamble before the first header becomes one pathless (`""`) segment. The path is taken from
+/// `+++ b/<p>` (the new path), falling back to `--- a/<p>` (deletions, where `+++` is `/dev/null`),
+/// then the `diff --git … b/<p>` line. ANSI is stripped before matching. Pure.
+pub fn split_files(raw: &[String]) -> Vec<(String, Vec<String>)> {
+    let mut segments: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    for line in raw {
+        if strip_ansi(line).starts_with("diff --git ") && !current.is_empty() {
+            let path = segment_path(&current);
+            segments.push((path, std::mem::take(&mut current)));
+        }
+        current.push(line.clone());
+    }
+    if !current.is_empty() {
+        let path = segment_path(&current);
+        segments.push((path, current));
+    }
+    segments
+}
+
+/// The file path of one `split_files` segment (see its doc for the precedence). `""` if none found.
+fn segment_path(segment: &[String]) -> String {
+    let mut fallback = String::new();
+    for line in segment {
+        let text = strip_ansi(line);
+        if let Some(rest) = text.strip_prefix("+++ ") {
+            let path = rest.trim();
+            if path != "/dev/null" {
+                return path.strip_prefix("b/").unwrap_or(path).to_string();
+            }
+        } else if let Some(rest) = text.strip_prefix("--- ") {
+            let path = rest.trim();
+            if path != "/dev/null" {
+                fallback = path.strip_prefix("a/").unwrap_or(path).to_string();
+            }
+        } else if fallback.is_empty() && text.starts_with("diff --git ") {
+            if let Some((_, after)) = text.rsplit_once(" b/") {
+                fallback = after.trim().to_string();
+            }
+        }
+    }
+    fallback
+}
+
 /// Parse the `@@ -a,b +c,d @@` header's two start line numbers.
 fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
     let rest = line.strip_prefix("@@ ")?;
@@ -312,6 +358,55 @@ mod tests {
         assert_eq!(rows[4].new, Some(11));
         assert_eq!(rows[5].new, Some(12));
         assert_eq!(rows[3].text, "removed");
+    }
+
+    #[test]
+    fn split_files_tracks_path_per_file() {
+        let raw: Vec<String> = [
+            "diff --git a/src/app.rs b/src/app.rs",
+            "--- a/src/app.rs",
+            "+++ b/src/app.rs",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "diff --git a/README.md b/README.md",
+            "--- a/README.md",
+            "+++ b/README.md",
+            "@@ -1 +1 @@",
+            "-a",
+            "+b",
+        ]
+        .iter()
+        .map(|line| line.to_string())
+        .collect();
+        let segments = split_files(&raw);
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].0, "src/app.rs");
+        assert_eq!(segments[1].0, "README.md");
+        // Each segment carries its own file's lines (6 each here).
+        assert_eq!(segments[0].1.len(), 6);
+        assert_eq!(segments[1].1.len(), 6);
+    }
+
+    #[test]
+    fn split_files_added_and_deleted_paths() {
+        // Addition: `--- /dev/null`, path from `+++ b/`. Deletion: `+++ /dev/null`, path from `--- a/`.
+        let raw: Vec<String> = [
+            "diff --git a/new.rs b/new.rs",
+            "--- /dev/null",
+            "+++ b/new.rs",
+            "+hello",
+            "diff --git a/gone.rs b/gone.rs",
+            "--- a/gone.rs",
+            "+++ /dev/null",
+            "-bye",
+        ]
+        .iter()
+        .map(|line| line.to_string())
+        .collect();
+        let segments = split_files(&raw);
+        assert_eq!(segments[0].0, "new.rs");
+        assert_eq!(segments[1].0, "gone.rs");
     }
 
     #[test]

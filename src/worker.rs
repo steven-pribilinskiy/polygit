@@ -9,7 +9,7 @@ use tokio::sync::Semaphore;
 use crate::app::{
     AppState, CellFlash, ConfirmAction, ConfirmDialog, DiffMode, DiffSource, IconStyle, PageRow,
     PageRowKind, RepoDetails, RepoPageData, RepoState, RepoStatus, SharedRepoState, ThrottleControl,
-    WorktreeEntry,
+    WorktreeEntry, base_override_key,
 };
 use crate::git::{
     base_file_list, base_merge_base, branch_diff_stats, branch_file_diff, branch_file_list,
@@ -197,7 +197,10 @@ async fn run_pull_attempt(
     // Spawn git directly and bound it with tokio's timer below — cross-platform, and avoids
     // depending on the GNU `timeout` coreutil (absent / incompatible on Windows).
     let mut child = Command::new("git")
-        .args(["-C", path.to_str().unwrap_or("."), "pull", "--ff-only"])
+        // `-c merge.stat=false` suppresses git's own (uncolored) fast-forward diffstat — the log
+        // view appends a single `--color=always` diffstat itself (see `PullOutcome::Updated`), so
+        // without this the file list prints twice (once uncolored from git, once colored from us).
+        .args(["-C", path.to_str().unwrap_or("."), "-c", "merge.stat=false", "pull", "--ff-only"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -590,6 +593,44 @@ pub async fn run_pr_view(app_state: Arc<Mutex<AppState>>) {
                     ..Default::default()
                 });
             }
+        }
+    }
+}
+
+/// Open the selected repo's PR on GitHub in the browser: the existing PR if one is detected, else
+/// the compare page for the current branch vs its base (`/compare/<base>...<branch>?expand=1`).
+/// No-op (with a toast) when on the base branch or when there's no remote. Resolves the base off
+/// the UI thread (a git call), so it runs as a spawned task; opening is `crate::open_url`.
+pub async fn run_open_pr_web(app_state: Arc<Mutex<AppState>>, idx: usize) {
+    let (path, remote, branch, pr, override_ref) = {
+        let app = app_state.lock().unwrap();
+        let Some(repo) = app.repos.get(idx) else {
+            return;
+        };
+        let repo = repo.lock().unwrap();
+        let branch = repo.branch.clone();
+        let override_ref = branch
+            .as_deref()
+            .and_then(|branch| app.base_overrides.get(&base_override_key(&repo.path, branch)).cloned());
+        (repo.path.clone(), repo.remote_url.clone(), branch, repo.pr.clone(), override_ref)
+    };
+    if let Some(pr) = pr {
+        crate::open_url(&pr.url);
+        return;
+    }
+    let Some(remote) = remote else {
+        app_state.lock().unwrap().show_toast("No remote — nothing to open on GitHub");
+        return;
+    };
+    let Some(branch) = branch else {
+        return;
+    };
+    match resolve_base(&path, &branch, override_ref.as_deref(), None).await {
+        Some(base) if base != branch => {
+            crate::open_url(&format!("{remote}/compare/{base}...{branch}?expand=1"));
+        }
+        _ => {
+            app_state.lock().unwrap().show_toast(format!("On the base branch ({branch}) — no PR to open"));
         }
     }
 }

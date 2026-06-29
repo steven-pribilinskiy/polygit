@@ -171,6 +171,12 @@ pub struct PersistedState {
     /// Diff modal render style (raw / unified / split). Default raw.
     #[serde(default)]
     pub diff_view: crate::app::DiffView,
+    /// Result pane view on last exit: log vs diff (the flat log/raw/unified/split chip row).
+    #[serde(default)]
+    pub right_view: crate::app::RightView,
+    /// Result pane diff render style (raw / unified / split). Default raw.
+    #[serde(default)]
+    pub pane_diff_view: crate::app::DiffView,
     /// Surface merged & closed PRs (not just open ones) in the PR column + info panel. Default off
     /// — detection always finds all states, this only gates display.
     #[serde(default)]

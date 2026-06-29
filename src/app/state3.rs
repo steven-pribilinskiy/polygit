@@ -122,6 +122,38 @@ impl AppState {
             .map(|region| region.command)
     }
 
+    /// A footer command's dwell tooltip: line 1 is the static description; some commands add a 2nd
+    /// line resolving the concrete target from the selected repo (remote URL, path, PR). The popup
+    /// renders `\n`-separated lines. Falls back to the one-liner when nothing dynamic applies.
+    pub fn command_tooltip(&self, command: Command) -> String {
+        let base = command.tooltip().to_string();
+        let info = self.selected_repo_index().map(|idx| {
+            let repo = self.repos[idx].lock().unwrap();
+            (repo.remote_url.clone(), repo.path.display().to_string(), repo.pr.clone())
+        });
+        let line2: Option<String> = match command {
+            Command::OpenRemote | Command::CopyRemote => Some(
+                info.as_ref()
+                    .and_then(|(remote, ..)| remote.clone())
+                    .unwrap_or_else(|| "(no remote)".to_string()),
+            ),
+            Command::CopyPath => info.as_ref().map(|(_, path, _)| path.clone()),
+            Command::OpenPr => Some(match info.as_ref().and_then(|(.., pr)| pr.clone()) {
+                Some(pr) => format!("PR #{} — {}", pr.number, pr.title),
+                None => "(no open PR detected)".to_string(),
+            }),
+            Command::OpenPrWeb => Some(match info.as_ref().and_then(|(.., pr)| pr.clone()) {
+                Some(pr) => pr.url,
+                None => "(opens the compare page for this branch)".to_string(),
+            }),
+            _ => None,
+        };
+        match line2 {
+            Some(line2) => format!("{base}\n{line2}"),
+            None => base,
+        }
+    }
+
     /// The dwell tooltip for a captured region (column header / group-count tail) at a point: its
     /// text, the element to anchor the popup to, and the preferred side.
     pub fn tooltip_at(

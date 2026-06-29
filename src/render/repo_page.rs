@@ -228,6 +228,38 @@ fn diff_split_lines(
         .collect()
 }
 
+/// Render a diff body in the requested style — the single shared entry point for BOTH the diff
+/// modal and the Result pane's diff view. `Raw` keeps git's own colored output; `Unified`/`Split`
+/// are syntax-highlighted. A multi-file diff (the Result pane's whole-pull diff) is split per file
+/// so each highlights with its own lexer; `base_path` is the fallback path (the modal passes its
+/// single file, the pane passes `None`).
+pub(crate) fn diff_body_lines(
+    raw: &[String],
+    view: DiffView,
+    base_path: Option<&str>,
+    width: u16,
+    palette: &crate::theme::Palette,
+) -> Vec<Line<'static>> {
+    if matches!(view, DiffView::Raw) {
+        return raw.iter().map(|line| ansi_line_to_ratatui(line)).collect();
+    }
+    let render_seg = |seg: &[String], path: &str| match view {
+        DiffView::Unified => diff_unified_lines(seg, path, width, palette),
+        DiffView::Split => diff_split_lines(seg, path, width, palette),
+        DiffView::Raw => unreachable!("raw handled above"),
+    };
+    let segments = crate::diffview::split_files(raw);
+    if segments.is_empty() {
+        return render_seg(raw, base_path.unwrap_or(""));
+    }
+    let mut out = Vec::new();
+    for (path, seg) in &segments {
+        let path = if path.is_empty() { base_path.unwrap_or("") } else { path.as_str() };
+        out.extend(render_seg(seg, path));
+    }
+    out
+}
+
 pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let modal_width = (area.width * 9 / 10).max(20);
     let modal_height = (area.height * 9 / 10).max(8);
@@ -449,11 +481,8 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     let diff_view_h = diff_content.height as usize;
     // Build the full rendered lines for the active view, then window by scroll. Unified/split parse
     // + syntax-highlight the diff (GitHub-PR style); raw keeps git's own colored output.
-    let rendered: Vec<Line> = match view {
-        DiffView::Raw => diff_lines.iter().map(|line| ansi_line_to_ratatui(line)).collect(),
-        DiffView::Unified => diff_unified_lines(&diff_lines, &diff_path, diff_content.width, &palette),
-        DiffView::Split => diff_split_lines(&diff_lines, &diff_path, diff_content.width, &palette),
-    };
+    let rendered: Vec<Line> =
+        diff_body_lines(&diff_lines, view, Some(&diff_path), diff_content.width, &palette);
     let diff_total = rendered.len();
     let diff_scroll = diff_scroll_req.min(diff_total.saturating_sub(diff_view_h));
     let diff_view: Vec<Line> =
