@@ -71,6 +71,39 @@ pub enum RightView {
     Diff,
 }
 
+/// How the info panel groups its fields: `Sections` (dim UPPERCASE titles + blank lines between
+/// groups), `Groups` (blank lines only, no titles), or `Flat` (no grouping). A maximized info pane
+/// always renders as `Sections` regardless of this setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InfoLayout {
+    #[default]
+    Sections,
+    Groups,
+    Flat,
+}
+
+impl InfoLayout {
+    pub const ALL: [InfoLayout; 3] = [InfoLayout::Sections, InfoLayout::Groups, InfoLayout::Flat];
+
+    /// Short chip label for the radio control.
+    pub fn label(self) -> &'static str {
+        match self {
+            InfoLayout::Sections => "titled",
+            InfoLayout::Groups => "spaced",
+            InfoLayout::Flat => "flat",
+        }
+    }
+
+    pub fn cycle(self) -> Self {
+        match self {
+            InfoLayout::Sections => InfoLayout::Groups,
+            InfoLayout::Groups => InfoLayout::Flat,
+            InfoLayout::Flat => InfoLayout::Sections,
+        }
+    }
+}
+
 /// Extra per-repo facts fetched lazily for the info panel (one git call each).
 /// Serde-able so the status cache can persist them between runs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -284,6 +317,10 @@ pub struct PullResult {
     /// Best-effort counts parsed from the pull's fetch output (English-git heuristic).
     pub new_tags: u32,
     pub new_branches: u32,
+    /// The names of the new tags the fetch brought in (parsed from the `[new tag]` lines), for the
+    /// info panel's expandable tag list. May be empty even when `new_tags > 0` if names didn't parse.
+    #[serde(default)]
+    pub new_tag_names: Vec<String>,
 }
 
 impl PullResult {
@@ -1799,6 +1836,8 @@ pub enum InfoAction {
     CopyText(String),
     /// Expand/collapse a truncated field, keyed by its label (e.g. "Path").
     ToggleExpand(String),
+    /// Set the info panel's grouping layout (the radio control at the bottom of the panel).
+    SetInfoLayout(InfoLayout),
 }
 
 /// The semantic glyphs the UI renders, swappable between Unicode and emoji via `IconStyle`.

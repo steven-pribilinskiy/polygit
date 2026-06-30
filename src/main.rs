@@ -2771,6 +2771,7 @@ async fn run_event_loop(
                                     copy_to_clipboard(&text);
                                 }
                                 InfoAction::ToggleExpand(field) => app.toggle_info_expanded(&field),
+                                InfoAction::SetInfoLayout(layout) => app.set_info_layout(layout),
                             }
                         } else if let Some(repo_idx) = app
                             .kebab_open_click
@@ -4496,6 +4497,8 @@ async fn run_event_loop(
                     }
                     // Toggle the result/log panel (bottom of the preview); hidden, info fills it.
                     (KeyCode::Char('I'), _) => app.toggle_result_panel(),
+                    // Cycle the info panel's grouping layout (titled → spaced → flat).
+                    (KeyCode::Char('L'), _) => app.cycle_info_layout(),
                     // Cycle the result view: log → raw → unified → split → log.
                     (KeyCode::Char('d'), _) => {
                         app.cycle_result_view();

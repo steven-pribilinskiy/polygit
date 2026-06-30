@@ -327,6 +327,22 @@
       },
       {
         "keys": [
+          "L"
+        ],
+        "action": "Cycle the info panel's grouping layout (titled sections → spaced → flat)",
+        "note": "or click the Layout radio at the bottom of the info panel; a maximized info pane always shows titled sections. Persisted",
+        "keywords": [
+          "info",
+          "layout",
+          "sections",
+          "grouping",
+          "titled",
+          "flat"
+        ],
+        "group": "Panes & views"
+      },
+      {
+        "keys": [
           "d"
         ],
         "action": "Cycle the result view: log → raw → unified → split",

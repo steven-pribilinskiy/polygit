@@ -684,11 +684,31 @@ pub(crate) fn build_info_lines(
             None => status_label(&state.status).to_string(),
         }
     };
-    lines.push(plain("Status", status_value));
+    // Fields are grouped into sections. The effective layout forces titled Sections when the info
+    // pane is maximized; otherwise it follows the user's `info_layout`. `section()` emits a blank
+    // line between groups (Groups/Sections) and a dim UPPERCASE title (Sections only).
+    let maximized = app.maximized == Some(Pane::Info);
+    let layout =
+        if maximized { crate::app::InfoLayout::Sections } else { app.info_layout };
+    let section_title = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
+    let mut first_section = true;
+    let mut section = |lines: &mut Vec<Line<'static>>, title: &str| {
+        if !first_section && layout != crate::app::InfoLayout::Flat {
+            lines.push(Line::from(String::new()));
+        }
+        if layout == crate::app::InfoLayout::Sections {
+            lines.push(Line::from(Span::styled(title.to_string(), section_title)));
+        }
+        first_section = false;
+    };
 
+    // ===== REMOTE: where this repo lives =====
+    section(&mut lines, "REMOTE");
+    if let Some(url) = &state.remote_url {
+        push_link(&mut lines, &mut clicks, "Remote", url, url);
+    }
     // Branch — clickable to its page on the remote, but ONLY when the branch is actually on the
-    // remote. A no-upstream / "ref gone" branch (e.g. its PR was merged and the remote branch
-    // deleted) has no `/tree/<branch>` page — linking it just 404s — so render it as plain text.
+    // remote. A no-upstream / "ref gone" branch has no `/tree/<branch>` page — linking it 404s.
     let branch = state.branch.clone().unwrap_or_else(|| "—".to_string());
     let on_remote = !matches!(state.status, RepoStatus::NoUpstream);
     let branch_link = (branch != "—" && on_remote)
@@ -708,14 +728,11 @@ pub(crate) fn build_info_lines(
         }
     }
 
+    // ===== STATUS: current state =====
+    section(&mut lines, "STATUS");
+    lines.push(plain("Status", status_value));
     // Pull Request — the PR for the current branch (via `gh`), clickable to the PR on the remote.
-    // The info panel always shows it when available, in any state (open/merged/closed) — the state
-    // badge below says which. The "Merged PRs" setting gates only the dense list column, not this
-    // detail view. No in-flight "checking…" placeholder either: the line just appears once a PR
-    // resolves instead of flipping a placeholder (which shifted the rows below it).
     if let Some(pr) = state.pr.as_ref() {
-        // The value text opens the PR viewer modal; a trailing external-link glyph opens the PR on
-        // GitHub in the browser. Two distinct click regions on the (possibly wrapped) value line.
         let ext_glyph = app.icons().external;
         let ext_w = UnicodeWidthStr::width(ext_glyph) as u16;
         let ext_btn_w = 1 + ext_w; // " " + glyph
@@ -733,7 +750,6 @@ pub(crate) fn build_info_lines(
             };
             let mut spans = vec![label_span, Span::styled(segment, link)];
             if index == last {
-                // External-link button: " ↗" right after the value, opens the PR on the remote.
                 let ext_start = LABEL_W as u16 + width + 1;
                 clicks.push((line_idx, ext_start, ext_start + ext_w, InfoAction::OpenUrl(pr.url.clone())));
                 spans.push(Span::raw(" "));
@@ -741,8 +757,6 @@ pub(crate) fn build_info_lines(
             }
             lines.push(Line::from(spans));
         }
-        // Sub-line: a colored state badge (open/merged/closed) + a dim "checked … ago" (per-entry
-        // cache timestamp). The badge clarifies why a "ref gone" branch has no link — it merged.
         let mut sub: Vec<Span> = vec![
             Span::raw(format!("{:<13}", "")),
             Span::styled(pr.state.label(), Style::default().fg(pr_state_color(pr.state))),
@@ -754,12 +768,22 @@ pub(crate) fn build_info_lines(
         }
         lines.push(Line::from(sub));
     }
+    // Ahead/behind — hidden when there's nothing to report (both zero, or no upstream).
+    match &state.details {
+        Some(details) => {
+            if let (Some(ahead), Some(behind)) = (details.ahead, details.behind) {
+                if ahead > 0 || behind > 0 {
+                    lines.push(plain("Ahead/behind", format!("↑{ahead}  ↓{behind}")));
+                }
+            }
+        }
+        None => lines.push(plain("Ahead/behind", "(loading…)".to_string())),
+    }
 
-    // Pulled — what the most recent pull delivered: the old→new sha (the before/after the user
-    // wants to see), commit/file counts, and best-effort new tags/branches. Shown only when a
-    // pull updated this repo this session with a real delta.
+    // ===== ACTIVITY: what changed (this session + history + working tree) =====
+    section(&mut lines, "ACTIVITY");
+    // Pulled — what the most recent pull delivered (only when a pull updated this repo with a delta).
     if let Some(pull) = state.pull_result.as_ref().filter(|result| result.has_delta()) {
-        // Line 1: prev → new sha. The new sha links to the commit on the remote when browsable.
         let mut spans: Vec<Span> = vec![Span::styled(format!("{:<13}", "Pulled"), label)];
         if !pull.prev_head.is_empty() {
             spans.push(Span::styled(pull.prev_head.clone(), dim));
@@ -779,7 +803,6 @@ pub(crate) fn build_info_lines(
         spans.push(Span::styled(pull.new_head.clone(), if new_link.is_some() { link } else { value }));
         lines.push(Line::from(spans));
 
-        // Line 2: N commits · M files (+ins −del).
         let plural = |count: u32, word: &str| if count == 1 { word.to_string() } else { format!("{word}s") };
         lines.push(Line::from(vec![
             Span::raw(format!("{:<13}", "")),
@@ -800,117 +823,122 @@ pub(crate) fn build_info_lines(
             Span::styled(")", dim),
         ]));
 
-        // Line 3 (optional): best-effort new tags / branches.
-        if pull.new_tags > 0 || pull.new_branches > 0 {
-            let mut parts: Vec<String> = Vec::new();
-            if pull.new_tags > 0 {
-                parts.push(format!("{} new {}", pull.new_tags, plural(pull.new_tags, "tag")));
+        // New tags — the named list, truncated with a click to expand (mirrors Last commit's
+        // subject). Falls back to the bare count when the names didn't parse.
+        if !pull.new_tag_names.is_empty() {
+            let count = pull.new_tags.max(pull.new_tag_names.len() as u32);
+            let word = plural(count, "tag");
+            let full = format!("{count} new {word}: {}", pull.new_tag_names.join(", "));
+            let expanded = app.info_expanded.contains("tags");
+            let overflows = UnicodeWidthStr::width(full.as_str()) > value_width;
+            if expanded && overflows {
+                for chunk in wrap_chars(&full, value_width) {
+                    let width = UnicodeWidthStr::width(chunk.as_str()) as u16;
+                    clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::ToggleExpand("tags".into())));
+                    lines.push(Line::from(vec![Span::raw(format!("{:<13}", "")), Span::styled(chunk, dim)]));
+                }
+            } else {
+                let shown = truncate_str(&full, value_width);
+                let style = if overflows { dim.add_modifier(Modifier::UNDERLINED) } else { dim };
+                if overflows {
+                    let width = UnicodeWidthStr::width(shown.as_str()) as u16;
+                    clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::ToggleExpand("tags".into())));
+                }
+                lines.push(Line::from(vec![Span::raw(format!("{:<13}", "")), Span::styled(shown, style)]));
             }
-            if pull.new_branches > 0 {
-                let word = if pull.new_branches == 1 { "branch" } else { "branches" };
-                parts.push(format!("{} new {word}", pull.new_branches));
-            }
+        } else if pull.new_tags > 0 {
+            let word = if pull.new_tags == 1 { "tag" } else { "tags" };
             lines.push(Line::from(vec![
                 Span::raw(format!("{:<13}", "")),
-                Span::styled(parts.join(" · "), dim),
+                Span::styled(format!("{} new {word}", pull.new_tags), dim),
+            ]));
+        }
+        if pull.new_branches > 0 {
+            let word = if pull.new_branches == 1 { "branch" } else { "branches" };
+            lines.push(Line::from(vec![
+                Span::raw(format!("{:<13}", "")),
+                Span::styled(format!("{} new {word}", pull.new_branches), dim),
             ]));
         }
     }
-
-    if let Some(details) = &state.details {
-        // Ahead/behind — hidden when there's nothing to report (both zero, or no upstream).
-        if let (Some(ahead), Some(behind)) = (details.ahead, details.behind) {
-            if ahead > 0 || behind > 0 {
-                lines.push(plain("Ahead/behind", format!("↑{ahead}  ↓{behind}")));
-            }
-        }
-        // Last commit — sha clickable to the commit on the remote, then subject (expandable) + meta.
-        if !details.commit_hash.is_empty() {
-            let sha = details.commit_hash.clone();
-            let commit_link = state
-                .remote_url
-                .as_deref()
-                .and_then(web_remote)
-                .map(|base| format!("{base}/commit/{sha}"));
-            match commit_link {
-                Some(url) => {
-                    let width = UnicodeWidthStr::width(sha.as_str()) as u16;
-                    clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::OpenUrl(url)));
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("{:<13}", "Last commit"), label),
-                        Span::styled(sha, link),
-                    ]));
+    // Last commit + Changes (need details); the loading placeholder otherwise.
+    match &state.details {
+        Some(details) => {
+            if !details.commit_hash.is_empty() {
+                let sha = details.commit_hash.clone();
+                let commit_link = state
+                    .remote_url
+                    .as_deref()
+                    .and_then(web_remote)
+                    .map(|base| format!("{base}/commit/{sha}"));
+                match commit_link {
+                    Some(url) => {
+                        let width = UnicodeWidthStr::width(sha.as_str()) as u16;
+                        clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::OpenUrl(url)));
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("{:<13}", "Last commit"), label),
+                            Span::styled(sha, link),
+                        ]));
+                    }
+                    None => lines.push(plain("Last commit", sha)),
                 }
-                None => lines.push(plain("Last commit", sha)),
-            }
-            // Subject: one truncated line (click to expand + wrap), or fully wrapped when expanded.
-            let expanded = app.info_expanded.contains("commit");
-            let subject_overflows = UnicodeWidthStr::width(details.commit_subject.as_str()) > value_width;
-            if expanded && subject_overflows {
-                for chunk in wrap_chars(&details.commit_subject, value_width) {
-                    let width = UnicodeWidthStr::width(chunk.as_str()) as u16;
-                    clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::ToggleExpand("commit".into())));
+                let expanded = app.info_expanded.contains("commit");
+                let subject_overflows = UnicodeWidthStr::width(details.commit_subject.as_str()) > value_width;
+                if expanded && subject_overflows {
+                    for chunk in wrap_chars(&details.commit_subject, value_width) {
+                        let width = UnicodeWidthStr::width(chunk.as_str()) as u16;
+                        clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::ToggleExpand("commit".into())));
+                        lines.push(Line::from(vec![
+                            Span::raw(format!("{:<13}", "")),
+                            Span::styled(chunk, value),
+                        ]));
+                    }
+                } else {
+                    let shown = truncate_str(&details.commit_subject, value_width);
+                    let subject_style = if subject_overflows { value.add_modifier(Modifier::UNDERLINED) } else { value };
+                    if subject_overflows {
+                        let width = UnicodeWidthStr::width(shown.as_str()) as u16;
+                        clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::ToggleExpand("commit".into())));
+                    }
                     lines.push(Line::from(vec![
                         Span::raw(format!("{:<13}", "")),
-                        Span::styled(chunk, value),
+                        Span::styled(shown, subject_style),
                     ]));
-                }
-            } else {
-                let shown = truncate_str(&details.commit_subject, value_width);
-                let subject_style = if subject_overflows { value.add_modifier(Modifier::UNDERLINED) } else { value };
-                if subject_overflows {
-                    let width = UnicodeWidthStr::width(shown.as_str()) as u16;
-                    clicks.push((lines.len(), LABEL_W as u16, LABEL_W as u16 + width, InfoAction::ToggleExpand("commit".into())));
                 }
                 lines.push(Line::from(vec![
                     Span::raw(format!("{:<13}", "")),
-                    Span::styled(shown, subject_style),
+                    Span::styled(
+                        truncate_str(
+                            &format!("({}, {})", details.commit_rel_date, details.commit_author),
+                            value_width,
+                        ),
+                        dim,
+                    ),
                 ]));
             }
-            lines.push(Line::from(vec![
-                Span::raw(format!("{:<13}", "")),
-                Span::styled(
-                    truncate_str(
-                        &format!("({}, {})", details.commit_rel_date, details.commit_author),
-                        value_width,
-                    ),
-                    dim,
-                ),
-            ]));
+            if details.dirty_count > 0 || details.stash_count > 0 || details.branch_count > 0 {
+                let mut parts: Vec<String> = Vec::new();
+                if details.dirty_count > 0 {
+                    parts.push(format!("{} uncommitted", details.dirty_count));
+                }
+                if details.stash_count > 0 {
+                    parts.push(format!("{} stashed", details.stash_count));
+                }
+                if details.branch_count > 0 {
+                    parts.push(format!("{} feature branches", details.branch_count));
+                }
+                lines.push(plain("Changes", parts.join(" · ")));
+            }
         }
-        // Changes — hidden when everything is zero; each part shown only when non-zero.
-        if details.dirty_count > 0 || details.stash_count > 0 || details.branch_count > 0 {
-            let mut parts: Vec<String> = Vec::new();
-            if details.dirty_count > 0 {
-                parts.push(format!("{} uncommitted", details.dirty_count));
-            }
-            if details.stash_count > 0 {
-                parts.push(format!("{} stashed", details.stash_count));
-            }
-            if details.branch_count > 0 {
-                parts.push(format!("{} feature branches", details.branch_count));
-            }
-            lines.push(plain("Changes", parts.join(" · ")));
-        }
-    } else {
-        lines.push(plain("Ahead/behind", "(loading…)".to_string()));
-        lines.push(plain("Last commit", "(loading…)".to_string()));
+        None => lines.push(plain("Last commit", "(loading…)".to_string())),
     }
-
-    if let Some(url) = &state.remote_url {
-        push_link(&mut lines, &mut clicks, "Remote", url, url);
-    }
-
-    // Worktrees — hidden when there are none.
+    // Worktrees — hidden when there are none. One line per worktree (each copies its own branch).
     let worktrees: Vec<String> = app
         .worktrees
         .iter()
         .filter(|entry| entry.repo == state.name)
         .map(|entry| entry.branch.clone())
         .collect();
-    // One line per worktree so each branch copies individually (not all concatenated). The first
-    // line carries the label; continuations indent to the value column. Each whole line copies its
-    // own branch.
     for (index, branch) in worktrees.iter().enumerate() {
         let display = if UnicodeWidthStr::width(branch.as_str()) > copy_avail {
             truncate_str(branch, copy_avail)
@@ -921,8 +949,8 @@ pub(crate) fn build_info_lines(
         push_copyable(&mut lines, &mut clicks, name, display, branch.clone());
     }
 
-    // Path — value left-truncated to keep the filename tail. The whole line copies the full path
-    // (hover highlights it); a trailing standout `⧉` marks it as copyable.
+    // ===== PATH =====
+    section(&mut lines, "PATH");
     let path = state.path.display().to_string();
     let display = if UnicodeWidthStr::width(path.as_str()) > copy_avail {
         truncate_left(&path, copy_avail)
@@ -930,6 +958,29 @@ pub(crate) fn build_info_lines(
         path.clone()
     };
     push_copyable(&mut lines, &mut clicks, "Path", display, path);
+
+    // Layout radio control — switch grouping (titled / spaced / flat). Hidden when maximized (which
+    // forces titled sections). A blank line separates it from the fields above.
+    if !maximized {
+        lines.push(Line::from(String::new()));
+        let mut spans: Vec<Span> = vec![Span::styled(format!("{:<13}", "Layout"), label)];
+        let mut col = LABEL_W as u16;
+        for option in crate::app::InfoLayout::ALL {
+            let on = option == app.info_layout;
+            let chip = format!("{} {}", if on { "●" } else { "○" }, option.label());
+            let width = UnicodeWidthStr::width(chip.as_str()) as u16;
+            let style = if on {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                dim
+            };
+            clicks.push((lines.len(), col, col + width, InfoAction::SetInfoLayout(option)));
+            spans.push(Span::styled(chip, style));
+            spans.push(Span::raw("  "));
+            col += width + 2;
+        }
+        lines.push(Line::from(spans));
+    }
 
     (lines, clicks)
 }
