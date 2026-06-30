@@ -1058,7 +1058,10 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.branch_picker.is_some() {
             render_branch_picker(frame, app, area);
         }
-        // Help overlays the page / diff modal, showing that view's contextual hotkeys.
+        if app.explorer.is_some() {
+            render_explorer(frame, app, area);
+        }
+        // Help overlays the page / diff modal / explorer, showing that view's contextual hotkeys.
         if app.show_help {
             render_help(frame, app, area);
         }
@@ -1068,9 +1071,6 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         }
         if app.show_keybindings {
             render_keybindings_modal(frame, app, area);
-        }
-        if app.explorer.is_some() {
-            render_explorer(frame, app, area);
         }
         if app.dropdown.is_some() {
             render_dropdown(frame, app, area);
@@ -1205,6 +1205,10 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // Throttle warning (top-center) while a remote is rate-limiting us.
     render_throttle_banner(frame, app, area);
 
+    // The explorer is a base modal; Help (and the dropdown pickers, above) overlay it.
+    if app.explorer.is_some() {
+        render_explorer(frame, app, area);
+    }
     // Help modal overlays everything else.
     if app.show_help {
         render_help(frame, app, area);
@@ -1257,9 +1261,6 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.show_keybindings {
         render_keybindings_modal(frame, app, area);
-    }
-    if app.explorer.is_some() {
-        render_explorer(frame, app, area);
     }
     if app.dropdown.is_some() {
         render_dropdown(frame, app, area);

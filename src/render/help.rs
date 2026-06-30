@@ -602,6 +602,7 @@ pub(crate) enum HelpView {
     List,
     RepoPage,
     DiffModal,
+    Explorer,
 }
 
 impl HelpView {
@@ -610,6 +611,7 @@ impl HelpView {
             HelpView::List => "repo list",
             HelpView::RepoPage => "repo page",
             HelpView::DiffModal => "diff modal",
+            HelpView::Explorer => "explorer",
         }
     }
 }
@@ -708,6 +710,7 @@ pub(crate) fn help_section_id(view: HelpView) -> &'static str {
         HelpView::List => "list",
         HelpView::RepoPage => "page",
         HelpView::DiffModal => "diff",
+        HelpView::Explorer => "explorer",
     }
 }
 
@@ -728,6 +731,7 @@ fn help_group_order(section_id: &str) -> &'static [&'static str] {
             "App & modals",
         ],
         "page" => &["Navigate", "Columns & info", "Row actions", "Panes", "Other"],
+        "explorer" => &["Navigate", "Columns & sort", "Preview", "Find", "Other"],
         _ => &[],
     }
 }
@@ -849,7 +853,9 @@ pub(crate) fn help_items_hotkeys(view: HelpView, col_w: usize) -> Vec<(Line<'sta
 
 pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     // The Hotkeys tab is contextual to whatever view the help was opened over.
-    let view = if app.diff_modal.is_some() {
+    let view = if app.explorer.is_some() {
+        HelpView::Explorer
+    } else if app.diff_modal.is_some() {
         HelpView::DiffModal
     } else if app.repo_page.is_some() {
         HelpView::RepoPage

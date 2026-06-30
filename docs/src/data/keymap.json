@@ -1258,5 +1258,127 @@
         "group": "Hotkeys"
       }
     ]
+  },
+  {
+    "id": "explorer",
+    "title": "File explorer",
+    "blurb": "A two-pane file browser for the selected repo (Ctrl+E): a directory list beside a syntax-highlighted preview, split by a draggable divider.",
+    "bindings": [
+      {
+        "keys": [
+          "↑",
+          "↓",
+          "j",
+          "k"
+        ],
+        "action": "Move the selection (or scroll the preview when it's focused)",
+        "group": "Navigate"
+      },
+      {
+        "keys": [
+          "←",
+          "h"
+        ],
+        "action": "Up a directory (or scroll the preview left when focused)",
+        "group": "Navigate"
+      },
+      {
+        "keys": [
+          "→",
+          "l",
+          "Enter"
+        ],
+        "action": "Open a directory, or focus the preview for a file (preview: scroll right)",
+        "group": "Navigate"
+      },
+      {
+        "keys": [
+          "g",
+          "G",
+          "Home",
+          "End"
+        ],
+        "action": "Jump to the first / last entry",
+        "group": "Navigate"
+      },
+      {
+        "keys": [
+          "Tab"
+        ],
+        "action": "Swap focus between the list and the preview",
+        "group": "Navigate"
+      },
+      {
+        "keys": [
+          "t"
+        ],
+        "action": "Open the columns dropdown (size / permissions / modified / created / kind)",
+        "note": "off by default, persisted",
+        "group": "Columns & sort"
+      },
+      {
+        "keys": [
+          "s"
+        ],
+        "action": "Open the sort dropdown",
+        "group": "Columns & sort"
+      },
+      {
+        "keys": [
+          "click"
+        ],
+        "action": "Click a column header to sort by it (re-click flips ▲/▼)",
+        "note": "directories always sort before files",
+        "group": "Columns & sort"
+      },
+      {
+        "keys": [
+          "d"
+        ],
+        "action": "Toggle dates between relative (\"2d ago\") and absolute stamps",
+        "group": "Columns & sort"
+      },
+      {
+        "keys": [
+          "PgUp",
+          "PgDn"
+        ],
+        "action": "Page the list, or the preview when it's focused",
+        "group": "Preview"
+      },
+      {
+        "keys": [
+          "←",
+          "→"
+        ],
+        "action": "Scroll the preview horizontally (when the preview is focused)",
+        "group": "Preview"
+      },
+      {
+        "keys": [
+          "/"
+        ],
+        "action": "Fuzzy-find files in the current directory",
+        "note": "type to filter (subsequence match); ⏎ jumps to / opens the match; Esc cancels",
+        "group": "Find"
+      },
+      {
+        "keys": [
+          "[",
+          "]"
+        ],
+        "action": "Resize the divider (or drag it)",
+        "group": "Other"
+      },
+      {
+        "keys": [
+          "Esc",
+          "q"
+        ],
+        "action": "Close the explorer",
+        "note": "the [x] button or a click outside also closes",
+        "group": "Other"
+      }
+    ]
   }
 ]

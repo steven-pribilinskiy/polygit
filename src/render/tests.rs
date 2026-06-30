@@ -205,7 +205,7 @@
     // asserts it. (The PR-modal section has no help view, so it's excluded.)
     #[test]
     fn help_covers_every_binding() {
-        for view in [HelpView::List, HelpView::RepoPage, HelpView::DiffModal] {
+        for view in [HelpView::List, HelpView::RepoPage, HelpView::DiffModal, HelpView::Explorer] {
             let id = help_section_id(view);
             let section = crate::keymap::sections().iter().find(|section| section.id == id).unwrap();
             let rendered: String = help_items_hotkeys(view, 56)

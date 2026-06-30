@@ -561,6 +561,7 @@ impl AppState {
             | Command::OpenPage
             | Command::Claude
             | Command::Lazygit
+            | Command::Explore
             | Command::OpenRemote
             | Command::CopyPath
             | Command::CopyRemote => self.selected_repo_index().is_some(),

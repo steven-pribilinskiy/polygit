@@ -730,6 +730,7 @@ fn dispatch_command(
                 *pending_lazygit = Some(app.repos[idx].lock().unwrap().path.clone());
             }
         }
+        Cmd::Explore => app.open_explorer_selected(),
         Cmd::OpenRemote => {
             let url = app
                 .selected_repo_index()
@@ -1983,7 +1984,7 @@ async fn run_event_loop(
                 // File explorer: click rows to select (a second click on a dir / the selected file
                 // opens it), drag the divider to resize, wheel scrolls whichever pane is under the
                 // cursor, `[x]`/outside closes.
-                if app.explorer.is_some() && app.dropdown.is_none() {
+                if app.explorer.is_some() && app.dropdown.is_none() && !app.show_help {
                     let (area, list_area, preview_area, divider_col, close_click, header_click) = {
                         let explorer = app.explorer.as_ref().unwrap();
                         (
@@ -3379,6 +3380,8 @@ async fn run_event_loop(
                         KeyCode::Char('s') => app.open_dropdown(app::DropdownKind::ExplorerSort, anchor.1, anchor.0),
                         // Toggle relative ↔ absolute date stamps.
                         KeyCode::Char('d') => app.toggle_explorer_date_format(),
+                        // Open help over the explorer (its Hotkeys tab shows the explorer's keys).
+                        KeyCode::Char('?') => app.show_help = true,
                         // Down / up — drive the preview when it's focused, else the list.
                         KeyCode::Char('j') | KeyCode::Down => {
                             if preview_focus {
