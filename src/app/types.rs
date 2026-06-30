@@ -2228,6 +2228,8 @@ pub enum Command {
     Claude,
     /// Open lazygit in the selected repo (same as `l`).
     Lazygit,
+    /// Open the file explorer for the selected repo (same as `Ctrl+E`).
+    Explore,
     /// Open the selected repo's remote in the browser (same as `o`).
     OpenRemote,
     /// Open the fuzzy finder overlay to jump to any repo (same as `Ctrl+P`).
@@ -2295,6 +2297,7 @@ impl Command {
             Command::SetResultDiff(DiffView::Split) => "Show the pull diff (split, syntax-highlighted)",
             Command::Claude => "Start claude code in the selected repo's directory",
             Command::Lazygit => "Open lazygit in the selected repo",
+            Command::Explore => "Open the file explorer for the selected repo",
             Command::OpenRemote => "Open the selected repo's remote in your browser",
             Command::OpenFinder => "Open the fuzzy finder to jump to any repo",
             Command::OpenPr => "Open the selected repo's pull request in polygit's PR viewer",

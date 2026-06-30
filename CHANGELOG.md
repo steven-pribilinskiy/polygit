@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.2.1 — 2026-07-01
+Explorer discoverability: footer mnemonic + contextual help
+- The status-bar footer now shows **`^E explore`** (dims when no repo is selected, like the other
+  repo actions), so the explorer is discoverable without the help modal.
+- **`?` inside the explorer opens Help**, and its Hotkeys tab is now context-aware — it shows
+  **"HOTKEYS — explorer"** (Navigate · Columns & sort · Preview · Find · Other) over the open
+  explorer, mirroring how the repo-page hotkeys already work.
+
 ## v3.2.0 — 2026-06-30
 Explorer overhaul: sortable columns, fuzzy finder, folder sizes, better highlighting
 - **Syntax highlighting rebuilt on `two-face`** (the bat project's curated sets) — broad language
