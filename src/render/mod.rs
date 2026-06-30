@@ -1506,7 +1506,13 @@ fn render_scrollbar(
     } else {
         Style::default()
     };
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+    // A 1-row track is a horizontal scrollbar (pinned to the bottom of its pane); otherwise vertical.
+    let orientation = if area.height == 1 && area.width > 1 {
+        ScrollbarOrientation::HorizontalBottom
+    } else {
+        ScrollbarOrientation::VerticalRight
+    };
+    let scrollbar = Scrollbar::new(orientation)
         .begin_symbol(None)
         .end_symbol(None)
         .thumb_style(thumb_style);

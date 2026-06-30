@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use ratatui::layout::Rect;
-use ratatui::text::Line;
 
 /// Which optional columns the list pane shows. Name is always on; the rest default OFF. Persisted.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
@@ -97,6 +96,7 @@ pub struct ExplorerPrefs {
     pub sort_ascending: bool,
     pub date_format: DateFormat,
     pub tree_mode: bool,
+    pub show_gitignored: bool,
 }
 
 impl Default for ExplorerPrefs {
@@ -107,6 +107,7 @@ impl Default for ExplorerPrefs {
             sort_ascending: true,
             date_format: DateFormat::Relative,
             tree_mode: false,
+            show_gitignored: false,
         }
     }
 }
@@ -130,10 +131,15 @@ pub struct FsEntry {
     pub expanded: bool,
 }
 
-/// The selected file's loaded preview (syntax-highlighted lines, or a placeholder).
+/// The selected file's loaded preview. Stores RAW lines (no highlighting at load time) — the
+/// renderer highlights only the visible window, so even a 700 KB file opens instantly.
 #[derive(Debug, Clone)]
 pub struct Preview {
-    pub lines: Vec<Line<'static>>,
+    pub lines: Vec<String>,
+    /// File name, for the renderer's syntax pick.
+    pub file_name: String,
+    /// Whether to syntax-highlight (false for binary / placeholder / oversized files).
+    pub highlight: bool,
     pub scroll: usize,
 }
 
@@ -159,6 +165,10 @@ pub struct Explorer {
     pub expanded: std::collections::HashSet<PathBuf>,
     /// The deepest "expand to level N" applied, for the level stepper.
     pub tree_level: usize,
+    /// Whether to show `.gitignore`d entries (node_modules, dist, …). Hidden by default.
+    pub show_gitignored: bool,
+    /// Matcher built from the repo's `.gitignore` (+ `.git/info/exclude`); `None` if unreadable.
+    gitignore: Option<ignore::gitignore::Gitignore>,
     /// The selected file's preview (lazy; refreshed on selection change).
     pub preview: Option<Preview>,
     /// Horizontal scroll offset (columns) for the preview pane.
@@ -205,6 +215,7 @@ impl Explorer {
     /// Open an explorer rooted at `root`, listing it with the given prefs.
     pub fn open(root: PathBuf, prefs: ExplorerPrefs) -> Explorer {
         let cwd = root.clone();
+        let gitignore = build_gitignore(&root);
         let mut explorer = Explorer {
             root,
             cwd,
@@ -219,6 +230,8 @@ impl Explorer {
             tree_mode: prefs.tree_mode,
             expanded: std::collections::HashSet::new(),
             tree_level: 0,
+            show_gitignored: prefs.show_gitignored,
+            gitignore,
             preview: None,
             preview_hscroll: 0,
             focus: ExplorerFocus::List,
@@ -246,10 +259,24 @@ impl Explorer {
         if self.tree_mode {
             self.entries = self.build_tree_rows();
         } else {
-            self.entries = list_dir(&self.cwd, &self.root);
+            let mut entries = list_dir(&self.cwd, &self.root);
+            if !self.show_gitignored {
+                entries.retain(|entry| entry.is_parent || !self.is_ignored(&entry.path, entry.is_dir));
+            }
+            self.entries = entries;
             self.apply_sort();
         }
         self.spawn_dir_sizes();
+    }
+
+    /// Whether a path is hidden by default — `.gitignore`d, or the `.git` directory itself.
+    fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+        if is_dir && path.file_name().is_some_and(|name| name == ".git") {
+            return true;
+        }
+        self.gitignore
+            .as_ref()
+            .is_some_and(|matcher| matcher.matched_path_or_any_parents(path, is_dir).is_ignore())
     }
 
     /// The flattened tree of visible rows: a depth-first walk from the root, descending only into
@@ -262,6 +289,9 @@ impl Explorer {
 
     fn push_tree_level(&self, dir: &Path, depth: usize, out: &mut Vec<FsEntry>) {
         let mut children = list_children(dir);
+        if !self.show_gitignored {
+            children.retain(|entry| !self.is_ignored(&entry.path, entry.is_dir));
+        }
         self.sort_entries(&mut children);
         for mut entry in children {
             entry.depth = depth;
@@ -537,11 +567,10 @@ impl Explorer {
 
     // ── Fuzzy file finder (`/` or `Ctrl+P`) ──────────────────────────────────────────────────────
 
-    /// Open the finder (empty query matches everything).
+    /// Open the finder (empty query matches everything). Previews the first match.
     pub fn open_finder(&mut self) {
-        let mut finder = Finder::default();
-        self.recompute_finder_matches(&mut finder);
-        self.finder = Some(finder);
+        self.finder = Some(Finder::default());
+        self.update_finder();
     }
 
     pub fn close_finder(&mut self) {
@@ -549,19 +578,87 @@ impl Explorer {
     }
 
     pub fn finder_push(&mut self, ch: char) {
-        if let Some(mut finder) = self.finder.take() {
+        if let Some(finder) = self.finder.as_mut() {
             finder.query.push(ch);
-            self.recompute_finder_matches(&mut finder);
-            self.finder = Some(finder);
         }
+        self.update_finder();
     }
 
     pub fn finder_backspace(&mut self) {
-        if let Some(mut finder) = self.finder.take() {
+        if let Some(finder) = self.finder.as_mut() {
             finder.query.pop();
+        }
+        self.update_finder();
+    }
+
+    /// Recompute the finder after a query change. In the tree view a non-empty query searches the
+    /// WHOLE tree recursively (ignoring gitignored), auto-expanding the ancestors of every match so
+    /// they're visible; then the matches are filtered from the (rebuilt) rows.
+    fn update_finder(&mut self) {
+        let query = self.finder.as_ref().map(|finder| finder.query.to_lowercase()).unwrap_or_default();
+        if self.tree_mode && !query.is_empty() {
+            let mut ancestors = std::collections::HashSet::new();
+            let mut budget = 50_000usize;
+            self.collect_tree_matches(&self.root.clone(), &query, &mut ancestors, &mut budget);
+            let changed = ancestors.iter().any(|path| !self.expanded.contains(path));
+            self.expanded.extend(ancestors);
+            if changed {
+                self.reload();
+            }
+        }
+        if let Some(mut finder) = self.finder.take() {
             self.recompute_finder_matches(&mut finder);
             self.finder = Some(finder);
         }
+        self.sync_finder_selection();
+    }
+
+    /// Walk the tree (bounded, skipping gitignored); for every entry whose name fuzzy-matches
+    /// `query`, record all of its ancestor directories (so they can be expanded).
+    fn collect_tree_matches(
+        &self,
+        dir: &Path,
+        query: &str,
+        ancestors: &mut std::collections::HashSet<PathBuf>,
+        budget: &mut usize,
+    ) {
+        for entry in list_children(dir) {
+            if *budget == 0 {
+                return;
+            }
+            *budget -= 1;
+            if !self.show_gitignored && self.is_ignored(&entry.path, entry.is_dir) {
+                continue;
+            }
+            if fuzzy_score(query, &entry.name.to_lowercase()).is_some() {
+                let mut parent = entry.path.parent();
+                while let Some(dir) = parent {
+                    if !dir.starts_with(&self.root) && dir != self.root {
+                        break;
+                    }
+                    ancestors.insert(dir.to_path_buf());
+                    if dir == self.root {
+                        break;
+                    }
+                    parent = dir.parent();
+                }
+            }
+            if entry.is_dir {
+                self.collect_tree_matches(&entry.path, query, ancestors, budget);
+            }
+        }
+    }
+
+    /// Toggle showing `.gitignore`d entries (persisted by the caller). Rebuilds the listing.
+    pub fn toggle_show_gitignored(&mut self) {
+        self.show_gitignored = !self.show_gitignored;
+        let keep = self.selected_entry().map(|entry| entry.path.clone());
+        self.reload();
+        self.selected = keep
+            .and_then(|path| self.entries.iter().position(|entry| entry.path == path))
+            .unwrap_or(0)
+            .min(self.entries.len().saturating_sub(1));
+        self.preview = None;
     }
 
     pub fn finder_move(&mut self, delta: isize) {
@@ -571,6 +668,22 @@ impl Explorer {
             }
             let last = finder.matches.len() as isize - 1;
             finder.selected = (finder.selected as isize + delta).clamp(0, last) as usize;
+        }
+        self.sync_finder_selection();
+    }
+
+    /// Point the list selection (hence the preview) at the finder's current match, so navigating the
+    /// finder live-previews the focused file. Auto-expands ancestors of a deep tree match first.
+    fn sync_finder_selection(&mut self) {
+        let target = self
+            .finder
+            .as_ref()
+            .and_then(|finder| finder.matches.get(finder.selected).copied());
+        if let Some(index) = target {
+            if self.selected != index {
+                self.selected = index;
+                self.preview = None;
+            }
         }
     }
 
@@ -636,9 +749,10 @@ impl Explorer {
         }
     }
 
-    /// Load the selected file's preview if not already loaded (lazy; `dark` picks the theme).
-    /// Directories and the `..` row get no preview. Binary / oversized files get a placeholder.
-    pub fn ensure_preview(&mut self, dark: bool) {
+    /// Load the selected file's RAW preview lines if not already loaded (lazy; highlighting happens
+    /// per visible window in the renderer). Directories get no preview; binary / unreadable /
+    /// oversized files get a non-highlighted placeholder.
+    pub fn ensure_preview(&mut self) {
         if self.preview.is_some() {
             return;
         }
@@ -650,8 +764,8 @@ impl Explorer {
         }
         let path = entry.path.clone();
         let name = entry.name.clone();
-        let lines = load_preview_lines(&path, &name, dark);
-        self.preview = Some(Preview { lines, scroll: 0 });
+        let (lines, highlight) = load_preview(&path);
+        self.preview = Some(Preview { lines, file_name: name, highlight, scroll: 0 });
         self.preview_hscroll = 0;
     }
 
@@ -683,27 +797,27 @@ impl Explorer {
 /// Maximum bytes read for a preview (keeps a giant log from blocking the UI).
 const PREVIEW_MAX_BYTES: usize = 512 * 1024;
 
-/// Read + highlight a file into preview lines, or a single placeholder line for binary / unreadable
-/// / oversized files.
-fn load_preview_lines(path: &Path, name: &str, dark: bool) -> Vec<Line<'static>> {
-    let placeholder = |text: &str| vec![Line::from(text.to_string())];
+/// Read a file into RAW preview lines (no highlighting), returning `(lines, highlight?)`. A binary /
+/// unreadable file returns a single placeholder line with `highlight = false`. Oversized files are
+/// truncated to `PREVIEW_MAX_BYTES`.
+fn load_preview(path: &Path) -> (Vec<String>, bool) {
     let Ok(bytes) = std::fs::read(path) else {
-        return placeholder("(can't read file)");
+        return (vec!["(can't read file)".to_string()], false);
     };
     if crate::highlight::looks_binary(&bytes) {
-        return placeholder("(binary file)");
+        return (vec!["(binary file)".to_string()], false);
     }
     let truncated = bytes.len() > PREVIEW_MAX_BYTES;
     let slice = &bytes[..bytes.len().min(PREVIEW_MAX_BYTES)];
     let content = String::from_utf8_lossy(slice);
-    let mut lines = crate::highlight::highlight_file(name, &content, dark);
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     if truncated {
-        lines.push(Line::from("… (truncated)".to_string()));
+        lines.push("… (truncated)".to_string());
     }
     if lines.is_empty() {
-        lines.push(Line::from("(empty file)".to_string()));
+        lines.push("(empty file)".to_string());
     }
-    lines
+    (lines, true)
 }
 
 /// List a directory: a synthetic `..` (unless at root) first, then directories, then files —
@@ -728,6 +842,15 @@ fn list_dir(dir: &Path, root: &Path) -> Vec<FsEntry> {
     }
     out.extend(list_children(dir));
     out
+}
+
+/// Build a `.gitignore` matcher from the repo root's `.gitignore` + `.git/info/exclude`. `None` if
+/// nothing is readable (so everything shows).
+fn build_gitignore(root: &Path) -> Option<ignore::gitignore::Gitignore> {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+    builder.add(root.join(".gitignore"));
+    builder.add(root.join(".git/info/exclude"));
+    builder.build().ok().filter(|matcher| matcher.num_ignores() > 0)
 }
 
 /// A directory's immediate children as unsorted `FsEntry`s (no `..`). The caller sorts.

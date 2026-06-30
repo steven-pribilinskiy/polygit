@@ -2165,6 +2165,7 @@ pub enum ScrollKind {
     Keybindings,
     ExplorerList,
     ExplorerPreview,
+    ExplorerPreviewH,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.

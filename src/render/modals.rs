@@ -3161,7 +3161,7 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
     use crate::explorer::{DateFormat, ExplorerColumn, ExplorerFocus, SizeTier, SortKey};
     let dark = app.dark_active();
     if let Some(explorer) = app.explorer.as_mut() {
-        explorer.ensure_preview(dark);
+        explorer.ensure_preview();
     }
     if app.explorer.is_none() {
         return;
@@ -3186,7 +3186,7 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         created: String,
         kind: String,
     }
-    let (rows, selected, list_scroll, split, columns, sort, ascending, date_format, focus, title, finder, preview_lines, preview_scroll, preview_hscroll, tree_mode) = {
+    let (rows, selected, list_scroll, split, columns, sort, ascending, date_format, focus, title, finder, preview, preview_hscroll, tree_mode, show_gitignored) = {
         let explorer = app.explorer.as_ref().unwrap();
         let rows: Vec<RowCell> = explorer
             .entries
@@ -3228,25 +3228,37 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
             explorer.focus,
             title,
             explorer.finder.clone(),
-            explorer.preview.as_ref().map(|preview| preview.lines.clone()),
-            explorer.preview.as_ref().map(|preview| preview.scroll).unwrap_or(0),
+            explorer.preview.as_ref().map(|preview| {
+                (preview.lines.clone(), preview.file_name.clone(), preview.highlight, preview.scroll)
+            }),
             explorer.preview_hscroll,
             explorer.tree_mode,
+            explorer.show_gitignored,
         )
     };
 
     let modal = centered_rect((area.width * 9 / 10).max(40), (area.height * 9 / 10).max(12), area);
     let (close_line, close_click) = modal_close_button(modal);
+    let dates_shown = columns.modified || columns.created;
+    let selected_is_dir = rows.get(selected).map(|row| row.is_dir).unwrap_or(false);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     footer.extend(footer_chip("↑↓", " nav", HintKey::Char('j')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("⏎", if selected_is_dir { " open" } else { " preview" }, HintKey::Enter));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("tab", " panes", HintKey::Tab));
     footer.push(footer_sep());
     footer.extend(footer_chip("/", " find", HintKey::Char('/')));
     footer.push(footer_sep());
     footer.extend(footer_chip("t", " cols", HintKey::Char('t')));
     footer.push(footer_sep());
     footer.extend(footer_chip("s", " sort", HintKey::Char('s')));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("d", " dates", HintKey::Char('d')));
+    // The dates toggle only matters when a time column is visible.
+    if dates_shown {
+        footer.push(footer_sep());
+        let label = if matches!(date_format, DateFormat::Relative) { " abs dates" } else { " rel dates" };
+        footer.extend(footer_chip("d", label, HintKey::Char('d')));
+    }
     footer.push(footer_sep());
     // Tree ⇄ flat toggle + the level stepper (only the active mode gets the live label).
     footer.extend(footer_chip("v", if tree_mode { " flat" } else { " tree" }, HintKey::Char('v')));
@@ -3254,6 +3266,8 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         footer.push(footer_sep());
         footer.extend(footer_chip("-/+", " level", HintKey::Char('+')));
     }
+    footer.push(footer_sep());
+    footer.extend(footer_chip("i", if show_gitignored { " hide ign" } else { " show ign" }, HintKey::Char('i')));
     footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let title_label = if tree_mode {
@@ -3439,23 +3453,35 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
     let list_track = Rect { x: rows_area.x + rows_area.width.saturating_sub(1), width: 1, ..rows_area };
     render_scrollbar(frame, app, list_track, list_scroll, display.len(), viewport, crate::app::ScrollKind::ExplorerList);
 
-    // ── Preview pane (vertical + horizontal scroll) ──
+    // ── Preview pane (virtualized: only the visible window is highlighted) ──
     let preview_inner = Rect { width: preview_area.width.saturating_sub(1), ..preview_area };
-    let pv_viewport = preview_inner.height as usize;
-    match &preview_lines {
-        Some(lines) if !lines.is_empty() => {
-            let total = lines.len();
-            let scroll = preview_scroll.min(total.saturating_sub(pv_viewport));
-            let widest = lines.iter().map(|line| line.width()).max().unwrap_or(0);
-            let max_hscroll = widest.saturating_sub(preview_inner.width as usize);
+    match &preview {
+        Some((raw, file_name, highlight, scroll)) if !raw.is_empty() => {
+            let total = raw.len();
+            // Reserve the bottom row for a horizontal scrollbar when the visible content overflows.
+            let probe_scroll = (*scroll).min(total.saturating_sub(1));
+            let probe: Vec<&str> = raw.iter().skip(probe_scroll).take(preview_inner.height as usize).map(String::as_str).collect();
+            let widest = probe.iter().map(|line| UnicodeWidthStr::width(*line)).max().unwrap_or(0);
+            let needs_h = widest > preview_inner.width as usize;
+            let body = Rect { height: preview_inner.height.saturating_sub(u16::from(needs_h)), ..preview_inner };
+            let pv_viewport = body.height as usize;
+            let scroll = (*scroll).min(total.saturating_sub(pv_viewport));
+            let visible: Vec<&str> = raw.iter().skip(scroll).take(pv_viewport).map(String::as_str).collect();
+            let widest = visible.iter().map(|line| UnicodeWidthStr::width(*line)).max().unwrap_or(0);
+            let max_hscroll = widest.saturating_sub(body.width as usize);
             let hscroll = preview_hscroll.min(max_hscroll);
-            let shown: Vec<Line> = lines.iter().skip(scroll).take(pv_viewport).cloned().collect();
-            frame.render_widget(
-                Paragraph::new(shown).scroll((0, hscroll as u16)),
-                preview_inner,
-            );
-            let pv_track = Rect { x: preview_inner.x + preview_inner.width, width: 1, ..preview_inner };
+            let lines: Vec<Line> = if *highlight {
+                crate::highlight::highlight_window(file_name, &visible, dark)
+            } else {
+                visible.iter().map(|line| Line::from((*line).to_string())).collect()
+            };
+            frame.render_widget(Paragraph::new(lines).scroll((0, hscroll as u16)), body);
+            let pv_track = Rect { x: body.x + body.width, width: 1, ..body };
             render_scrollbar(frame, app, pv_track, scroll, total, pv_viewport, crate::app::ScrollKind::ExplorerPreview);
+            if needs_h {
+                let h_track = Rect { x: body.x, y: body.y + body.height, width: body.width, height: 1 };
+                render_scrollbar(frame, app, h_track, hscroll, widest, body.width as usize, crate::app::ScrollKind::ExplorerPreviewH);
+            }
         }
         _ => {
             let hint = if rows.get(selected).map(|row| row.is_dir).unwrap_or(false) {

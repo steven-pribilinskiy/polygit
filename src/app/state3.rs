@@ -1595,6 +1595,15 @@ impl AppState {
         }
     }
 
+    /// Toggle showing `.gitignore`d entries in the explorer; persists.
+    pub fn toggle_explorer_gitignored(&mut self) {
+        if let Some(explorer) = self.explorer.as_mut() {
+            explorer.toggle_show_gitignored();
+            self.explorer_prefs.show_gitignored = explorer.show_gitignored;
+            self.save_state();
+        }
+    }
+
     /// Toggle the explorer's time columns between relative ("2d ago") and absolute stamps; persists.
     pub fn toggle_explorer_date_format(&mut self) {
         use crate::explorer::DateFormat;

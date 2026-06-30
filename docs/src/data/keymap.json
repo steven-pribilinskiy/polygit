@@ -1279,7 +1279,7 @@
           "←",
           "h"
         ],
-        "action": "Collapse the dir / jump to parent (tree) or go up a directory (flat) — preview: scroll left",
+        "action": "Collapse the dir / jump to parent (tree) or go up a directory (flat, also Backspace) — preview: scroll left",
         "group": "Navigate"
       },
       {
@@ -1323,6 +1323,14 @@
         ],
         "action": "Expand / collapse the tree one level deeper / shallower",
         "note": "the level stepper; in flat view, + switches to the tree",
+        "group": "View"
+      },
+      {
+        "keys": [
+          "i"
+        ],
+        "action": "Show / hide .gitignored entries (node_modules, dist, …)",
+        "note": "hidden by default (so are .git and ignored folders); persisted",
         "group": "View"
       },
       {
@@ -1375,8 +1383,8 @@
         "keys": [
           "/"
         ],
-        "action": "Fuzzy-find files in the current directory",
-        "note": "type to filter (subsequence match); ⏎ jumps to / opens the match; Esc cancels",
+        "action": "Fuzzy-find files in the current directory (recursive + auto-expanding in tree view)",
+        "note": "type to filter (subsequence); the focused match is live-previewed; ⏎ jumps to / opens it; Esc clears; tree search ignores gitignored",
         "group": "Find"
       },
       {

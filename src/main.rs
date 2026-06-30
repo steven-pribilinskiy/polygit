@@ -1776,7 +1776,7 @@ async fn run_event_loop(
                     MouseEventKind::Down(MouseButton::Left) => {
                         if let Some(kind) = app.scrollbar_at(mouse.column, mouse.row) {
                             scroll_drag = Some(kind);
-                            if let Some(value) = app.scroll_value_for(kind, mouse.row) {
+                            if let Some(value) = app.scroll_value_for(kind, mouse.column, mouse.row) {
                                 if app.apply_scroll(kind, value) {
                                     drop(app);
                                     tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
@@ -1787,7 +1787,7 @@ async fn run_event_loop(
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
                         if let Some(kind) = scroll_drag {
-                            if let Some(value) = app.scroll_value_for(kind, mouse.row) {
+                            if let Some(value) = app.scroll_value_for(kind, mouse.column, mouse.row) {
                                 if app.apply_scroll(kind, value) {
                                     drop(app);
                                     tokio::spawn(run_diff_modal_file(Arc::clone(&app_state)));
@@ -3384,6 +3384,8 @@ async fn run_event_loop(
                         KeyCode::Char('v') => app.toggle_explorer_tree_mode(),
                         KeyCode::Char('+') | KeyCode::Char('=') => app.explorer_expand_level(true),
                         KeyCode::Char('-') => app.explorer_expand_level(false),
+                        // Show / hide .gitignored entries (hidden by default).
+                        KeyCode::Char('i') => app.toggle_explorer_gitignored(),
                         // Open help over the explorer (its Hotkeys tab shows the explorer's keys).
                         KeyCode::Char('?') => app.show_help = true,
                         // Down / up — drive the preview when it's focused, else the list.
@@ -3412,6 +3414,10 @@ async fn run_event_loop(
                         }
                         KeyCode::Char('G') | KeyCode::End => {
                             if let Some(explorer) = app.explorer.as_mut() { explorer.select_last(); }
+                        }
+                        // Backspace goes up a directory (flat) / collapses-or-jumps-to-parent (tree).
+                        KeyCode::Backspace => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.nav_left(); }
                         }
                         // Left/right: preview-focused → horizontal scroll; list-focused → collapse /
                         // up-dir (tree/flat) and expand / open.
