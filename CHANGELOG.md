@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.106.1 — 2026-06-30
+Fix: clicks on a maximized pane no longer fall through to the list behind it
+- the list pane's click geometry (rows, header dropdowns, kebab, pr/fav cells) is captured only by
+  `render_list`, which doesn't run while a pane is maximized — so it kept the previous frame's rects
+  and a click on a maximized Info / Result / repo page hit a stale list row / header / `t cols ▾`
+  behind it. The geometry is now reset every frame and re-populated only when the list renders, so a
+  maximized pane fully owns its clicks. Affected all three maximized modes.
+
 ## v2.106.0 — 2026-06-30
 Info panel: grouped sections + a layout toggle, and expandable pull tags
 - the info panel groups its fields into **Remote · Status · Activity · Path** sections, with
