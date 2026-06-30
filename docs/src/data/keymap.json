@@ -1072,8 +1072,51 @@
   {
     "id": "pr",
     "title": "PR viewer modal",
-    "blurb": "A centered overlay (diff-modal dimensions) showing a pull request — a meta header (state, branches, author, +/- stats, labels) then the description and every review/comment as collapsible sections. Loads via gh pr view (with a loading skeleton). Opens by clicking a PR link (info panel, repo-page HEAD #N, or a list PRs cell).",
+    "blurb": "A centered overlay (diff-modal dimensions) showing a pull request as a GitHub-style tabbed view — a pinned meta header (state, branches, author, +/- stats) over a tab bar: Description · Conversation · Commits · Checks · Files. Loads via gh pr view (one call fills every tab + the badge counts; the Files diff loads lazily via gh pr diff). Opens by clicking a PR link (info panel, repo-page HEAD #N, or a list PRs cell) or pressing p on a repo.",
     "bindings": [
+      {
+        "keys": [
+          "Tab",
+          "Shift+Tab"
+        ],
+        "action": "Cycle the tab (Description · Conversation · Commits · Checks · Files)",
+        "note": "or 1..5 to jump to a tab directly; click a tab chip too",
+        "keywords": [
+          "tab",
+          "description",
+          "conversation",
+          "commits",
+          "checks",
+          "files"
+        ],
+        "group": "Hotkeys"
+      },
+      {
+        "keys": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+        ],
+        "action": "Jump to a tab by number (Description / Conversation / Commits / Checks / Files)",
+        "group": "Hotkeys"
+      },
+      {
+        "keys": [
+          "d"
+        ],
+        "action": "On the Files tab: cycle the diff render style (raw → unified → split)",
+        "note": "or click the raw/unified/split chips; mirrors the diff modal's view toggle",
+        "keywords": [
+          "diff",
+          "raw",
+          "unified",
+          "split",
+          "files"
+        ],
+        "group": "Hotkeys"
+      },
       {
         "keys": [
           "j",
@@ -1111,24 +1154,24 @@
         "keys": [
           "click"
         ],
-        "action": "Toggle a section (description / comment)",
-        "note": "click any ▾/▸ section header to fold or unfold it",
+        "action": "Switch tab, toggle a Conversation comment, or open a check's run",
+        "note": "click a tab chip, a ▾/▸ comment header, a Files raw/unified/split chip, or a Checks row's ↗ to open its run in the browser",
         "group": "Hotkeys"
       },
       {
         "keys": [
           "z"
         ],
-        "action": "Collapse all / expand all sections",
-        "note": "also the [− collapse all] / [+ expand all] control; shown with >1 comment",
+        "action": "Collapse all / expand all Conversation comments",
+        "note": "Conversation tab; also the [− collapse all] / [+ expand all] control, shown with >1 comment",
         "group": "Hotkeys"
       },
       {
         "keys": [
           "/"
         ],
-        "action": "Search the PR",
-        "note": "filters to matching sections, highlights hits; Esc clears",
+        "action": "Search the Description / Conversation",
+        "note": "text tabs only; filters to matching comments, highlights hits; Esc clears",
         "keywords": [
           "search",
           "filter",

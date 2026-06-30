@@ -306,6 +306,12 @@ pub struct AppState {
     /// PR-modal "created" timeago region + the absolute date/time to show on dwell:
     /// `(row, col_start, col_end, absolute_label)`. Only set while the meta line is on-screen.
     pub pr_created_region: Option<(u16, u16, u16, String)>,
+    /// PR-modal tab-bar chips: `(row, col_start, col_end, tab)`. Rebuilt each render.
+    pub pr_modal_tab_click: Vec<(u16, u16, u16, PrModalTab)>,
+    /// PR-modal Files-tab view chips (`raw`/`unified`/`split`): `(row, col_start, col_end, view)`.
+    pub pr_files_view_click: Vec<(u16, u16, u16, DiffView)>,
+    /// PR-modal Checks rows that have a details URL: `(row, col_start, col_end, url)` — click opens it.
+    pub pr_checks_click: Vec<(u16, u16, u16, String)>,
     /// The directories/roots being scanned (each may itself be a single repo). Drives the per-root
     /// tree forest; worktree re-discovery derives parents from the repos.
     pub root_dirs: Vec<PathBuf>,
@@ -662,18 +668,26 @@ pub struct PrModalState {
     /// The structured PR data, or `None` while the `gh pr view` fetch is in flight.
     pub view: Option<crate::app::PrView>,
     pub scroll: usize,
-    /// Collapsed section indices: 0 = Description, 1.. = `view.comments[idx-1]`.
+    /// Collapsed Conversation-section indices (one per `view.comments[idx]`).
     pub collapsed: std::collections::HashSet<usize>,
     /// Live search query (filters + highlights sections); empty = no filter.
     pub search: String,
     /// Whether the search box has focus (typing edits the query).
     pub search_focused: bool,
+    /// Which tab is showing (Description / Conversation / Commits / Checks / Files).
+    pub tab: crate::app::PrModalTab,
+    /// The Files tab's whole-PR unified diff (`gh pr diff`), lazily fetched on first open.
+    pub files_diff: Option<Vec<String>>,
+    /// Whether the `gh pr diff` fetch is in flight.
+    pub files_diff_loading: bool,
+    /// The Files tab's render style (raw / unified / split).
+    pub files_view: crate::app::DiffView,
 }
 
 impl PrModalState {
-    /// Total collapsible sections: Description (always) + one per comment/review.
+    /// Collapsible Conversation sections: one per comment/review.
     pub fn section_count(&self) -> usize {
-        1 + self.view.as_ref().map_or(0, |view| view.comments.len())
+        self.view.as_ref().map_or(0, |view| view.comments.len())
     }
 
     /// Whether section `idx` is currently collapsed.
@@ -864,6 +878,9 @@ impl AppState {
             pr_collapse_all_click: None,
             pr_search_click: None,
             pr_created_region: None,
+            pr_modal_tab_click: Vec::new(),
+            pr_files_view_click: Vec::new(),
+            pr_checks_click: Vec::new(),
             root_dirs: Vec::new(),
             workspaces,
             active_workspace: None,

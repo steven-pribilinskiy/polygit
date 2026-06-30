@@ -19,7 +19,7 @@ use crate::git::{
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
-    pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
+    pr_diff, pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
     stash_file_list, stash_files, uncommitted_file_list, PullOutcome,
 };
 
@@ -593,6 +593,27 @@ pub async fn run_pr_view(app_state: Arc<Mutex<AppState>>) {
                     ..Default::default()
                 });
             }
+        }
+    }
+}
+
+/// Fetch the Files tab's whole-PR diff (`gh pr diff`) for the open PR modal and store it. Guarded
+/// by `files_diff_loading` (set by the caller) so it runs once per open.
+pub async fn run_pr_diff(app_state: Arc<Mutex<AppState>>) {
+    let Some((path, number)) = ({
+        let app = app_state.lock().unwrap();
+        app.pr_modal.as_ref().and_then(|modal| {
+            app.repos.get(modal.repo_idx).map(|repo| (repo.lock().unwrap().path.clone(), modal.number))
+        })
+    }) else {
+        return;
+    };
+    let diff = pr_diff(&path, number).await;
+    let mut app = app_state.lock().unwrap();
+    if let Some(modal) = app.pr_modal.as_mut() {
+        if modal.number == number {
+            modal.files_diff = Some(diff);
+            modal.files_diff_loading = false;
         }
     }
 }

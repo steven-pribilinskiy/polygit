@@ -866,7 +866,7 @@ pub async fn pr_view(dir: &Path, number: u32) -> Option<crate::app::PrView> {
     let output = Command::new("gh")
         .args([
             "pr", "view", &number.to_string(), "--json",
-            "title,number,state,author,body,baseRefName,headRefName,labels,comments,reviews,createdAt,additions,deletions,url",
+            "title,number,state,author,body,baseRefName,headRefName,labels,comments,reviews,createdAt,additions,deletions,url,commits,files,statusCheckRollup",
         ])
         .current_dir(dir)
         .output()
@@ -933,6 +933,62 @@ pub async fn pr_view(dir: &Path, number: u32) -> Option<crate::app::PrView> {
         }
     }
 
+    // Commits (newest API order): short oid + headline + author + day.
+    let mut commits: Vec<crate::app::PrCommit> = Vec::new();
+    if let Some(items) = json.get("commits").and_then(|value| value.as_array()) {
+        for commit in items {
+            let oid = commit.get("oid").and_then(|value| value.as_str()).unwrap_or("");
+            let author = commit
+                .get("authors")
+                .and_then(|value| value.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|first| first.get("login").or_else(|| first.get("name")))
+                .and_then(|value| value.as_str())
+                .unwrap_or("?")
+                .to_string();
+            commits.push(crate::app::PrCommit {
+                sha: oid.chars().take(7).collect(),
+                subject: commit.get("messageHeadline").and_then(|value| value.as_str()).unwrap_or("").to_string(),
+                author,
+                day: day(commit.get("committedDate").and_then(|value| value.as_str()).unwrap_or("")),
+            });
+        }
+    }
+
+    // Changed files: path + per-file additions/deletions.
+    let mut files: Vec<crate::app::PrFile> = Vec::new();
+    if let Some(items) = json.get("files").and_then(|value| value.as_array()) {
+        for file in items {
+            files.push(crate::app::PrFile {
+                path: file.get("path").and_then(|value| value.as_str()).unwrap_or("").to_string(),
+                additions: file.get("additions").and_then(|value| value.as_i64()).unwrap_or(0),
+                deletions: file.get("deletions").and_then(|value| value.as_i64()).unwrap_or(0),
+            });
+        }
+    }
+
+    // Checks: GitHub's statusCheckRollup mixes CheckRun (`name`/`conclusion`/`status`/`detailsUrl`)
+    // and StatusContext (`context`/`state`/`targetUrl`) nodes — normalize both into PrCheck.
+    let mut checks: Vec<crate::app::PrCheck> = Vec::new();
+    if let Some(items) = json.get("statusCheckRollup").and_then(|value| value.as_array()) {
+        for node in items {
+            let pick = |key: &str| node.get(key).and_then(|value| value.as_str()).unwrap_or("");
+            let name = if pick("name").is_empty() { pick("context") } else { pick("name") };
+            // Prefer the finished conclusion, else the in-flight status, else a StatusContext state.
+            let raw = [pick("conclusion"), pick("status"), pick("state")]
+                .into_iter()
+                .find(|value| !value.is_empty())
+                .unwrap_or("");
+            let link = if pick("detailsUrl").is_empty() { pick("targetUrl") } else { pick("detailsUrl") };
+            checks.push(crate::app::PrCheck {
+                name: name.to_string(),
+                bucket: check_bucket(raw),
+                state: raw.to_string(),
+                link: link.to_string(),
+            });
+        }
+    }
+
     Some(crate::app::PrView {
         title,
         url,
@@ -948,7 +1004,41 @@ pub async fn pr_view(dir: &Path, number: u32) -> Option<crate::app::PrView> {
         labels,
         description,
         comments,
+        commits,
+        files,
+        checks,
     })
+}
+
+/// Normalize a GitHub check conclusion/status/state into a coloring bucket. Pure.
+pub fn check_bucket(raw: &str) -> String {
+    match raw.to_uppercase().as_str() {
+        "SUCCESS" | "NEUTRAL" => "pass",
+        "FAILURE" | "ERROR" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE" => "fail",
+        "PENDING" | "IN_PROGRESS" | "QUEUED" | "WAITING" | "REQUESTED" | "EXPECTED" => "pending",
+        "SKIPPED" | "STALE" => "skip",
+        "CANCELLED" => "cancel",
+        _ => "pending",
+    }
+    .to_string()
+}
+
+/// The whole-PR unified diff (`gh pr diff <number>`), as lines, for the Files tab. Colored so the
+/// raw view keeps git's own coloring; unified/split re-render from the same text.
+pub async fn pr_diff(dir: &Path, number: u32) -> Vec<String> {
+    let output = Command::new("gh")
+        .args(["pr", "diff", &number.to_string(), "--color=always"])
+        .current_dir(dir)
+        .output()
+        .await;
+    match output {
+        Ok(output) if output.status.success() => {
+            let lines: Vec<String> =
+                String::from_utf8_lossy(&output.stdout).lines().map(str::to_string).collect();
+            if lines.is_empty() { vec!["(no changes)".to_string()] } else { lines }
+        }
+        _ => vec!["(diff unavailable — is `gh` installed and authenticated?)".to_string()],
+    }
 }
 
 /// The files a single commit touched, parsed into entries. `--first-parent` so a MERGE commit
