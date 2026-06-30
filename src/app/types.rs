@@ -154,6 +154,81 @@ pub struct PrSection {
     pub body: String,
 }
 
+/// One commit on a PR (from `gh pr view --json commits`). `sha` is the short oid.
+#[derive(Debug, Clone)]
+pub struct PrCommit {
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    /// Day stamp (`YYYY-MM-DD`), empty when unknown.
+    pub day: String,
+}
+
+/// One changed file on a PR (from `gh pr view --json files`).
+#[derive(Debug, Clone)]
+pub struct PrFile {
+    pub path: String,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+/// One CI check / status on a PR (from `gh pr view --json statusCheckRollup`). `bucket` is the
+/// normalized outcome (`pass` / `fail` / `pending` / `skip` / `cancel`) used to color the row.
+#[derive(Debug, Clone)]
+pub struct PrCheck {
+    pub name: String,
+    pub bucket: String,
+    /// Raw state/conclusion for display (e.g. "SUCCESS", "FAILURE", "IN_PROGRESS").
+    pub state: String,
+    pub link: String,
+}
+
+/// Which tab the PR viewer modal shows. Description = the body; Conversation = reviews + comments;
+/// Commits / Checks / Files are fed by `gh`. Mirrors a GitHub PR page's tab row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrModalTab {
+    #[default]
+    Description,
+    Conversation,
+    Commits,
+    Checks,
+    Files,
+}
+
+impl PrModalTab {
+    /// All tabs, in display order.
+    pub const ALL: [PrModalTab; 5] = [
+        PrModalTab::Description,
+        PrModalTab::Conversation,
+        PrModalTab::Commits,
+        PrModalTab::Checks,
+        PrModalTab::Files,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PrModalTab::Description => "Description",
+            PrModalTab::Conversation => "Conversation",
+            PrModalTab::Commits => "Commits",
+            PrModalTab::Checks => "Checks",
+            PrModalTab::Files => "Files",
+        }
+    }
+
+    /// Step to the next/previous tab (wrapping).
+    pub fn cycle(self, forward: bool) -> Self {
+        let index = Self::ALL.iter().position(|&tab| tab == self).unwrap_or(0);
+        let len = Self::ALL.len();
+        let next = if forward { (index + 1) % len } else { (index + len - 1) % len };
+        Self::ALL[next]
+    }
+
+    /// `true` for the text tabs where search + section collapse apply.
+    pub fn is_text(self) -> bool {
+        matches!(self, PrModalTab::Description | PrModalTab::Conversation)
+    }
+}
+
 /// The full data for the PR viewer modal — structured (not one markdown blob) so the modal can show
 /// a real meta header, render the description + each review/comment as its own collapsible section,
 /// and search across them. The title/number live only in the modal's title bar (not repeated here).
@@ -175,6 +250,12 @@ pub struct PrView {
     pub description: String,
     /// Reviews then issue comments, in API order. Each is a collapsible section.
     pub comments: Vec<PrSection>,
+    /// Commits on the PR (newest API order), for the Commits tab.
+    pub commits: Vec<PrCommit>,
+    /// Changed files (path + stats), for the Files tab's summary header.
+    pub files: Vec<PrFile>,
+    /// CI checks / statuses, for the Checks tab.
+    pub checks: Vec<PrCheck>,
 }
 
 impl PrInfo {

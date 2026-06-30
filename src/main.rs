@@ -50,7 +50,7 @@ use worker::{
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
-    run_all_prs, run_open_pr_web, run_pr_view, run_pull_request, run_remove_worktree,
+    run_all_prs, run_open_pr_web, run_pr_diff, run_pr_view, run_pull_request, run_remove_worktree,
     run_repo_details, run_repo_diff, run_repo_page,
 };
 
@@ -2285,8 +2285,42 @@ async fn run_event_loop(
                 if app.pr_modal.is_some() && !app.show_help {
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            // A collapsible section header toggles that section.
-                            if let Some(idx) = app
+                            // Tab-bar chip → switch tab.
+                            let tab_hit = app
+                                .pr_modal_tab_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., tab)| tab);
+                            // Files-tab `raw/unified/split` view chip → set the render style.
+                            let view_hit = app
+                                .pr_files_view_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., view)| view);
+                            // Checks row with a details URL → open it in the browser.
+                            let check_url = app
+                                .pr_checks_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|(.., url)| url.clone());
+                            if let Some(tab) = tab_hit {
+                                app.pr_modal_select_tab(tab);
+                            } else if let Some(view) = view_hit {
+                                if let Some(modal) = app.pr_modal.as_mut() {
+                                    modal.files_view = view;
+                                    modal.scroll = 0;
+                                }
+                            } else if let Some(url) = check_url {
+                                drop(app);
+                                open_url(&url);
+                                continue;
+                            } else if let Some(idx) = app
                                 .pr_section_click
                                 .iter()
                                 .find(|&&(row, start, end, _)| {
@@ -3610,9 +3644,25 @@ async fn run_event_loop(
                             };
                         }
                     };
+                    let pr_tab = app.pr_modal.as_ref().map(|modal| modal.tab);
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.pr_modal = None,
-                        KeyCode::Char('/') => {
+                        // Tab bar: Tab/Shift+Tab cycle, 1..5 jump to a tab directly.
+                        KeyCode::Tab => app.pr_modal_cycle_tab(true),
+                        KeyCode::BackTab => app.pr_modal_cycle_tab(false),
+                        KeyCode::Char(digit @ '1'..='5') => {
+                            let idx = digit as usize - '1' as usize;
+                            app.pr_modal_select_tab(app::PrModalTab::ALL[idx]);
+                        }
+                        // `d` cycles the Files tab's render style (raw → unified → split).
+                        KeyCode::Char('d') if pr_tab == Some(app::PrModalTab::Files) => {
+                            if let Some(modal) = app.pr_modal.as_mut() {
+                                modal.files_view = modal.files_view.cycle();
+                                modal.scroll = 0;
+                            }
+                        }
+                        // Search only applies on the text tabs (Description / Conversation).
+                        KeyCode::Char('/') if pr_tab.is_some_and(|tab| tab.is_text()) => {
                             if let Some(modal) = app.pr_modal.as_mut() {
                                 modal.search_focused = true;
                             }
@@ -4656,6 +4706,24 @@ async fn run_event_loop(
                         tokio::spawn(run_repo_diff(repo));
                     }
                 }
+            }
+        }
+
+        // Lazily fetch the PR modal's Files-tab diff (`gh pr diff`) the first time that tab is shown.
+        {
+            let mut app = app_state.lock().unwrap();
+            let want = app.pr_modal.as_ref().is_some_and(|modal| {
+                modal.tab == app::PrModalTab::Files
+                    && modal.view.is_some()
+                    && modal.files_diff.is_none()
+                    && !modal.files_diff_loading
+            });
+            if want {
+                if let Some(modal) = app.pr_modal.as_mut() {
+                    modal.files_diff_loading = true;
+                }
+                drop(app);
+                tokio::spawn(run_pr_diff(Arc::clone(&app_state)));
             }
         }
 

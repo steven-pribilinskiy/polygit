@@ -1309,7 +1309,28 @@ impl AppState {
             collapsed: std::collections::HashSet::new(),
             search: String::new(),
             search_focused: false,
+            tab: crate::app::PrModalTab::default(),
+            files_diff: None,
+            files_diff_loading: false,
+            files_view: crate::app::DiffView::Unified,
         });
+    }
+
+    /// Switch the PR viewer to `tab`, resetting scroll (each tab starts at the top).
+    pub fn pr_modal_select_tab(&mut self, tab: crate::app::PrModalTab) {
+        if let Some(modal) = self.pr_modal.as_mut() {
+            modal.tab = tab;
+            modal.scroll = 0;
+            modal.search_focused = false;
+        }
+    }
+
+    /// Cycle the PR viewer's tab (Tab / Shift+Tab).
+    pub fn pr_modal_cycle_tab(&mut self, forward: bool) {
+        if let Some(modal) = self.pr_modal.as_ref() {
+            let next = modal.tab.cycle(forward);
+            self.pr_modal_select_tab(next);
+        }
     }
 
     /// A state-aware cleanup prompt for an AI agent — every repo fact already embedded so the agent

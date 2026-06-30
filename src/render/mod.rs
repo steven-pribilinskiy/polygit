@@ -500,6 +500,18 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         {
             button_hits.push(row_rect(row, start, end));
         } else if let Some(&(row, start, end, _)) =
+            app.pr_modal_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.pr_files_view_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end, _)) =
+            app.pr_checks_click.iter().find(|&(r, s, e, _)| contains(*r, *s, *e))
+        {
+            button_hits.push(row_rect(*row, *start, *end));
+        } else if let Some(&(row, start, end, _)) =
             app.pr_section_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));

@@ -3,6 +3,18 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.105.0 — 2026-06-30
+PR viewer modal is now a GitHub-style tabbed view
+- **tabs**: `Description · Conversation · Commits · Checks · Files`, with count badges, a pinned meta
+  header above them. Switch with `Tab`/`Shift+Tab`, `1`–`5`, or by clicking a chip.
+- **Commits / Checks / Files** are new: Commits lists sha · subject · author · date; Checks shows
+  each CI check colored by outcome (✓/✗/●/–) with a clickable **↗** that opens its run on GitHub;
+  Files shows a changed-files summary + the whole-PR diff with a `raw`/`unified`/`split` toggle
+  (`d` or the chips), reusing the diff modal's syntax-highlighted renderer.
+- one `gh pr view` call fills every tab + the badge counts; the Files diff loads lazily via
+  `gh pr diff` on first open of that tab.
+- Description = the body; Conversation = the reviews/comments (collapsible + `/` search).
+
 ## v2.104.0 — 2026-06-29
 Result pane (panel 3): one colored diffstat + a flat `log · raw · unified · split` view switcher
 - **fixed the duplicate diffstat** in the log view — `git pull` now runs with `merge.stat=false`, so

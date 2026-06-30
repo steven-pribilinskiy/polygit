@@ -177,6 +177,23 @@
                 day: "2026-06-24".to_string(),
                 body: "LGTM".to_string(),
             }],
+            commits: vec![crate::app::PrCommit {
+                sha: "abc1234".to_string(),
+                subject: "fix: skeleton rows".to_string(),
+                author: "demo-user".to_string(),
+                day: "2026-06-23".to_string(),
+            }],
+            files: vec![crate::app::PrFile {
+                path: "src/table.rs".to_string(),
+                additions: 40,
+                deletions: 2,
+            }],
+            checks: vec![crate::app::PrCheck {
+                name: "tests".to_string(),
+                bucket: "pass".to_string(),
+                state: "SUCCESS".to_string(),
+                link: "https://example/checks/1".to_string(),
+            }],
         };
         app.pr_modal = Some(PrModalState {
             repo_idx: 0,
@@ -188,38 +205,55 @@
             collapsed: std::collections::HashSet::new(),
             search: String::new(),
             search_focused: false,
+            tab: crate::app::PrModalTab::default(),
+            files_diff: None,
+            files_diff_loading: false,
+            files_view: crate::app::DiffView::Unified,
         });
         app
     }
 
-    // The full PR title leads the body and the created date renders relative ("ago"); the absolute
-    // date/time is captured for the hover tooltip, and the title bar stays bare until you scroll.
+    // The pinned meta line renders the created date relative ("ago") with the absolute on hover; the
+    // title bar always carries `PR #N · <title>`; and the default Description tab shows the body.
     #[test]
-    fn pr_modal_shows_full_title_in_body_and_timeago() {
+    fn pr_modal_shows_meta_timeago_and_title() {
         let mut app = demo_pr_modal();
-        // Wide enough that the full title fits one body line (as on a real ~200-col terminal).
         let (rows, title_bar) = render_pr_modal_rows(&mut app, 200, 24);
         let body = rows.join("\n");
-        assert!(body.contains("table never shows a bare spinner anywhere"), "full title shows in body\n{body}");
         assert!(body.contains(" ago"), "created renders as a relative 'time ago' label\n{body}");
         assert!(!body.contains("2026-06-23"), "the raw date is not shown inline (only on hover)");
-        let region = app.pr_created_region.clone().expect("created region captured while meta on-screen");
+        let region = app.pr_created_region.clone().expect("created region captured (meta is pinned)");
         assert_eq!(region.3, "2026-06-23 14:32 UTC");
         assert!(title_bar.contains("PR #426"), "title bar shows the number\n{title_bar}");
-        assert!(!title_bar.contains("skeleton rows"), "title bar omits the title until it scrolls off\n{title_bar}");
+        assert!(title_bar.contains("fix(widget)"), "title bar carries the title\n{title_bar}");
+        assert!(
+            body.contains("skeleton rows while the next page loads"),
+            "the default Description tab shows the body\n{body}"
+        );
     }
 
-    // Scrolling past the hero title reveals it (truncated) in the title bar — the sticky-header
-    // behaviour — and drops the meta tooltip region (it's no longer on-screen).
+    // The tab bar switches the body: Conversation shows comments, Commits/Checks/Files their data.
     #[test]
-    fn pr_modal_title_bar_reveals_title_after_scroll() {
+    fn pr_modal_tabs_switch_the_body() {
         let mut app = demo_pr_modal();
-        if let Some(modal) = app.pr_modal.as_mut() {
-            modal.scroll = 8;
-        }
-        let (_, title_bar) = render_pr_modal_rows(&mut app, 200, 14);
-        assert!(title_bar.contains("PR #426"), "number stays\n{title_bar}");
-        assert!(title_bar.contains("fix(widget)"), "title bar reveals the (truncated) title after scroll\n{title_bar}");
-        assert!(app.pr_created_region.is_none(), "meta scrolled off → no tooltip region");
+        let body = render_pr_modal_rows(&mut app, 200, 24).0.join("\n");
+        assert!(body.contains("Description"), "tab bar lists Description\n{body}");
+        assert!(body.contains("Conversation 1"), "Conversation badge counts the comment\n{body}");
+
+        app.pr_modal_select_tab(crate::app::PrModalTab::Conversation);
+        let body = render_pr_modal_rows(&mut app, 200, 24).0.join("\n");
+        assert!(body.contains("@reviewer") && body.contains("LGTM"), "Conversation shows the comment\n{body}");
+
+        app.pr_modal_select_tab(crate::app::PrModalTab::Commits);
+        let body = render_pr_modal_rows(&mut app, 200, 24).0.join("\n");
+        assert!(body.contains("abc1234"), "Commits lists the commit sha\n{body}");
+
+        app.pr_modal_select_tab(crate::app::PrModalTab::Checks);
+        let body = render_pr_modal_rows(&mut app, 200, 24).0.join("\n");
+        assert!(body.contains("tests"), "Checks lists the check name\n{body}");
+
+        app.pr_modal_select_tab(crate::app::PrModalTab::Files);
+        let body = render_pr_modal_rows(&mut app, 200, 24).0.join("\n");
+        assert!(body.contains("src/table.rs"), "Files lists the changed file\n{body}");
     }
 

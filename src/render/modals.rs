@@ -498,6 +498,49 @@ fn note_line(indent: usize, segs: &[(String, Style)]) -> Line<'static> {
 /// The PR viewer modal: a fixed ~90% modal (like the diff modal) showing the assembled PR markdown
 /// — metadata header, description, and every review/comment — scrollable, with an `o` to open the
 /// PR in the browser. The body loads async (`run_pr_view`); a "loading…" line shows until it lands.
+/// One Conversation comment/review header line (chevron + byline), then its markdown body when
+/// expanded. Returns the rows; `body_w` is the content width.
+fn pr_comment_section(
+    idx: usize,
+    collapsed: bool,
+    comment: &crate::app::PrSection,
+    body_w: usize,
+    section_at: &mut Vec<(usize, usize)>,
+    out: &mut Vec<Line<'static>>,
+) {
+    let dim = Style::default().fg(Color::DarkGray);
+    let label = Style::default().fg(Color::Gray);
+    let kind_color = match comment.kind.as_str() {
+        "approved" => Color::Green,
+        "changes_requested" => Color::Red,
+        "commented" | "review" => Color::Gray,
+        _ => Color::Yellow,
+    };
+    let chevron = if collapsed { "\u{25b8}" } else { "\u{25be}" };
+    let mut head = vec![
+        Span::styled(format!("  {chevron} "), label),
+        Span::styled(
+            format!("@{}", comment.author),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(comment.kind.replace('_', " "), Style::default().fg(kind_color)),
+    ];
+    if !comment.day.is_empty() {
+        head.push(Span::styled(format!("  ·  {}", comment.day), dim));
+    }
+    section_at.push((out.len(), idx));
+    out.push(Line::from(head));
+    if !collapsed {
+        for line in super::preview::markdown_to_lines(&comment.body, body_w.saturating_sub(2).max(8)) {
+            let mut spans = vec![Span::raw("  ")];
+            spans.extend(line.spans);
+            out.push(Line::from(spans));
+        }
+    }
+    out.push(Line::from(String::new()));
+}
+
 pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
     use unicode_width::UnicodeWidthStr;
     let width = area.width.saturating_mul(9) / 10;
@@ -507,6 +550,9 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
     app.pr_collapse_all_click = None;
     app.pr_search_click = None;
     app.pr_created_region = None;
+    app.pr_modal_tab_click.clear();
+    app.pr_files_view_click.clear();
+    app.pr_checks_click.clear();
 
     let (number, title) = {
         let pr = app.pr_modal.as_ref().expect("render_pr_modal with no pr_modal");
@@ -531,58 +577,54 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or(0);
 
-    // Build the full document as styled lines, tracking where the clickable controls land so the
-    // post-scroll window can register their on-screen rows (capture-then-hit-test).
-    let mut lines: Vec<Line> = Vec::new();
-    let mut section_at: Vec<(usize, usize)> = Vec::new(); // (line_idx, section_idx)
+    let palette = app.palette();
+    let view = app.pr_modal.as_ref().and_then(|modal| modal.view.clone());
+    let (query, search_focused, tab, files_view, files_diff) = app.pr_modal.as_ref().map_or(
+        (String::new(), false, crate::app::PrModalTab::default(), crate::app::DiffView::Unified, None),
+        |modal| {
+            (modal.search.clone(), modal.search_focused, modal.tab, modal.files_view, modal.files_diff.clone())
+        },
+    );
+    let query_lc = query.to_lowercase();
+    let cyan_bold = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let active_chip = Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD);
+
+    // The scrollable per-tab body, with click/tooltip regions captured relative to it.
+    let mut body: Vec<Line> = Vec::new();
+    let mut section_at: Vec<(usize, usize)> = Vec::new(); // (body_line_idx, comment_idx)
     let mut collapse_all_at: Option<usize> = None;
     let mut search_at: Option<usize> = None;
-    // The "created" timeago span, captured for the dwell tooltip: (line_idx, col_offset, width, abs).
-    let mut created_at: Option<(usize, u16, u16, String)> = None;
+    // Tab-bar + Files-view chips: absolute (col_start, col_end, value) — their row is fixed/derived.
+    let mut tab_chips: Vec<(u16, u16, crate::app::PrModalTab)> = Vec::new();
+    let mut view_chips: Vec<(u16, u16, crate::app::DiffView)> = Vec::new();
+    let mut check_at: Vec<(usize, String)> = Vec::new(); // (body_line_idx, details_url)
+    let mut created_meta: Option<(u16, u16, String)> = None; // (col_offset, width, absolute)
 
-    // Hero title: the FULL (untruncated) title at the very top of the body, word-wrapped — the modal
-    // title bar only carries it (truncated) once it scrolls out of view (see `sticky` below).
-    // `title_lines` counts the title text rows (excludes the trailing blank) — the sticky threshold.
-    let title_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let title_lines = {
-        let wrapped = super::preview::wrap_chars(&title, body_w.saturating_sub(2).max(8));
-        for chunk in &wrapped {
-            lines.push(Line::from(vec![Span::raw("  "), Span::styled(chunk.clone(), title_style)]));
-        }
-        lines.push(Line::from(String::new()));
-        wrapped.len()
-    };
-
-    let view = app.pr_modal.as_ref().and_then(|modal| modal.view.clone());
-    let (query, search_focused) = app
-        .pr_modal
-        .as_ref()
-        .map_or((String::new(), false), |modal| (modal.search.clone(), modal.search_focused));
-    let query_lc = query.to_lowercase();
-
-    match view {
+    // The pinned header (meta + stats + tab bar) — built only once the PR data has loaded.
+    let mut header: Vec<Line> = Vec::new();
+    match view.as_ref() {
         None => {
-            // Loading skeleton: a spinner line + dim shimmer bars mimicking the meta + body.
+            // Loading skeleton in the body; the header/tabs appear once data lands.
             let spin = super::spinner_frame(tick, icons);
-            lines.push(Line::from(Span::styled(
+            body.push(Line::from(Span::styled(
                 format!("  {spin} loading PR #{number}…"),
                 Style::default().fg(Color::Cyan),
             )));
-            lines.push(Line::from(String::new()));
+            body.push(Line::from(String::new()));
             let bar = |width: usize| Line::from(Span::styled("  ".to_string() + &"█".repeat(width), dim));
             for width in [body_w * 7 / 10, body_w * 4 / 10] {
-                lines.push(bar(width.clamp(6, body_w.saturating_sub(2))));
+                body.push(bar(width.clamp(6, body_w.saturating_sub(2))));
             }
-            lines.push(Line::from(String::new()));
-            for width in [body_w * 9 / 10, body_w * 8 / 10, body_w / 2, body_w * 6 / 10] {
-                lines.push(Line::from(Span::styled(
+            body.push(Line::from(String::new()));
+            for width in [body_w * 9 / 10, body_w * 8 / 10, body_w / 2] {
+                body.push(Line::from(Span::styled(
                     "  ".to_string() + &"░".repeat(width.clamp(6, body_w.saturating_sub(2))),
                     dim,
                 )));
             }
         }
         Some(view) => {
-            // Meta header (the title lives in the hero block above + the sticky title bar).
+            // --- meta line: state · head→base · @author · timeago ---
             let state_color = match view.state.as_str() {
                 "open" => Color::Green,
                 "merged" => Color::Magenta,
@@ -608,22 +650,20 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
             }
             if !view.created.is_empty() {
                 meta.push(Span::styled("  ·  ", dim));
-                // "time ago" label, with the absolute date/time captured for the hover tooltip. The
-                // column offset is the display width of everything on the meta line so far.
                 let rel = crate::timeago::parse_iso8601(&view.created)
                     .map(|then| crate::timeago::relative(now_secs, then))
                     .unwrap_or_else(|| view.created.clone());
                 let col_offset: usize =
                     meta.iter().map(|span| UnicodeWidthStr::width(span.content.as_ref())).sum();
-                created_at = Some((
-                    lines.len(),
+                created_meta = Some((
                     col_offset as u16,
                     UnicodeWidthStr::width(rel.as_str()) as u16,
                     crate::timeago::absolute_label(&view.created),
                 ));
                 meta.push(Span::styled(rel, dim));
             }
-            lines.push(Line::from(meta));
+            header.push(Line::from(meta));
+            // --- stats line: +adds −dels · labels ---
             let mut stats: Vec<Span> = vec![
                 Span::raw("  "),
                 Span::styled(format!("+{}", view.additions), Style::default().fg(Color::Green)),
@@ -634,113 +674,190 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
                 stats.push(Span::styled("  ·  ", dim));
                 stats.push(Span::styled(view.labels.join(", "), Style::default().fg(Color::Yellow)));
             }
-            lines.push(Line::from(stats));
-            lines.push(Line::from(String::new()));
-
-            // Search box (shown when focused or a query is active) + expand/collapse-all control.
-            let comment_count = view.comments.len();
-            let matches = |section: &crate::app::PrSection| {
-                query_lc.is_empty()
-                    || section.body.to_lowercase().contains(&query_lc)
-                    || section.author.to_lowercase().contains(&query_lc)
-                    || section.kind.to_lowercase().contains(&query_lc)
+            header.push(Line::from(stats));
+            header.push(Line::from(String::new()));
+            // --- tab bar (chips with count badges) ---
+            let count_of = |tab: crate::app::PrModalTab| -> Option<usize> {
+                match tab {
+                    crate::app::PrModalTab::Description => None,
+                    crate::app::PrModalTab::Conversation => Some(view.comments.len()),
+                    crate::app::PrModalTab::Commits => Some(view.commits.len()),
+                    crate::app::PrModalTab::Checks => Some(view.checks.len()),
+                    crate::app::PrModalTab::Files => Some(view.files.len()),
+                }
             };
-            let desc_matches =
-                query_lc.is_empty() || view.description.to_lowercase().contains(&query_lc);
-            if search_focused || !query.is_empty() {
-                let hits = (desc_matches as usize)
-                    + view.comments.iter().filter(|comment| matches(comment)).count();
-                let cursor = if search_focused { "▏" } else { "" };
-                search_at = Some(lines.len());
-                lines.push(Line::from(vec![
-                    Span::styled("  / ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        if query.is_empty() { "search…".to_string() } else { query.clone() },
-                        if query.is_empty() { dim } else { label },
-                    ),
-                    Span::styled(cursor.to_string(), Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("   ({hits} match{})", if hits == 1 { "" } else { "es" }), dim),
-                ]));
-                lines.push(Line::from(String::new()));
+            let mut tab_spans: Vec<Span> = vec![Span::raw(" ")];
+            let mut col = inner.x + 1;
+            for candidate in crate::app::PrModalTab::ALL {
+                let chip = match count_of(candidate) {
+                    Some(count) => format!(" {} {} ", candidate.label(), count),
+                    None => format!(" {} ", candidate.label()),
+                };
+                let chip_w = UnicodeWidthStr::width(chip.as_str()) as u16;
+                let style = if candidate == tab { active_chip } else { Style::default().fg(Color::Gray) };
+                tab_chips.push((col, col + chip_w, candidate));
+                tab_spans.push(Span::styled(chip, style));
+                tab_spans.push(Span::raw(" "));
+                col += chip_w + 1;
             }
-            if comment_count > 1 {
-                let all_collapsed =
-                    app.pr_modal.as_ref().is_some_and(|modal| modal.all_collapsed());
-                let (key, word) = if all_collapsed { ("+", "expand all") } else { ("−", "collapse all") };
-                collapse_all_at = Some(lines.len());
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(format!("[{key} {word}]"), Style::default().fg(Color::Cyan)),
-                ]));
-                lines.push(Line::from(String::new()));
-            }
+            header.push(Line::from(tab_spans));
 
-            // Helper: a collapsible section — a clickable chevron header, then its body when expanded.
-            let push_section =
-                |lines: &mut Vec<Line<'static>>,
-                 section_at: &mut Vec<(usize, usize)>,
-                 idx: usize,
-                 collapsed: bool,
-                 header: Vec<Span<'static>>,
-                 body: &str| {
-                    let chevron = if collapsed { "\u{25b8}" } else { "\u{25be}" }; // ▸ / ▾
-                    let mut head = vec![Span::styled(format!("  {chevron} "), label)];
-                    head.extend(header);
-                    section_at.push((lines.len(), idx));
-                    lines.push(Line::from(head));
-                    if !collapsed {
-                        for line in super::preview::markdown_to_lines(body, body_w.saturating_sub(2).max(8)) {
-                            // Indent body two cols under the chevron.
-                            let mut spans = vec![Span::raw("  ")];
-                            spans.extend(line.spans);
-                            lines.push(Line::from(spans));
-                        }
+            // --- per-tab body ---
+            match tab {
+                crate::app::PrModalTab::Description => {
+                    for line in super::preview::markdown_to_lines(&view.description, body_w) {
+                        let mut spans = vec![Span::raw("  ")];
+                        spans.extend(line.spans);
+                        body.push(Line::from(spans));
                     }
-                    lines.push(Line::from(String::new()));
-                };
-
-            // Description (section 0) — only when it matches the active search.
-            if desc_matches {
-                let collapsed = app.pr_modal.as_ref().is_some_and(|modal| modal.is_collapsed(0));
-                push_section(
-                    &mut lines,
-                    &mut section_at,
-                    0,
-                    collapsed,
-                    vec![Span::styled("Description", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))],
-                    &view.description,
-                );
-            }
-            // Reviews + comments (sections 1..) — filtered by the active search.
-            for (offset, comment) in view.comments.iter().enumerate() {
-                if !matches(comment) {
-                    continue;
                 }
-                let idx = offset + 1;
-                let collapsed = app.pr_modal.as_ref().is_some_and(|modal| modal.is_collapsed(idx));
-                let kind_color = match comment.kind.as_str() {
-                    "approved" => Color::Green,
-                    "changes_requested" => Color::Red,
-                    "commented" | "review" => Color::Gray,
-                    _ => Color::Yellow,
-                };
-                let mut header = vec![
-                    Span::styled(format!("@{}", comment.author), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    Span::raw("  "),
-                    Span::styled(comment.kind.replace('_', " "), Style::default().fg(kind_color)),
-                ];
-                if !comment.day.is_empty() {
-                    header.push(Span::styled(format!("  ·  {}", comment.day), dim));
+                crate::app::PrModalTab::Conversation => {
+                    let matches = |comment: &crate::app::PrSection| {
+                        query_lc.is_empty()
+                            || comment.body.to_lowercase().contains(&query_lc)
+                            || comment.author.to_lowercase().contains(&query_lc)
+                            || comment.kind.to_lowercase().contains(&query_lc)
+                    };
+                    if search_focused || !query.is_empty() {
+                        let hits = view.comments.iter().filter(|comment| matches(comment)).count();
+                        let cursor = if search_focused { "▏" } else { "" };
+                        search_at = Some(body.len());
+                        body.push(Line::from(vec![
+                            Span::styled("  / ", Style::default().fg(Color::Cyan)),
+                            Span::styled(
+                                if query.is_empty() { "search…".to_string() } else { query.clone() },
+                                if query.is_empty() { dim } else { label },
+                            ),
+                            Span::styled(cursor.to_string(), Style::default().fg(Color::Cyan)),
+                            Span::styled(
+                                format!("   ({hits} match{})", if hits == 1 { "" } else { "es" }),
+                                dim,
+                            ),
+                        ]));
+                        body.push(Line::from(String::new()));
+                    }
+                    if view.comments.len() > 1 {
+                        let all_collapsed = app.pr_modal.as_ref().is_some_and(|modal| modal.all_collapsed());
+                        let (key, word) =
+                            if all_collapsed { ("+", "expand all") } else { ("−", "collapse all") };
+                        collapse_all_at = Some(body.len());
+                        body.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(format!("[{key} {word}]"), Style::default().fg(Color::Cyan)),
+                        ]));
+                        body.push(Line::from(String::new()));
+                    }
+                    if view.comments.is_empty() {
+                        body.push(Line::from(Span::styled("  No conversation yet.", dim)));
+                    }
+                    for (idx, comment) in view.comments.iter().enumerate() {
+                        if !matches(comment) {
+                            continue;
+                        }
+                        let collapsed = app.pr_modal.as_ref().is_some_and(|modal| modal.is_collapsed(idx));
+                        pr_comment_section(idx, collapsed, comment, body_w, &mut section_at, &mut body);
+                    }
                 }
-                push_section(&mut lines, &mut section_at, idx, collapsed, header, &comment.body);
+                crate::app::PrModalTab::Commits => {
+                    if view.commits.is_empty() {
+                        body.push(Line::from(Span::styled("  No commits.", dim)));
+                    }
+                    for commit in &view.commits {
+                        let mut spans = vec![
+                            Span::styled(format!("  {} ", commit.sha), Style::default().fg(Color::Yellow)),
+                            Span::styled(commit.subject.clone(), Style::default().fg(Color::Gray)),
+                        ];
+                        let mut tail = String::new();
+                        if !commit.author.is_empty() {
+                            tail.push_str(&format!("  @{}", commit.author));
+                        }
+                        if !commit.day.is_empty() {
+                            tail.push_str(&format!(" · {}", commit.day));
+                        }
+                        if !tail.is_empty() {
+                            spans.push(Span::styled(tail, dim));
+                        }
+                        body.push(Line::from(spans));
+                    }
+                }
+                crate::app::PrModalTab::Checks => {
+                    if view.checks.is_empty() {
+                        body.push(Line::from(Span::styled("  No checks reported.", dim)));
+                    }
+                    for check in &view.checks {
+                        let (icon, color) = match check.bucket.as_str() {
+                            "pass" => ("\u{2713}", Color::Green),
+                            "fail" => ("\u{2717}", Color::Red),
+                            "skip" => ("\u{2013}", Color::DarkGray),
+                            "cancel" => ("\u{2298}", Color::DarkGray),
+                            _ => ("\u{25cf}", Color::Yellow),
+                        };
+                        let mut spans = vec![
+                            Span::styled(format!("  {icon} "), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                            Span::styled(check.name.clone(), Style::default().fg(Color::Gray)),
+                        ];
+                        if !check.state.is_empty() {
+                            spans.push(Span::styled(format!("  {}", check.state.to_lowercase()), dim));
+                        }
+                        if !check.link.is_empty() {
+                            spans.push(Span::styled("  \u{2197}", Style::default().fg(Color::Cyan)));
+                            check_at.push((body.len(), check.link.clone()));
+                        }
+                        body.push(Line::from(spans));
+                    }
+                }
+                crate::app::PrModalTab::Files => {
+                    body.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {} file{}  ", view.files.len(), if view.files.len() == 1 { "" } else { "s" }),
+                            label,
+                        ),
+                        Span::styled(format!("+{}", view.additions), Style::default().fg(Color::Green)),
+                        Span::raw(" "),
+                        Span::styled(format!("−{}", view.deletions), Style::default().fg(Color::Red)),
+                    ]));
+                    for file in &view.files {
+                        body.push(Line::from(vec![
+                            Span::styled(format!("    {}  ", file.path), Style::default().fg(Color::Gray)),
+                            Span::styled(format!("+{}", file.additions), Style::default().fg(Color::Green)),
+                            Span::raw(" "),
+                            Span::styled(format!("−{}", file.deletions), Style::default().fg(Color::Red)),
+                        ]));
+                    }
+                    body.push(Line::from(String::new()));
+                    // raw / unified / split chips for the diff render style.
+                    let mut chip_spans: Vec<Span> = vec![Span::styled("  view: ", dim)];
+                    let mut col = inner.x + UnicodeWidthStr::width("  view: ") as u16;
+                    for candidate in
+                        [crate::app::DiffView::Raw, crate::app::DiffView::Unified, crate::app::DiffView::Split]
+                    {
+                        let chip = format!(" {} ", candidate.label());
+                        let chip_w = UnicodeWidthStr::width(chip.as_str()) as u16;
+                        let style =
+                            if candidate == files_view { active_chip } else { Style::default().fg(Color::Gray) };
+                        view_chips.push((col, col + chip_w, candidate));
+                        chip_spans.push(Span::styled(chip, style));
+                        chip_spans.push(Span::raw(" "));
+                        col += chip_w + 1;
+                    }
+                    body.push(Line::from(chip_spans));
+                    body.push(Line::from(String::new()));
+                    match &files_diff {
+                        Some(diff) => {
+                            body.extend(diff_body_lines(diff, files_view, None, body_w as u16, &palette));
+                        }
+                        None => body.push(Line::from(Span::styled("  (loading diff…)", dim))),
+                    }
+                }
             }
         }
     }
+    let _ = cyan_bold;
 
-    // Highlight lines that contain the search query (case-insensitive), so matches stand out.
-    if !query_lc.is_empty() {
+    // Highlight body lines matching the search query (text tabs only).
+    if !query_lc.is_empty() && tab.is_text() {
         let hl = Style::default().bg(Color::Rgb(80, 70, 0));
-        for line in lines.iter_mut() {
+        for line in body.iter_mut() {
             let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
             if text.to_lowercase().contains(&query_lc) {
                 for span in line.spans.iter_mut() {
@@ -750,28 +867,38 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
         }
     }
 
-    let viewport = inner.height as usize;
-    let max_scroll = lines.len().saturating_sub(viewport);
+    // Layout: pinned header rows at the top of `inner`, the per-tab body scrolls below.
+    let header_h = header.len() as u16;
+    let body_area = Rect {
+        x: inner.x,
+        y: inner.y + header_h,
+        width: inner.width.saturating_sub(1), // -1 for the scrollbar gutter
+        height: inner.height.saturating_sub(header_h),
+    };
+    let viewport = body_area.height as usize;
+    let max_scroll = body.len().saturating_sub(viewport);
     let scroll = app.pr_modal.as_ref().map_or(0, |pr| pr.scroll).min(max_scroll);
     if let Some(pr) = app.pr_modal.as_mut() {
         pr.scroll = scroll;
     }
 
-    // Sticky title bar: bare `PR #N` while the hero title is still on-screen, gaining the (truncated)
-    // title once the body has scrolled past it — like a page header that reveals on scroll. The
-    // truncation is generous (the modal is wide); the full title always lives in the body.
-    let sticky = scroll >= title_lines.max(1);
-    let bar_title = if sticky {
-        let room = (modal.width as usize).saturating_sub(14);
-        format!(" PR #{number} · {} ", truncate_str(&title, room.max(20)))
-    } else {
-        format!(" PR #{number} ")
-    };
+    let bar_title = format!(
+        " PR #{number} · {} ",
+        truncate_str(&title, (modal.width as usize).saturating_sub(14).max(20))
+    );
     let (close_line, close_click) = modal_close_button(modal);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
-    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    footer.extend(footer_chip("tab", " tabs", HintKey::Tab));
     footer.push(footer_sep());
-    footer.extend(footer_chip("/", " search", HintKey::Char('/')));
+    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    if tab.is_text() {
+        footer.push(footer_sep());
+        footer.extend(footer_chip("/", " search", HintKey::Char('/')));
+    }
+    if tab == crate::app::PrModalTab::Files {
+        footer.push(footer_sep());
+        footer.extend(footer_chip("d", " view", HintKey::Char('d')));
+    }
     footer.push(footer_sep());
     footer.extend(footer_chip("o", " open", HintKey::Char('o')));
     footer.push(footer_sep());
@@ -790,38 +917,61 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
     app.pr_modal_area = modal;
     app.pr_modal_close_click = close_click;
 
-    let body_area = Rect { width: inner.width.saturating_sub(1), ..inner };
-    let visible: Vec<Line> = lines.iter().skip(scroll).take(viewport).cloned().collect();
+    if header_h > 0 {
+        let header_area = Rect { x: inner.x, y: inner.y, width: inner.width, height: header_h };
+        frame.render_widget(Paragraph::new(header), header_area);
+    }
+    let visible: Vec<Line> = body.iter().skip(scroll).take(viewport).cloned().collect();
     frame.render_widget(Paragraph::new(visible), body_area);
 
-    // Register the clickable controls that fall inside the visible window (translate line→screen row).
-    let on_screen = |line_idx: usize| -> Option<u16> {
-        (line_idx >= scroll && line_idx < scroll + viewport).then(|| inner.y + (line_idx - scroll) as u16)
+    // Capture click/tooltip regions. The tab bar is the 4th pinned header row (index 3); the meta
+    // (created timeago) is the 1st (index 0). Both are fixed at the top of `inner`.
+    let tab_row = inner.y + 3;
+    for (start, end, candidate) in tab_chips {
+        app.pr_modal_tab_click.push((tab_row, start, end, candidate));
+    }
+    if let Some((col_offset, width, absolute)) = created_meta {
+        let start = inner.x + col_offset;
+        app.pr_created_region = Some((inner.y, start, start + width, absolute));
+    }
+    // Body regions translate body-line index → on-screen row.
+    let on_screen = |idx: usize| -> Option<u16> {
+        (idx >= scroll && idx < scroll + viewport).then(|| body_area.y + (idx - scroll) as u16)
     };
-    for &(line_idx, section_idx) in &section_at {
-        if let Some(row) = on_screen(line_idx) {
+    for &(idx, section_idx) in &section_at {
+        if let Some(row) = on_screen(idx) {
             app.pr_section_click.push((row, inner.x, inner.x + inner.width, section_idx));
         }
     }
-    if let Some(line_idx) = collapse_all_at {
-        if let Some(row) = on_screen(line_idx) {
+    for (idx, url) in &check_at {
+        if let Some(row) = on_screen(*idx) {
+            app.pr_checks_click.push((row, inner.x, inner.x + inner.width, url.clone()));
+        }
+    }
+    if let Some(idx) = collapse_all_at {
+        if let Some(row) = on_screen(idx) {
             app.pr_collapse_all_click = Some((row, inner.x, inner.x + inner.width));
         }
     }
-    if let Some(line_idx) = search_at {
-        if let Some(row) = on_screen(line_idx) {
+    if let Some(idx) = search_at {
+        if let Some(row) = on_screen(idx) {
             app.pr_search_click = Some((row, inner.x, inner.x + inner.width));
         }
     }
-    if let Some((line_idx, col_offset, width, absolute)) = created_at {
-        if let Some(row) = on_screen(line_idx) {
-            let start = inner.x + col_offset;
-            app.pr_created_region = Some((row, start, start + width, absolute));
+    if !view_chips.is_empty() {
+        if let Some(line_idx) =
+            body.iter().position(|line| line.spans.first().is_some_and(|span| span.content.as_ref() == "  view: "))
+        {
+            if let Some(row) = on_screen(line_idx) {
+                for (start, end, candidate) in view_chips {
+                    app.pr_files_view_click.push((row, start, end, candidate));
+                }
+            }
         }
     }
-    if lines.len() > viewport {
-        let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
-        super::render_scrollbar(frame, app, track, scroll, lines.len(), viewport, crate::app::ScrollKind::PrModal);
+    if body.len() > viewport {
+        let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..body_area };
+        super::render_scrollbar(frame, app, track, scroll, body.len(), viewport, crate::app::ScrollKind::PrModal);
     }
 }
 
