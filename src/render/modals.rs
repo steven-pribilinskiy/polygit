@@ -14,11 +14,14 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
     // columns dropdown uses `[x] `/`[ ] `.
     let is_radio = matches!(
         dropdown.kind,
-        DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ListFilter
+        DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ListFilter | DropdownKind::ExplorerSort
     );
     let title = match dropdown.kind {
-        DropdownKind::ListColumns | DropdownKind::PageColumns | DropdownKind::StashColumns => " columns ",
-        DropdownKind::ListSort | DropdownKind::PageSort => " sort ",
+        DropdownKind::ListColumns
+        | DropdownKind::PageColumns
+        | DropdownKind::StashColumns
+        | DropdownKind::ExplorerColumns => " columns ",
+        DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ExplorerSort => " sort ",
         DropdownKind::ListFilter => " filter ",
     };
     // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for a radio (`● `)
@@ -273,6 +276,11 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
             format!("{}  ({} files in config)", app.build_info_settings_path, app.build_info_config_count),
         )),
         Some(Line::from(status)),
+        // How to update from the terminal (distinct from the local make-build reload above).
+        Some(Line::from(Span::styled(
+            "Run `polygit update` (alias `upgrade`) to self-install the latest release.",
+            Style::default().fg(Color::DarkGray),
+        ))),
         Some(Line::from(String::new())),
         Some(Line::from(preview_header)),
     ]
@@ -3143,5 +3151,323 @@ fn pad_to(text: &str, width: usize) -> String {
         out
     } else {
         format!("{text}{}", " ".repeat(width - current))
+    }
+}
+
+/// Render the two-pane file explorer modal: a directory LIST pane (name + toggleable columns) over a
+/// syntax-highlighted PREVIEW pane, split by a draggable divider. Geometry + click regions are
+/// written back onto `app.explorer` for the input handlers (capture-then-hit-test).
+pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    use crate::explorer::{DateFormat, ExplorerColumn, ExplorerFocus, SizeTier, SortKey};
+    let dark = app.dark_active();
+    if let Some(explorer) = app.explorer.as_mut() {
+        explorer.ensure_preview(dark);
+    }
+    if app.explorer.is_none() {
+        return;
+    }
+    let palette = app.palette();
+    let selection_bg = palette.subtle_selection_bg();
+    let hover_bg = palette.hover_bg();
+    // The palette's default foreground (explicit, so a re-render never leaves a row dim-inherited).
+    let text_fg = palette.map_fg(Color::Reset);
+
+    // One display cell per row: name + the (always-computed) optional column strings + size tier.
+    struct RowCell {
+        name: String,
+        is_dir: bool,
+        is_parent: bool,
+        size: String,
+        size_tier: SizeTier,
+        perms: String,
+        modified: String,
+        created: String,
+        kind: String,
+    }
+    let (rows, selected, list_scroll, split, columns, sort, ascending, date_format, focus, title, finder, preview_lines, preview_scroll, preview_hscroll) = {
+        let explorer = app.explorer.as_ref().unwrap();
+        let rows: Vec<RowCell> = explorer
+            .entries
+            .iter()
+            .map(|entry| {
+                let size = explorer.size_cell(entry);
+                let bytes = explorer.sort_size(entry);
+                RowCell {
+                    name: entry.name.clone(),
+                    is_dir: entry.is_dir,
+                    is_parent: entry.is_parent,
+                    size,
+                    size_tier: SizeTier::of(bytes),
+                    perms: entry.permissions.clone(),
+                    modified: crate::explorer::time_cell(entry.modified, explorer.date_format),
+                    created: crate::explorer::time_cell(entry.created, explorer.date_format),
+                    kind: entry.kind_cell(),
+                }
+            })
+            .collect();
+        let rel = explorer.cwd.strip_prefix(&explorer.root).ok();
+        let title = match rel.map(|path| path.to_string_lossy().to_string()) {
+            Some(suffix) if !suffix.is_empty() => {
+                format!("{}/{suffix}", explorer.root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
+            }
+            _ => explorer.cwd.display().to_string(),
+        };
+        (
+            rows,
+            explorer.selected,
+            explorer.list_scroll,
+            explorer.split,
+            explorer.columns,
+            explorer.sort,
+            explorer.sort_ascending,
+            explorer.date_format,
+            explorer.focus,
+            title,
+            explorer.finder.clone(),
+            explorer.preview.as_ref().map(|preview| preview.lines.clone()),
+            explorer.preview.as_ref().map(|preview| preview.scroll).unwrap_or(0),
+            explorer.preview_hscroll,
+        )
+    };
+
+    let modal = centered_rect((area.width * 9 / 10).max(40), (area.height * 9 / 10).max(12), area);
+    let (close_line, close_click) = modal_close_button(modal);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("↑↓", " nav", HintKey::Char('j')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("⏎", " open", HintKey::Enter));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("/", " find", HintKey::Char('/')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("t", " cols", HintKey::Char('t')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("s", " sort", HintKey::Char('s')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("d", " dates", HintKey::Char('d')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(format!(" Explore — {title} "))
+        .title_top(close_line)
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(&block, modal);
+
+    // Split inner into list | divider | preview.
+    let list_w = ((inner.width as f64 * split) as u16).clamp(12, inner.width.saturating_sub(8));
+    let list_area = Rect { width: list_w, ..inner };
+    let divider_col = inner.x + list_w;
+    let preview_area = Rect { x: divider_col + 1, width: inner.width.saturating_sub(list_w + 1), ..inner };
+    // Hovering the divider (or its immediate neighbours, for an easier grab target) highlights it
+    // with a bg wash + a bold grip, mirroring the main panes' splitter.
+    let divider_hovered = app.hover.is_some_and(|(col, row)| {
+        col.abs_diff(divider_col) <= 1 && row >= inner.y && row < inner.y + inner.height
+    });
+    let divider_style = if divider_hovered {
+        Style::default().fg(Color::Cyan).bg(selection_bg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let divider_glyph = if divider_hovered { "║" } else { "│" };
+    for row in inner.y..inner.y + inner.height {
+        frame.buffer_mut().set_string(divider_col, row, divider_glyph, divider_style);
+    }
+
+    // ── Column layout: fixed widths (so cells never overflow into the next), name takes the rest ──
+    let pad = |text: &str, width: usize| -> String {
+        // Truncate to `width` display cells (… on the last) then pad — guarantees no overlap.
+        if UnicodeWidthStr::width(text) <= width {
+            let mut out = text.to_string();
+            while UnicodeWidthStr::width(out.as_str()) < width { out.push(' '); }
+            return out;
+        }
+        let mut out = String::new();
+        for ch in text.chars() {
+            if UnicodeWidthStr::width(out.as_str()) + UnicodeWidthStr::width(ch.to_string().as_str()) + 1 > width {
+                break;
+            }
+            out.push(ch);
+        }
+        out.push('…');
+        while UnicodeWidthStr::width(out.as_str()) < width { out.push(' '); }
+        out
+    };
+    let date_w = if matches!(date_format, DateFormat::Stamp) { 17 } else { 14 };
+    let plan: [(ExplorerColumn, &str, usize, SortKey); 5] = [
+        (ExplorerColumn::Size, "size", 9, SortKey::Size),
+        (ExplorerColumn::Permissions, "perms", 11, SortKey::Permissions),
+        (ExplorerColumn::Modified, "modified", date_w, SortKey::Modified),
+        (ExplorerColumn::Created, "created", date_w, SortKey::Created),
+        (ExplorerColumn::Kind, "kind", 8, SortKey::Kind),
+    ];
+    let active: Vec<&(ExplorerColumn, &str, usize, SortKey)> =
+        plan.iter().filter(|(column, ..)| column.enabled(&columns)).collect();
+    let extra_w: usize = active.iter().map(|(_, _, width, _)| *width + 1).sum();
+    let name_w = (list_area.width as usize).saturating_sub(extra_w + 1).max(8);
+
+    // Header row (clickable to sort; the active column shows ▲/▼).
+    let sort_arrow = |key: SortKey| -> &'static str {
+        if sort == key {
+            if ascending { " ▲" } else { " ▼" }
+        } else {
+            ""
+        }
+    };
+    let header_y = list_area.y;
+    let mut header_click: Vec<(u16, u16, u16, SortKey)> = Vec::new();
+    let mut header_spans: Vec<Span> = Vec::new();
+    let header_active = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let header_idle = Style::default().fg(Color::DarkGray).add_modifier(Modifier::UNDERLINED);
+    let mut col_x = list_area.x;
+    {
+        let label = format!("name{}", sort_arrow(SortKey::Name));
+        let cell = pad(&label, name_w);
+        let style = if sort == SortKey::Name { header_active } else { header_idle };
+        header_click.push((header_y, col_x, col_x + name_w as u16, SortKey::Name));
+        header_spans.push(Span::styled(cell, style));
+        col_x += name_w as u16 + 1;
+        header_spans.push(Span::raw(" "));
+    }
+    for (_, label, width, key) in &active {
+        let labelled = format!("{label}{}", sort_arrow(*key));
+        let cell = pad(&labelled, *width);
+        let style = if sort == *key { header_active } else { header_idle };
+        header_click.push((header_y, col_x, col_x + *width as u16, *key));
+        header_spans.push(Span::styled(cell, style));
+        header_spans.push(Span::raw(" "));
+        col_x += *width as u16 + 1;
+    }
+    // The finder's input bar takes the header row, so only draw the column header when not finding.
+    if finder.is_none() {
+        frame.render_widget(Paragraph::new(Line::from(header_spans)), Rect { height: 1, ..list_area });
+    }
+
+    // Rows. When the finder is open, the list is filtered to its matches (selection follows the
+    // finder); otherwise every entry shows and the selection is the explorer's.
+    let (display, display_selected): (Vec<usize>, usize) = match &finder {
+        Some(finder) => (finder.matches.clone(), finder.selected),
+        None => ((0..rows.len()).collect(), selected),
+    };
+    let rows_area = Rect { y: list_area.y + 1, height: list_area.height.saturating_sub(1), ..list_area };
+    let viewport = rows_area.height as usize;
+    let list_scroll = if display_selected >= list_scroll + viewport {
+        display_selected + 1 - viewport
+    } else if display_selected < list_scroll {
+        display_selected
+    } else {
+        list_scroll
+    }
+    .min(display.len().saturating_sub(viewport));
+    let dim = Style::default().fg(Color::DarkGray);
+    let size_style = |tier: SizeTier| match tier {
+        SizeTier::Bytes => Style::default().fg(Color::DarkGray),
+        SizeTier::Kilo => Style::default().fg(text_fg),
+        SizeTier::Mega => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        SizeTier::Giga => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+    };
+    let mut row_clicks: Vec<(u16, u16, u16, usize)> = Vec::new();
+    let lines: Vec<Line> = display
+        .iter()
+        .enumerate()
+        .skip(list_scroll)
+        .take(viewport)
+        .filter_map(|(display_pos, &entry_index)| {
+            let cell = rows.get(entry_index)?;
+            let screen_y = rows_area.y + (display_pos - list_scroll) as u16;
+            row_clicks.push((screen_y, rows_area.x, rows_area.x + rows_area.width, entry_index));
+            let icon = if cell.is_parent { "↰ " } else if cell.is_dir { "▸ " } else { "  " };
+            // Explicit colors for EVERY cell (never rely on the terminal default) so a re-render
+            // can't leave a row looking dimmed.
+            let name_style = if cell.is_dir {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(text_fg)
+            };
+            let mut spans = vec![
+                Span::styled(pad(&format!("{icon}{}", cell.name), name_w), name_style),
+                Span::raw(" "),
+            ];
+            for (column, _, width, _) in &active {
+                let (text, style) = match column {
+                    ExplorerColumn::Size => (cell.size.as_str(), size_style(cell.size_tier)),
+                    ExplorerColumn::Permissions => (cell.perms.as_str(), dim),
+                    ExplorerColumn::Modified => (cell.modified.as_str(), dim),
+                    ExplorerColumn::Created => (cell.created.as_str(), dim),
+                    ExplorerColumn::Kind => (cell.kind.as_str(), dim),
+                };
+                spans.push(Span::styled(pad(text, *width), style));
+                spans.push(Span::raw(" "));
+            }
+            Some(Line::from(spans))
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), rows_area);
+    if display_selected >= list_scroll && display_selected < list_scroll + viewport && !display.is_empty() {
+        let row_y = rows_area.y + (display_selected - list_scroll) as u16;
+        let bg = if focus == ExplorerFocus::List { selection_bg } else { hover_bg };
+        frame.buffer_mut().set_style(Rect { x: rows_area.x, y: row_y, width: rows_area.width, height: 1 }, Style::default().bg(bg));
+    }
+    let list_track = Rect { x: rows_area.x + rows_area.width.saturating_sub(1), width: 1, ..rows_area };
+    render_scrollbar(frame, app, list_track, list_scroll, display.len(), viewport, crate::app::ScrollKind::ExplorerList);
+
+    // ── Preview pane (vertical + horizontal scroll) ──
+    let preview_inner = Rect { width: preview_area.width.saturating_sub(1), ..preview_area };
+    let pv_viewport = preview_inner.height as usize;
+    match &preview_lines {
+        Some(lines) if !lines.is_empty() => {
+            let total = lines.len();
+            let scroll = preview_scroll.min(total.saturating_sub(pv_viewport));
+            let widest = lines.iter().map(|line| line.width()).max().unwrap_or(0);
+            let max_hscroll = widest.saturating_sub(preview_inner.width as usize);
+            let hscroll = preview_hscroll.min(max_hscroll);
+            let shown: Vec<Line> = lines.iter().skip(scroll).take(pv_viewport).cloned().collect();
+            frame.render_widget(
+                Paragraph::new(shown).scroll((0, hscroll as u16)),
+                preview_inner,
+            );
+            let pv_track = Rect { x: preview_inner.x + preview_inner.width, width: 1, ..preview_inner };
+            render_scrollbar(frame, app, pv_track, scroll, total, pv_viewport, crate::app::ScrollKind::ExplorerPreview);
+        }
+        _ => {
+            let hint = if rows.get(selected).map(|row| row.is_dir).unwrap_or(false) {
+                "(directory — ⏎ to open)"
+            } else {
+                "(select a file to preview)"
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray)))),
+                preview_inner,
+            );
+        }
+    }
+
+    // ── Fuzzy finder overlay (a slim input bar pinned to the top of the list pane) ──
+    if let Some(finder) = &finder {
+        let bar = Rect { x: list_area.x, y: list_area.y, width: list_area.width, height: 1 };
+        frame.buffer_mut().set_style(bar, Style::default().bg(hover_bg));
+        let count = finder.matches.len();
+        let label = format!("  find: {}▏  ({count})", finder.query);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(pad(&label, list_area.width as usize), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))),
+            bar,
+        );
+    }
+
+    // Write geometry + click regions back for the input handlers.
+    if let Some(explorer) = app.explorer.as_mut() {
+        explorer.list_scroll = list_scroll;
+        explorer.area = modal;
+        explorer.list_area = rows_area;
+        explorer.preview_area = preview_inner;
+        explorer.divider_col = divider_col;
+        explorer.rows_click = row_clicks;
+        explorer.close_click = close_click;
+        explorer.header_click = header_click;
     }
 }

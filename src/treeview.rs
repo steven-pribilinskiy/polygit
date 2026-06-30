@@ -23,8 +23,9 @@ pub enum DataNode {
 }
 
 impl DataNode {
-    /// Adapt a parsed `serde_json::Value` into the agnostic model (preserving object order when
-    /// serde_json's `preserve_order` feature is on, which it is here).
+    /// Adapt a parsed `serde_json::Value` into the agnostic model. Object keys are sorted
+    /// alphabetically (at every level) so the Build-info tree reads tidily regardless of the file's
+    /// on-disk key order; array index order is preserved. Recursion sorts the whole tree.
     pub fn from_json(value: serde_json::Value) -> Self {
         use serde_json::Value;
         match value {
@@ -39,9 +40,12 @@ impl DataNode {
             Value::Array(items) => {
                 DataNode::Array(items.into_iter().map(DataNode::from_json).collect())
             }
-            Value::Object(map) => DataNode::Object(
-                map.into_iter().map(|(key, value)| (key, DataNode::from_json(value))).collect(),
-            ),
+            Value::Object(map) => {
+                let mut entries: Vec<(String, DataNode)> =
+                    map.into_iter().map(|(key, value)| (key, DataNode::from_json(value))).collect();
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+                DataNode::Object(entries)
+            }
         }
     }
 
@@ -206,10 +210,10 @@ mod tests {
     fn collapsed_by_default_shows_only_top_level() {
         let tree = sample();
         let rows = flatten(&tree, &HashSet::new());
-        // a (scalar), obj (collapsed), arr (collapsed) — no children.
+        // Keys render alphabetically: a (scalar), arr (collapsed), obj (collapsed) — no children.
         assert_eq!(rows.len(), 3);
-        assert!(matches!(rows[1].kind, RowKind::Container { is_object: true, count: 2, collapsed: true }));
-        assert!(matches!(rows[2].kind, RowKind::Container { is_object: false, count: 3, collapsed: true }));
+        assert!(matches!(rows[1].kind, RowKind::Container { is_object: false, count: 3, collapsed: true }));
+        assert!(matches!(rows[2].kind, RowKind::Container { is_object: true, count: 2, collapsed: true }));
     }
 
     #[test]
@@ -217,10 +221,10 @@ mod tests {
         let tree = sample();
         let expanded: HashSet<String> = ["obj".to_string()].into_iter().collect();
         let rows = flatten(&tree, &expanded);
-        // a, obj(expanded), obj.x, obj.y, arr(collapsed) = 5 rows.
+        // a, arr(collapsed), obj(expanded), obj.x, obj.y = 5 rows (alphabetical; obj is last).
         assert_eq!(rows.len(), 5);
-        assert_eq!(rows[2].label, "x");
-        assert_eq!(rows[2].depth, 1);
+        assert_eq!(rows[3].label, "x");
+        assert_eq!(rows[3].depth, 1);
     }
 
     #[test]

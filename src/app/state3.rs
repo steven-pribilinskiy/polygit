@@ -239,6 +239,7 @@ impl AppState {
             || self.base_picker.is_some()
             || self.branch_picker.is_some()
             || self.show_changelog
+            || self.explorer.is_some()
     }
 
     /// Close every overlay modal so a freshly-opened one is the only one on screen (single-modal
@@ -334,7 +335,11 @@ impl AppState {
             .unwrap_or_else(|| ".".to_string());
         Some(ConfirmDialog {
             message: format!(
-                "v{version} predates in-app version selection — you won't be able to switch versions from inside the app."
+                "v{version} is a pre-v3 build: it uses its own legacy state.json, while your v3 \
+                 settings live in state-v3.json — both are kept, so nothing is lost (the two builds \
+                 just don't share settings). It also can't switch versions from inside the old build. \
+                 To come back, run `polygit update` for the latest, or pin a newer version from this \
+                 picker again."
             ),
             action: ConfirmAction::PinVersion { version },
             danger: true,
@@ -1455,6 +1460,12 @@ impl AppState {
                 hint: Some("c".to_string()),
             },
             KebabItem {
+                label: "Explore files…".to_string(),
+                action: KebabAction::Explore,
+                enabled: true,
+                hint: Some("^E".to_string()),
+            },
+            KebabItem {
                 label: "Open lazygit".to_string(),
                 action: KebabAction::Lazygit,
                 enabled: true,
@@ -1506,6 +1517,71 @@ impl AppState {
 
     pub fn close_kebab(&mut self) {
         self.kebab = None;
+    }
+
+    // ── File explorer ───────────────────────────────────────────────────────────────────────────
+
+    /// Open the file explorer rooted at `repo_idx`'s directory (seeded with the persisted columns).
+    pub fn open_explorer(&mut self, repo_idx: usize) {
+        let Some(repo) = self.repos.get(repo_idx) else {
+            return;
+        };
+        let root = repo.lock().unwrap().path.clone();
+        self.close_all_modals();
+        self.explorer = Some(crate::explorer::Explorer::open(root, self.explorer_prefs));
+    }
+
+    /// Open the explorer for the currently-selected repo (the `Explore` key).
+    pub fn open_explorer_selected(&mut self) {
+        if let Some(idx) = self.selected_repo_index() {
+            self.open_explorer(idx);
+        }
+    }
+
+    pub fn close_explorer(&mut self) {
+        self.explorer = None;
+    }
+
+    /// Toggle an explorer column on both the live explorer and the persisted prefs, then save.
+    pub fn toggle_explorer_column(&mut self, column: crate::explorer::ExplorerColumn) {
+        use crate::explorer::ExplorerColumn;
+        let columns = &mut self.explorer_prefs.columns;
+        let slot = match column {
+            ExplorerColumn::Size => &mut columns.size,
+            ExplorerColumn::Permissions => &mut columns.permissions,
+            ExplorerColumn::Modified => &mut columns.modified,
+            ExplorerColumn::Created => &mut columns.created,
+            ExplorerColumn::Kind => &mut columns.kind,
+        };
+        *slot = !*slot;
+        if let Some(explorer) = self.explorer.as_mut() {
+            explorer.columns = self.explorer_prefs.columns;
+        }
+        self.save_state();
+    }
+
+    /// Set the explorer's sort key (toggling direction on the same key); persists the result.
+    pub fn set_explorer_sort(&mut self, key: crate::explorer::SortKey) {
+        if let Some(explorer) = self.explorer.as_mut() {
+            explorer.set_sort(key);
+            self.explorer_prefs.sort = explorer.sort;
+            self.explorer_prefs.sort_ascending = explorer.sort_ascending;
+            self.save_state();
+        }
+    }
+
+    /// Toggle the explorer's time columns between relative ("2d ago") and absolute stamps; persists.
+    pub fn toggle_explorer_date_format(&mut self) {
+        use crate::explorer::DateFormat;
+        let next = match self.explorer_prefs.date_format {
+            DateFormat::Relative => DateFormat::Stamp,
+            DateFormat::Stamp => DateFormat::Relative,
+        };
+        self.explorer_prefs.date_format = next;
+        if let Some(explorer) = self.explorer.as_mut() {
+            explorer.date_format = next;
+        }
+        self.save_state();
     }
 
     /// Move the kebab highlight by `delta`, skipping disabled rows, clamped to the menu.

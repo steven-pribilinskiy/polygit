@@ -313,91 +313,118 @@ impl AppState {
         collapsed_groups.sort();
         let mut collapsed_folders: Vec<String> = self.collapsed_folders.iter().cloned().collect();
         collapsed_folders.sort();
-        crate::persist::save(&crate::persist::PersistedState {
-            columns: self.columns,
-            favorites: {
-                let mut favorites: Vec<String> = self.favorites.iter().cloned().collect();
-                favorites.sort();
-                favorites
+        use crate::persist as p;
+        p::save(&p::PersistedState {
+            version: p::SCHEMA_VERSION,
+            agent: p::AgentPrefs {
+                claude_agent: self.claude_agent,
+                claude_skip_permissions: self.claude_skip_permissions,
             },
-            favorites_first: self.favorites_first,
-            folder_bookmarks: self.folder_bookmarks.clone(),
-            info_pinned: self.info_pinned,
-            split_ratio: self.split_ratio,
-            show_result_panel: self.show_result_panel,
-            preview_split_ratio: self.preview_split_ratio,
-            dock_ratio: self.dock_ratio,
-            panel_padding: self.panel_padding,
-            icon_style: self.icon_style,
-            hide_zero_counts: self.hide_zero_counts,
-            hide_folder_lines: self.hide_folder_lines,
-            claude_agent: self.claude_agent,
-            claude_skip_permissions: self.claude_skip_permissions,
-            roots: Vec::new(), // legacy field — workspaces own the folder sets now
-            workspaces: {
+            explorer: self.explorer_prefs,
+            interaction: p::InteractionPrefs {
+                hover_effects: self.hover_effects,
+                changed_row_effect: self.changed_row_effect,
+            },
+            layout: p::LayoutPrefs {
+                panel_padding: self.panel_padding,
+                show_borders: self.show_borders,
+                splitter_mode: self.splitter_mode,
+                branch_check: self.branch_check,
+                info_layout: self.info_layout,
+                // Round the dragged ratios so the file doesn't carry f64 noise.
+                split_ratio: p::round4(self.split_ratio),
+                preview_split_ratio: p::round4(self.preview_split_ratio),
+                dock_ratio: p::round4(self.dock_ratio),
+                show_result_panel: self.show_result_panel,
+                info_pinned: self.info_pinned,
+            },
+            lists: p::ListPrefs {
+                grouping_enabled: self.grouping_enabled,
+                tree_enabled: self.tree_enabled,
+                hide_folder_lines: self.hide_folder_lines,
+                sort_column: self.sort_column,
+                sort_dir: self.sort_dir,
+                favorites: {
+                    let mut favorites: Vec<String> = self.favorites.iter().cloned().collect();
+                    favorites.sort();
+                    favorites
+                },
+                favorites_first: self.favorites_first,
+                columns: self.columns,
+                hide_zero_counts: self.hide_zero_counts,
+            },
+            pull_requests: p::PullRequestPrefs { show_merged_prs: self.show_merged_prs },
+            repo_page: p::RepoPagePrefs {
+                repo_page_columns: self.repo_page_columns,
+                repo_page_stash_columns: self.repo_page_stash_columns,
+                repo_page_info: self.repo_page_info,
+                base_overrides: self.base_overrides.clone(),
+                repo_page_tabs: self.repo_page_tabs,
+                // Only the repo page's maximize is sticky; other panes' maximize is session-only.
+                repo_page_maximized: self.maximized == Some(Pane::RepoPage),
+                repo_page_maximized_tabbed: self.repo_page_maximized_tabbed,
+                repo_page_collapsed_sections: {
+                    let mut sections: Vec<String> =
+                        self.repo_page_collapsed_sections.iter().cloned().collect();
+                    sections.sort();
+                    sections
+                },
+            },
+            session: p::SessionState {
+                last_seen_version: env!("CARGO_PKG_VERSION").to_string(),
+                help_tab: self.help_tab_persist,
+                collapsed_groups,
+                collapsed_folders,
+                collapsed_settings: {
+                    let mut sections: Vec<String> = self.collapsed_settings.iter().cloned().collect();
+                    sections.sort();
+                    sections
+                },
+                settings_layout: self.settings_layout,
+                design_layout: self.design_layout,
+                cli_help_mode: self.cli_builder.help_mode,
+                kebab_session_prefix: self.kebab_session_prefix,
+            },
+            sync: p::SyncPrefs {
+                auto_pull_on_launch: self.auto_pull_on_launch,
+                auto_pull_max_repos: self.auto_pull_max_repos,
+                auto_pull_in_tree: self.auto_pull_in_tree,
+            },
+            theming: p::ThemingPrefs {
+                icon_style: self.icon_style,
+                theme: self.theme,
+                background: Some(self.background),
+                contrast: self.contrast,
+                selection_style: self.selection_style,
+                button_hover_style: self.button_hover_style,
+            },
+            tooltips: self.tooltips,
+            updates: p::UpdatePrefs {
+                auto_update: self.auto_update,
+                update_interval: self.update_interval,
+                last_update_check: self.last_update_check,
+            },
+            view: p::ViewPrefs {
+                diff_view: self.diff_view,
+                right_view: self.right_view,
+                pane_diff_view: self.pane_diff_view,
+            },
+            workspaces: p::WorkspacePrefs {
                 // Persist every saved workspace; refresh the active one from the live root set so
                 // picker add/remove sticks. Ad-hoc (no active workspace) sessions touch nothing.
-                let mut workspaces = self.workspaces.clone();
-                if let Some(name) = &self.active_workspace {
-                    workspaces.insert(
-                        name.clone(),
-                        self.root_dirs.iter().map(|root| root.display().to_string()).collect(),
-                    );
-                }
-                workspaces
+                workspaces: {
+                    let mut workspaces = self.workspaces.clone();
+                    if let Some(name) = &self.active_workspace {
+                        workspaces.insert(
+                            name.clone(),
+                            self.root_dirs.iter().map(|root| root.display().to_string()).collect(),
+                        );
+                    }
+                    workspaces
+                },
+                roots: Vec::new(), // legacy field — workspaces own the folder sets now
+                folder_bookmarks: self.folder_bookmarks.clone(),
             },
-            theme: self.theme,
-            contrast: self.contrast,
-            selection_style: self.selection_style,
-            button_hover_style: self.button_hover_style,
-            settings_layout: self.settings_layout,
-            collapsed_settings: {
-                let mut sections: Vec<String> = self.collapsed_settings.iter().cloned().collect();
-                sections.sort();
-                sections
-            },
-            background: Some(self.background),
-            sort_column: self.sort_column,
-            sort_dir: self.sort_dir,
-            help_tab: self.help_tab_persist,
-            grouping_enabled: self.grouping_enabled,
-            collapsed_groups,
-            tree_enabled: self.tree_enabled,
-            collapsed_folders,
-            repo_page_tabs: self.repo_page_tabs,
-            // Only the repo page's maximize is sticky; other panes' maximize is session-only.
-            repo_page_maximized: self.maximized == Some(Pane::RepoPage),
-            repo_page_maximized_tabbed: self.repo_page_maximized_tabbed,
-            repo_page_collapsed_sections: {
-                let mut sections: Vec<String> = self.repo_page_collapsed_sections.iter().cloned().collect();
-                sections.sort();
-                sections
-            },
-            branch_check: self.branch_check,
-            repo_page_columns: self.repo_page_columns,
-            repo_page_stash_columns: self.repo_page_stash_columns,
-            repo_page_info: self.repo_page_info,
-            base_overrides: self.base_overrides.clone(),
-            auto_pull_on_launch: self.auto_pull_on_launch,
-            auto_pull_max_repos: self.auto_pull_max_repos,
-            auto_pull_in_tree: self.auto_pull_in_tree,
-            hover_effects: self.hover_effects,
-            show_borders: self.show_borders,
-            splitter_mode: self.splitter_mode,
-            changed_row_effect: self.changed_row_effect,
-            tooltips: self.tooltips,
-            kebab_session_prefix: self.kebab_session_prefix,
-            design_layout: self.design_layout,
-            last_seen_version: env!("CARGO_PKG_VERSION").to_string(),
-            cli_help_mode: self.cli_builder.help_mode,
-            diff_view: self.diff_view,
-            right_view: self.right_view,
-            pane_diff_view: self.pane_diff_view,
-            info_layout: self.info_layout,
-            show_merged_prs: self.show_merged_prs,
-            auto_update: self.auto_update,
-            update_interval: self.update_interval,
-            last_update_check: self.last_update_check,
         });
     }
 
@@ -919,8 +946,9 @@ impl AppState {
             // titled(9). Lists: grouping on(10). Sync: auto-pull-on-launch(14). Theming: icons unicode(17),
             // theme auto(19), background normal(20), contrast normal(21), selection blue(22). Tooltips
             // (24–29) all on.
-            // Updates: auto-update off(30), update-check daily(31) — both default to option 0.
-            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 => 0,
+            // Updates: update-check daily(31) defaults to option 0; auto-update(30) defaults to
+            // option 1 (notify) — handled by the `_ => 1` arm below.
+            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 | 31 => 0,
             // Index-1 defaults: changed-row effect flash(3), pane splitter on-hover(6), repo-page-tabs
             // auto(7), auto-pull-limit 100(15), button-hover subtle(23), and every remaining boolean off.
             _ => 1,
@@ -1230,6 +1258,18 @@ impl AppState {
                             self.keybindings_selected = *idx;
                         }
                     }
+                }
+                false
+            }
+            ScrollKind::ExplorerList => {
+                if let Some(explorer) = self.explorer.as_mut() {
+                    explorer.list_scroll = value;
+                }
+                false
+            }
+            ScrollKind::ExplorerPreview => {
+                if let Some(preview) = self.explorer.as_mut().and_then(|ex| ex.preview.as_mut()) {
+                    preview.scroll = value;
                 }
                 false
             }

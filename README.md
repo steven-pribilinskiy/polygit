@@ -33,6 +33,10 @@ Interactive polyrepo git dashboard. Discovers every git repo under a directory a
 - **Every panel is maximizeable** — `m` (or the `m▢`/`m▣` button on each pane's top border) maximizes/restores the focused pane to full-screen; `1`-`4` swap which pane is maximized. Only the repo page's maximize is sticky (persisted); list/info/result maximize is session-only
 - **Pane splitter modes** (Settings → Layout → **Pane splitter**): **on hover** (default) keeps the panes flush and shows a thin grip only under the cursor at a splitter hotspot; **dedicated** reserves a visible 1-cell lane between panes with a persistent grip
 - Open [lazygit](https://github.com/jesseduffield/lazygit) on the selected repo with `l`
+- **File explorer** (`Ctrl-E`, or the `Explore files…` kebab item): a two-pane browser rooted at the selected repo — a directory **list pane** beside a **syntax-highlighted preview pane** (powered by `two-face`/`syntect`, high-contrast themes that track the app's dark/light), split by a **draggable divider** (`[`/`]` or drag, highlights on hover).
+  - **Sortable columns** — `name` always shown; **size / permissions / modified / created / kind** via the `t` column-picker dropdown (off by default, persisted). Click a header (or the `s` sort dropdown) to sort; the active header shows `▲`/`▼`. Folders show **recursive sizes** (computed in the background); size is **colored by magnitude** (KB normal, MB/GB bold).
+  - **Fuzzy file finder** (`/`) filters the listing as you type; **`d`** toggles relative ("2d ago") vs absolute date stamps.
+  - `↑↓`/`jk` navigate, `←`/`h` up a directory, `⏎`/`→` open a directory or focus the preview, `Tab` swaps panes; in the preview, `←`/`→` scroll horizontally. Click a row to select (again to open), wheel scrolls the pane under the cursor
 - Diff modal with a clickable file list over the selected file's diff (stash, uncommitted, vs base branch, or **a branch's changes vs its base**); `Tab` switches focus between the file list and diff, with a footer that adapts to the focused pane; **status-filter chips** (`f` / click) with count badges when a change set has >10 files across ≥2 statuses; `Shift`/`Alt`+`PgUp`/`PgDn` page the file list; "no changes" shows a toast instead of an empty modal
 - <a name="pr-viewer"></a>**PR viewer modal** — click any PR link (info-panel **Pull Request** value, repo-page HEAD `#N`, or a list **PRs** cell), or press `p` on a repo, to read the full pull request without leaving the terminal — as a **GitHub-style tabbed view**. A **pinned meta header** (state, `head → base`, author, **relative age** — "6 days ago", **hover** for the exact date/time — `+adds −dels`, labels) sits above a **tab bar** with count badges: **Description · Conversation · Commits · Checks · Files**. Switch tabs with `Tab`/`Shift+Tab`, `1`–`5`, or by clicking a chip. **Description** renders the body as markdown (headings, bullets, blockquotes, rules, links; raw HTML stripped). **Conversation** lists every review/comment as **collapsible sections** (click a `▾`/`▸` header; `z` or a `[− collapse all]`/`[+ expand all]` control folds them all when there's >1) and **`/` searches** them (filters to matches, highlights hits). **Commits** lists each commit (sha · subject · author · date). **Checks** shows each CI check colored by outcome (✓ pass / ✗ fail / ● pending / – skip), with a trailing **↗** you click to open that run on GitHub. **Files** shows a changed-files summary then the whole-PR diff, with a `raw`/`unified`/`split` toggle (`d` or the chips) — syntax-highlighted, the same renderer as the diff modal. One `gh pr view` call fills every tab and the badge counts (a loading skeleton shows while it runs); the Files diff loads lazily via `gh pr diff` the first time you open that tab. `j`/`k`·`↑`/`↓`/`g`/`G`/`PgUp`/`PgDn` + wheel + draggable scrollbar scroll the active tab; `o` opens the PR on GitHub; `esc`/`q`/`[x]`/outside-click closes
 - Draggable scrollbars everywhere (the repo list, the info pane, preview, diff panels, help, repo page), highlighted while dragged — the list's grab takes priority over the splitter that sits right beside it
@@ -81,6 +85,9 @@ polygit -w work ~/work ~/oss   # define & open workspace "work"
 polygit -w work                # reopen it
 polygit ws                     # interactive picker
 polygit ws ls                  # list saved workspaces
+
+# Self-update to the latest published release (alias: upgrade)
+polygit update
 
 # Plain streaming output (matches bash reference for a flat dir; lists nested repos too)
 polygit --no-tui [DIR]
@@ -142,6 +149,7 @@ polygit --no-worktrees [DIR]
 | `Y` | Copy the selected repo's **remote (origin) URL** to the clipboard |
 | `c` | Launch the selected AI coding agent in the selected repo (suspends the TUI, returns on exit). Which agent — claude / codex / gemini — and whether to skip its approval prompts are set in Settings → **Agent** |
 | `l` | Open **lazygit** in the selected repo (suspends the TUI, returns on exit) |
+| `Ctrl-E` | Open the **file explorer** for the selected repo (also the `Explore files…` kebab item): a two-pane browser — a directory **list** (name + toggleable `1`-`5` size/permissions/modified/created/kind columns, off by default) beside a **syntax-highlighted preview**, split by a draggable divider (`[`/`]`). `↑↓`/`jk` move · `←`/`h` up a dir · `⏎`/`→` open dir or focus preview · `tab` swap panes · `esc`/`q` close |
 | `b` | Toggle the selected repo as a **favorite** (★) |
 | `B` | Toggle the **★ Favorites** section pinned to the top of the list |
 | `x` | Clear **this repo's log buffer** (empties the streamed pull output) |

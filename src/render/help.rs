@@ -48,6 +48,10 @@ pub(crate) fn help_items_about(notes_expanded: bool) -> Vec<(Line<'static>, Opti
     items.push(plain("branch / worktree / stash management, inline diffs, and a jump into lazygit."));
     items.push(plain("Built with Rust · ratatui · tokio."));
     items.push(plain(""));
+    items.push(group("Updating"));
+    items.push(plain("  Run `polygit update` (alias `upgrade`) to self-install the latest release,"));
+    items.push(plain("  or turn on Settings → Updates → Auto-update. Open Build info for the build + version."));
+    items.push(plain(""));
     items.push(group("polygit"));
     items.push(link("Docs", DOCS_URL));
     items.push(link("GitHub", GITHUB_URL));
@@ -472,6 +476,20 @@ pub(crate) fn help_items_cli(
     items.push(code("1", Color::Red, "any failed"));
     items.push(code("2", Color::Yellow, "quit mid-run"));
     items.push(code("130", Color::DarkGray, "Ctrl-C"));
+    items.push(plain(""));
+
+    items.push(header("COMMANDS"));
+    let command = |name: &str, desc: &str| {
+        (
+            Line::from(vec![
+                Span::styled(format!("  {name:<18}"), key_style.add_modifier(Modifier::BOLD)),
+                Span::styled(desc.to_string(), faint),
+            ]),
+            None,
+        )
+    };
+    items.push(command("ws", "manage saved workspaces (ws ls lists them)"));
+    items.push(command("update | upgrade", "self-update to the latest published release"));
     items
 }
 

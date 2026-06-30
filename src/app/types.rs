@@ -867,6 +867,8 @@ pub enum KebabAction {
     Refetch,
     /// Open the repo's remote in the browser.
     OpenRemote,
+    /// Open the file explorer rooted at the repo's directory.
+    Explore,
 }
 
 /// One row in the kebab menu: its label, the action it fires, whether it's enabled, and an optional
@@ -986,13 +988,21 @@ pub enum DropdownKind {
     PageColumns,
     PageSort,
     StashColumns,
+    ExplorerColumns,
+    ExplorerSort,
 }
 
 impl DropdownKind {
     /// Whether this is a multi-toggle **columns** dropdown (gets the select/deselect-all + reset
     /// footer buttons); sort/filter dropdowns are single-select and don't.
     pub fn is_columns(self) -> bool {
-        matches!(self, DropdownKind::ListColumns | DropdownKind::PageColumns | DropdownKind::StashColumns)
+        matches!(
+            self,
+            DropdownKind::ListColumns
+                | DropdownKind::PageColumns
+                | DropdownKind::StashColumns
+                | DropdownKind::ExplorerColumns
+        )
     }
 }
 
@@ -1655,8 +1665,9 @@ impl BranchCheck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AutoUpdate {
-    #[default]
     Off,
+    /// Default: check on the cadence and toast when a newer release exists (no auto-install).
+    #[default]
     Notify,
     Install,
 }
@@ -2152,6 +2163,8 @@ pub enum ScrollKind {
     BuildInfo,
     PrModal,
     Keybindings,
+    ExplorerList,
+    ExplorerPreview,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.

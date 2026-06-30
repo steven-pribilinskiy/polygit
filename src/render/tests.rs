@@ -78,6 +78,9 @@
             std::path::PathBuf::from("/tmp/demo"),
         )))];
         let mut app = AppState::new(repos, 4, true);
+        // Render the bare list deterministically: close any auto-popped What's New modal (a version
+        // bump would otherwise overlay the list and hide the kebab), no grouping/tree, hover on.
+        app.close_all_modals();
         app.grouping_enabled = false;
         app.tree_enabled = false;
         app.hover_effects = true;

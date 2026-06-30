@@ -427,6 +427,11 @@ pub struct AppState {
     pub kebab_open_click: Vec<(u16, u16, u16, usize)>,
     /// The "wrap copied prompt in `cd <repo> && claude '…'`" checkbox state (persisted).
     pub kebab_session_prefix: bool,
+
+    /// The file explorer (`Explore` kebab item / key) — `Some` while open, over the selected repo.
+    pub explorer: Option<crate::explorer::Explorer>,
+    /// Persisted explorer preferences (columns, sort, date format), seeding each opened explorer.
+    pub explorer_prefs: crate::explorer::ExplorerPrefs,
     pub copy_menu: Option<usize>,
     /// A transient toast (auto-dismisses after `TOAST_DURATION`).
     pub toast: Option<Toast>,
@@ -773,27 +778,27 @@ impl AppState {
         let persisted = crate::persist::load();
         // "What's New" pops when this build is newer than the version last run (skipped on first
         // run, when there's nothing to compare against).
-        let prev_seen_version = persisted.last_seen_version.clone();
+        let prev_seen_version = persisted.session.last_seen_version.clone();
         let show_whats_new = !prev_seen_version.is_empty()
             && crate::changelog::version_cmp(env!("CARGO_PKG_VERSION"), &prev_seen_version)
                 == std::cmp::Ordering::Greater;
-        let split_ratio = if persisted.split_ratio >= Self::MIN_SPLIT {
-            persisted.split_ratio.clamp(Self::MIN_SPLIT, Self::MAX_SPLIT)
+        let split_ratio = if persisted.layout.split_ratio >= Self::MIN_SPLIT {
+            persisted.layout.split_ratio.clamp(Self::MIN_SPLIT, Self::MAX_SPLIT)
         } else {
             Self::DEFAULT_SPLIT
         };
-        let dock_ratio = if persisted.dock_ratio >= Self::DOCK_MIN {
-            persisted.dock_ratio.clamp(Self::DOCK_MIN, Self::DOCK_MAX)
+        let dock_ratio = if persisted.layout.dock_ratio >= Self::DOCK_MIN {
+            persisted.layout.dock_ratio.clamp(Self::DOCK_MIN, Self::DOCK_MAX)
         } else {
             Self::DOCK_DEFAULT
         };
-        let preview_split_ratio = if persisted.preview_split_ratio >= Self::PREVIEW_SPLIT_MIN {
-            persisted.preview_split_ratio.clamp(Self::PREVIEW_SPLIT_MIN, Self::PREVIEW_SPLIT_MAX)
+        let preview_split_ratio = if persisted.layout.preview_split_ratio >= Self::PREVIEW_SPLIT_MIN {
+            persisted.layout.preview_split_ratio.clamp(Self::PREVIEW_SPLIT_MIN, Self::PREVIEW_SPLIT_MAX)
         } else {
             Self::PREVIEW_SPLIT_DEFAULT
         };
         // Compute before the struct literal moves other `persisted` fields out.
-        let workspaces = persisted.workspaces_migrated();
+        let workspaces = persisted.workspaces.migrated();
         AppState {
             repos,
             worktrees: Vec::new(),
@@ -804,8 +809,8 @@ impl AppState {
             focus: Pane::default(),
             filter: None,
             status_filter: StatusFilter::default(),
-            sort_column: persisted.sort_column,
-            sort_dir: persisted.sort_dir,
+            sort_column: persisted.lists.sort_column,
+            sort_dir: persisted.lists.sort_dir,
             filter_input_mode: false,
             filter_prev_selection: None,
             start: Instant::now(),
@@ -813,7 +818,7 @@ impl AppState {
             all_done: false,
             max_jobs,
             split_ratio,
-            show_result_panel: persisted.show_result_panel,
+            show_result_panel: persisted.layout.show_result_panel,
             preview_split_ratio,
             preview_divider_row: None,
             preview_split_area: Rect::default(),
@@ -842,15 +847,15 @@ impl AppState {
             divider_dragging: false,
             list_offset: 0,
             list_scroll: 0,
-            right_view: persisted.right_view,
-            pane_diff_view: persisted.pane_diff_view,
-            info_layout: persisted.info_layout,
-            info_pinned: persisted.info_pinned,
+            right_view: persisted.view.right_view,
+            pane_diff_view: persisted.view.pane_diff_view,
+            info_layout: persisted.layout.info_layout,
+            info_pinned: persisted.layout.info_pinned,
             info_click: Vec::new(),
             info_expanded: HashSet::new(),
             show_help: false,
-            help_tab: persisted.help_tab,
-            help_tab_persist: persisted.help_tab,
+            help_tab: persisted.session.help_tab,
+            help_tab_persist: persisted.session.help_tab,
             help_scroll: 0,
             help_links: Vec::new(),
             help_trunc_tips: Vec::new(),
@@ -866,7 +871,7 @@ impl AppState {
                 values: vec![String::new(); CLI_FLAGS.len()],
                 use_short: vec![false; CLI_FLAGS.len()],
                 editing: None,
-                help_mode: persisted.cli_help_mode,
+                help_mode: persisted.session.cli_help_mode,
             },
             cli_flag_click: Vec::new(),
             cli_copy_click: None,
@@ -876,7 +881,7 @@ impl AppState {
             help_close_click: None,
             help_design_click: Vec::new(),
             help_preview_click: None,
-            design_layout: persisted.design_layout,
+            design_layout: persisted.session.design_layout,
             design_section: 0,
             help_design_tab_click: Vec::new(),
             show_keyboard: false,
@@ -905,14 +910,14 @@ impl AppState {
             repo_page: None,
             repo_page_inner: Rect::default(),
             repo_page_selected: 0,
-            repo_page_tabs: persisted.repo_page_tabs,
+            repo_page_tabs: persisted.repo_page.repo_page_tabs,
             // Only the repo page's maximize is sticky; restore it from the legacy persisted bool.
-            maximized: persisted.repo_page_maximized.then_some(Pane::RepoPage),
-            repo_page_maximized_tabbed: persisted.repo_page_maximized_tabbed,
+            maximized: persisted.repo_page.repo_page_maximized.then_some(Pane::RepoPage),
+            repo_page_maximized_tabbed: persisted.repo_page.repo_page_maximized_tabbed,
             repo_page_tabbed_override: None,
-            repo_page_collapsed_sections: persisted.repo_page_collapsed_sections.into_iter().collect(),
+            repo_page_collapsed_sections: persisted.repo_page.repo_page_collapsed_sections.into_iter().collect(),
             repo_page_section_click: Vec::new(),
-            branch_check: persisted.branch_check,
+            branch_check: persisted.layout.branch_check,
             repo_page_tab: RepoTab::Branches,
             repo_page_tab_click: Vec::new(),
             repo_page_focus_head: false,
@@ -920,9 +925,9 @@ impl AppState {
             repo_page_message: None,
             confirm: None,
             confirm_copy_click: None,
-            columns: persisted.columns,
-            favorites: persisted.favorites.into_iter().collect(),
-            favorites_first: persisted.favorites_first,
+            columns: persisted.lists.columns,
+            favorites: persisted.lists.favorites.into_iter().collect(),
+            favorites_first: persisted.lists.favorites_first,
             pending_leader: None,
             keybindings: crate::keybindings::Keybindings::load(),
             details_pass_spawned: false,
@@ -932,8 +937,8 @@ impl AppState {
             scrollbar_dragging: None,
             repo_page_click: Vec::new(),
             diff_modal: None,
-            diff_view: persisted.diff_view,
-            show_merged_prs: persisted.show_merged_prs,
+            diff_view: persisted.view.diff_view,
+            show_merged_prs: persisted.pull_requests.show_merged_prs,
             diff_modal_viewport: 0,
             diff_files_viewport: 0,
             diff_files_area: Rect::default(),
@@ -951,17 +956,17 @@ impl AppState {
             root_dirs: Vec::new(),
             workspaces,
             active_workspace: None,
-            panel_padding: persisted.panel_padding,
-            icon_style: persisted.icon_style,
-            hide_zero_counts: persisted.hide_zero_counts,
-            hide_folder_lines: persisted.hide_folder_lines,
-            claude_agent: persisted.claude_agent,
-            claude_skip_permissions: persisted.claude_skip_permissions,
-            theme: persisted.theme,
-            contrast: persisted.contrast,
-            selection_style: persisted.selection_style,
-            button_hover_style: persisted.button_hover_style,
-            background: crate::persist::resolve_background(persisted.background, persisted.contrast),
+            panel_padding: persisted.layout.panel_padding,
+            icon_style: persisted.theming.icon_style,
+            hide_zero_counts: persisted.lists.hide_zero_counts,
+            hide_folder_lines: persisted.lists.hide_folder_lines,
+            claude_agent: persisted.agent.claude_agent,
+            claude_skip_permissions: persisted.agent.claude_skip_permissions,
+            theme: persisted.theming.theme,
+            contrast: persisted.theming.contrast,
+            selection_style: persisted.theming.selection_style,
+            button_hover_style: persisted.theming.button_hover_style,
+            background: crate::persist::resolve_background(persisted.theming.background, persisted.theming.contrast),
             auto_dark,
             show_settings: false,
             settings_selected: 0,
@@ -971,8 +976,8 @@ impl AppState {
             settings_search: String::new(),
             settings_search_focused: false,
             settings_search_click: None,
-            settings_layout: persisted.settings_layout,
-            collapsed_settings: persisted.collapsed_settings.into_iter().collect(),
+            settings_layout: persisted.session.settings_layout,
+            collapsed_settings: persisted.session.collapsed_settings.into_iter().collect(),
             settings_tab_click: Vec::new(),
             settings_section_click: Vec::new(),
             settings_collapse_all_click: None,
@@ -981,7 +986,9 @@ impl AppState {
             kebab_click: Vec::new(),
             kebab_close_click: None,
             kebab_open_click: Vec::new(),
-            kebab_session_prefix: persisted.kebab_session_prefix,
+            explorer: None,
+            explorer_prefs: persisted.explorer,
+            kebab_session_prefix: persisted.session.kebab_session_prefix,
             copy_menu: None,
             toast: None,
             settings_area: Rect::default(),
@@ -1010,12 +1017,12 @@ impl AppState {
             list_filter_click: None,
             page_cols_click: None,
             page_sort_click: None,
-            repo_page_columns: persisted.repo_page_columns,
-            repo_page_stash_columns: persisted.repo_page_stash_columns,
+            repo_page_columns: persisted.repo_page.repo_page_columns,
+            repo_page_stash_columns: persisted.repo_page.repo_page_stash_columns,
             repo_page_sort: None,
             repo_page_sort_dir: SortDir::Asc,
             repo_page_sort_click: Vec::new(),
-            repo_page_info: persisted.repo_page_info,
+            repo_page_info: persisted.repo_page.repo_page_info,
             base_picker: None,
             base_picker_area: Rect::default(),
             base_picker_close_click: None,
@@ -1034,15 +1041,15 @@ impl AppState {
             picker_close_click: None,
             picker_rows_click: Vec::new(),
             picker_crumbs_click: Vec::new(),
-            folder_bookmarks: persisted.folder_bookmarks.clone(),
+            folder_bookmarks: persisted.workspaces.folder_bookmarks.clone(),
             discovery_max_depth: 16,
             discovery_timeout_secs: 30,
             discovery_no_worktrees: false,
             base_cell_click: Vec::new(),
-            base_overrides: persisted.base_overrides,
-            auto_update: persisted.auto_update,
-            update_interval: persisted.update_interval,
-            last_update_check: persisted.last_update_check,
+            base_overrides: persisted.repo_page.base_overrides,
+            auto_update: persisted.updates.auto_update,
+            update_interval: persisted.updates.update_interval,
+            last_update_check: persisted.updates.last_update_check,
             latest_release: None,
             update_available: false,
             update_dismissed: false,
@@ -1100,23 +1107,23 @@ impl AppState {
             pin_header_click: Vec::new(),
             pin_toggle_click: None,
             pin_auto_reload: false,
-            grouping_enabled: persisted.grouping_enabled,
+            grouping_enabled: persisted.lists.grouping_enabled,
             groups: Vec::new(),
             repo_group_map: Vec::new(),
-            collapsed_groups: persisted.collapsed_groups.into_iter().collect(),
+            collapsed_groups: persisted.session.collapsed_groups.into_iter().collect(),
             collapse_threshold: groups::DEFAULT_COLLAPSE_THRESHOLD,
             group_cache_ttl_minutes: groups::DEFAULT_CACHE_TTL_MINUTES,
-            tree_enabled: persisted.tree_enabled,
+            tree_enabled: persisted.lists.tree_enabled,
             tree_nodes: Vec::new(),
-            collapsed_folders: persisted.collapsed_folders.into_iter().collect(),
+            collapsed_folders: persisted.session.collapsed_folders.into_iter().collect(),
             throttle: ThrottleControl::new(max_jobs),
-            auto_pull_on_launch: persisted.auto_pull_on_launch,
-            auto_pull_max_repos: persisted.auto_pull_max_repos,
-            auto_pull_in_tree: persisted.auto_pull_in_tree,
-            hover_effects: persisted.hover_effects,
-            show_borders: persisted.show_borders,
-            splitter_mode: persisted.splitter_mode,
-            changed_row_effect: persisted.changed_row_effect,
+            auto_pull_on_launch: persisted.sync.auto_pull_on_launch,
+            auto_pull_max_repos: persisted.sync.auto_pull_max_repos,
+            auto_pull_in_tree: persisted.sync.auto_pull_in_tree,
+            hover_effects: persisted.interaction.hover_effects,
+            show_borders: persisted.layout.show_borders,
+            splitter_mode: persisted.layout.splitter_mode,
+            changed_row_effect: persisted.interaction.changed_row_effect,
             tooltips: persisted.tooltips,
             hover: None,
             hover_tooltip: None,
