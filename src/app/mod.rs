@@ -132,6 +132,9 @@ pub struct AppState {
     /// The render style for the Result pane's diff view (raw / unified / split) — the flat
     /// `log · raw · unified · split` chip row. Separate from `diff_view` (the diff modal's style).
     pub pane_diff_view: DiffView,
+    /// How the info panel groups its fields (titled sections / blank-line groups / flat). A
+    /// maximized info pane always renders titled sections regardless of this. Persisted.
+    pub info_layout: InfoLayout,
     /// Whether a compact info section is pinned above the log/diff (`I`).
     pub info_pinned: bool,
     /// Clickable regions in the info block / log copy button: `(row, col_start, col_end, action)`.
@@ -793,6 +796,7 @@ impl AppState {
             list_scroll: 0,
             right_view: persisted.right_view,
             pane_diff_view: persisted.pane_diff_view,
+            info_layout: persisted.info_layout,
             info_pinned: persisted.info_pinned,
             info_click: Vec::new(),
             info_expanded: HashSet::new(),

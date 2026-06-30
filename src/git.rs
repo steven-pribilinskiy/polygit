@@ -270,6 +270,7 @@ pub async fn collect_pull_result(dir: &Path, output: &str) -> PullResult {
 
     // The ref-advance count is informative but not surfaced; only tags + new branches are shown.
     let (_refs_updated, new_branches, new_tags) = parse_fetch_summary(output);
+    let new_tag_names = parse_fetch_tags(output);
 
     PullResult {
         prev_head,
@@ -280,7 +281,24 @@ pub async fn collect_pull_result(dir: &Path, output: &str) -> PullResult {
         deletions,
         new_tags,
         new_branches,
+        new_tag_names,
     }
+}
+
+/// The names of the new tags a fetch brought in, parsed from the `[new tag]` lines
+/// (`* [new tag]   v1.2.3   -> v1.2.3` → `v1.2.3`). Pure; pairs with `parse_fetch_summary`.
+pub fn parse_fetch_tags(output: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    for line in output.lines() {
+        if let Some((_, rest)) = line.trim().split_once("[new tag]") {
+            // The source ref before `->` is the tag name (tag names carry no spaces).
+            let name = rest.split("->").next().unwrap_or("").trim();
+            if !name.is_empty() {
+                tags.push(name.to_string());
+            }
+        }
+    }
+    tags
 }
 
 /// Discover worktree entries from `<cwd>/<repo>.worktrees/*/.git`.
@@ -2104,6 +2122,18 @@ From github.com:org/repo
         assert_eq!(parse_fetch_summary(output), (2, 1, 2));
         // No fetch effects.
         assert_eq!(parse_fetch_summary("Already up to date.\n"), (0, 0, 0));
+    }
+
+    #[test]
+    fn parse_fetch_tags_extracts_names() {
+        let output = "\
+From github.com:org/repo
+   abc1234..def5678  main       -> origin/main
+ * [new tag]         v1.2.0     -> v1.2.0
+ * [new tag]         v1.2.1     -> v1.2.1
+";
+        assert_eq!(parse_fetch_tags(output), vec!["v1.2.0".to_string(), "v1.2.1".to_string()]);
+        assert!(parse_fetch_tags("Already up to date.\n").is_empty());
     }
 
     #[test]

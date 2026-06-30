@@ -234,6 +234,18 @@ impl AppState {
         self.save_state();
     }
 
+    /// Cycle the info panel's grouping layout (titled → spaced → flat). Shared by the `L` key.
+    pub fn cycle_info_layout(&mut self) {
+        self.info_layout = self.info_layout.cycle();
+        self.save_state();
+    }
+
+    /// Set the info panel's grouping layout (the radio chips at the bottom of the panel).
+    pub fn set_info_layout(&mut self, layout: crate::app::InfoLayout) {
+        self.info_layout = layout;
+        self.save_state();
+    }
+
     /// Toggle the grouped list view, keeping the selection on the same repo (shared by the
     /// `z` key and the status-bar hint). Toasts a pointer at the config when no groups exist.
     pub fn toggle_grouping_view(&mut self) {
@@ -387,6 +399,7 @@ impl AppState {
             diff_view: self.diff_view,
             right_view: self.right_view,
             pane_diff_view: self.pane_diff_view,
+            info_layout: self.info_layout,
             show_merged_prs: self.show_merged_prs,
         });
     }
