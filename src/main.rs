@@ -5,6 +5,7 @@ mod diffview;
 mod git;
 mod graph;
 mod groups;
+mod keybindings;
 mod keymap;
 mod persist;
 mod plain;
@@ -203,6 +204,73 @@ async fn watch_for_new_build(app_state: Arc<Mutex<AppState>>) {
             let mut app = app_state.lock().unwrap();
             app.update_available = true;
             app.update_dismissed = false;
+        }
+    }
+}
+
+/// Self-update from published GitHub releases — distinct from `watch_for_new_build` (which watches
+/// the on-disk binary for a local `make build`). Gated on the `Auto-update` setting; honors the
+/// `Update check` cadence via the persisted `last_update_check`, so it spans launches and never
+/// hammers GitHub. On a newer release: `Notify` toasts; `Install` downloads + stages it over the
+/// binary, after which `watch_for_new_build` raises the usual reload notice (the session is never
+/// interrupted — the reload stays a deliberate Ctrl+R).
+async fn watch_for_releases(app_state: Arc<Mutex<AppState>>) {
+    let Some(target) = crate::update::current_target() else {
+        return; // self-install unsupported here (e.g. native Windows) — nothing to do
+    };
+    let Ok(exe_path) = std::env::current_exe().map(|path| path.display().to_string()) else {
+        return;
+    };
+    let current = env!("CARGO_PKG_VERSION");
+    // Wake every 30 min; the real throttle is the cadence gate below.
+    let mut interval = tokio::time::interval(Duration::from_secs(30 * 60));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await; // first tick fires immediately → a check at launch (if due)
+        let (policy, cadence, last) = {
+            let app = app_state.lock().unwrap();
+            (app.auto_update, app.update_interval.secs(), app.last_update_check)
+        };
+        if policy == crate::app::AutoUpdate::Off {
+            continue;
+        }
+        let now = now_unix();
+        if now.saturating_sub(last) < cadence {
+            continue; // checked recently enough
+        }
+        let Ok(releases) = crate::update::fetch_releases().await else {
+            continue; // network/gh hiccup — try again next wake, don't stamp the check
+        };
+        // Stamp the check time now (even when up to date) so the cadence holds.
+        {
+            let mut app = app_state.lock().unwrap();
+            app.last_update_check = now;
+            app.save_state();
+        }
+        let Some((version, date)) = releases.first().cloned() else {
+            continue;
+        };
+        if crate::changelog::version_cmp(&version, current) != std::cmp::Ordering::Greater {
+            continue; // already on the latest (or newer — a local dev build)
+        }
+        {
+            let mut app = app_state.lock().unwrap();
+            app.latest_release = Some((version.clone(), date));
+        }
+        match policy {
+            crate::app::AutoUpdate::Notify => {
+                let mut app = app_state.lock().unwrap();
+                app.show_toast(format!("polygit v{version} available — open Build info (p) to install"));
+            }
+            crate::app::AutoUpdate::Install => {
+                if let Err(error) = crate::update::download_and_install(&version, target, &exe_path).await {
+                    let mut app = app_state.lock().unwrap();
+                    app.show_toast(format!("auto-update to v{version} failed: {error}"));
+                }
+                // On success the new binary lands at `exe_path`; `watch_for_new_build` notices it
+                // and raises the `↺ new build installed` notice (Ctrl+R reloads).
+            }
+            crate::app::AutoUpdate::Off => {}
         }
     }
 }
@@ -1094,6 +1162,7 @@ async fn run_tui(
 
     // Watch the binary on disk for a newer build (drives the reload notice).
     tokio::spawn(watch_for_new_build(Arc::clone(&app_state)));
+    tokio::spawn(watch_for_releases(Arc::clone(&app_state)));
     tokio::spawn(watch_theme(Arc::clone(&app_state)));
 
     let exit_code = run_event_loop(&mut terminal, Arc::clone(&app_state)).await?;
@@ -2581,6 +2650,49 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Keybindings editor: click a row to select, [set] to rebind, [x] to clear; the
+                // close button / a click outside closes; the wheel moves the selection.
+                if app.show_keybindings {
+                    let at = |regions: &[(u16, u16, u16, usize)], col: u16, row: u16| {
+                        regions
+                            .iter()
+                            .find(|(rr, start, end, _)| *rr == row && col >= *start && col < *end)
+                            .map(|(_, _, _, idx)| *idx)
+                    };
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            // A click anywhere first dismisses a pending capture/conflict/reset prompt.
+                            app.keybindings_capture = None;
+                            app.keybindings_conflict = None;
+                            app.keybindings_reset_confirm = false;
+                            if region_hit(app.keybindings_close_click, mouse.column, mouse.row)
+                                || !point_in(app.keybindings_area, mouse.column, mouse.row)
+                            {
+                                app.close_keybindings();
+                            } else if let Some(idx) =
+                                at(&app.keybindings_set_click, mouse.column, mouse.row)
+                            {
+                                app.keybindings_select(idx);
+                                let action = app.keybindings_selected_action();
+                                app.keybindings_start_capture(action);
+                            } else if let Some(idx) =
+                                at(&app.keybindings_clear_click, mouse.column, mouse.row)
+                            {
+                                app.keybindings_select(idx);
+                                app.keybindings_clear_selected();
+                            } else if let Some(idx) =
+                                at(&app.keybindings_row_click, mouse.column, mouse.row)
+                            {
+                                app.keybindings_select(idx);
+                            }
+                        }
+                        MouseEventKind::ScrollDown => app.keybindings_move(3),
+                        MouseEventKind::ScrollUp => app.keybindings_move(-3),
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Help modal: click a tab to switch, the [esc] button to close, or a link to open
                 // it; the wheel scrolls.
                 if app.show_help {
@@ -2595,6 +2707,8 @@ async fn run_event_loop(
                                 app.show_keyboard = true;
                                 app.keyboard_selected = None;
                                 app.keyboard_scroll = 0;
+                            } else if region_hit(app.help_remap_click, mouse.column, mouse.row) {
+                                app.open_keybindings();
                             } else if region_hit(app.help_maximize_click, mouse.column, mouse.row) {
                                 app.help_maximized = !app.help_maximized;
                             } else if app.help_close_at(mouse.column, mouse.row)
@@ -2991,6 +3105,65 @@ async fn run_event_loop(
                             !bare_modifier && key.modifiers.contains(KeyModifiers::ALT),
                         );
                         app.keyboard_scroll = 0;
+                    }
+                    continue;
+                }
+
+                // Keybindings editor: capture mode binds the next key; a conflict/reset prompt takes
+                // y/n; otherwise j/k navigate, enter/r rebind, c clear, d default, R reset all, esc close.
+                if app.show_keybindings {
+                    // Ctrl-C still quits — except mid-capture, where it would be the bind target.
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && app.keybindings_capture.is_none()
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    if app.keybindings_capture.is_some() {
+                        // The next real key becomes the binding; a bare modifier press is ignored.
+                        if key.code == KeyCode::Esc {
+                            app.keybindings_capture = None;
+                        } else if !matches!(key.code, KeyCode::Modifier(_)) {
+                            let chord = keybindings::KeyChord::from_event(&key);
+                            app.keybindings_apply_capture(chord);
+                        }
+                        continue;
+                    }
+                    if app.keybindings_conflict.is_some() {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Enter => app.keybindings_resolve_conflict(true),
+                            KeyCode::Char('n') | KeyCode::Esc | KeyCode::Char('q') => {
+                                app.keybindings_resolve_conflict(false);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                    if app.keybindings_reset_confirm {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Enter => app.keybindings_reset_all(),
+                            _ => app.keybindings_reset_confirm = false,
+                        }
+                        continue;
+                    }
+                    let viewport = app.keybindings_inner.height.max(1) as isize;
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.close_keybindings(),
+                        KeyCode::Char('j') | KeyCode::Down => app.keybindings_move(1),
+                        KeyCode::Char('k') | KeyCode::Up => app.keybindings_move(-1),
+                        KeyCode::Char('g') | KeyCode::Home => app.keybindings_move(isize::MIN),
+                        KeyCode::Char('G') | KeyCode::End => app.keybindings_move(isize::MAX),
+                        KeyCode::PageDown => app.keybindings_move(viewport),
+                        KeyCode::PageUp => app.keybindings_move(-viewport),
+                        KeyCode::Enter | KeyCode::Char('r') => {
+                            let action = app.keybindings_selected_action();
+                            app.keybindings_start_capture(action);
+                        }
+                        KeyCode::Char('c') => app.keybindings_clear_selected(),
+                        KeyCode::Char('d') => app.keybindings_reset_selected(),
+                        KeyCode::Char('R') => app.keybindings_reset_confirm = true,
+                        _ => {}
                     }
                     continue;
                 }
@@ -3866,6 +4039,13 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(130);
                     }
+                    // Apply user keybindings: rewrite a bound chord to its action's canonical key so
+                    // the match below runs unchanged; a freed default key is swallowed (no-op).
+                    let key = match app.keybindings.resolve(keybindings::Context::RepoPage, &key) {
+                        keybindings::Resolution::Rewrite(event) => event,
+                        keybindings::Resolution::Swallow => continue,
+                        keybindings::Resolution::Passthrough => key,
+                    };
                     let len = app.repo_page_selectable_len();
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_repo_page(),
@@ -3875,6 +4055,10 @@ async fn run_event_loop(
                         KeyCode::Char('?') => app.open_help(),
                         // `,` opens settings (handled by the early gate next iteration).
                         KeyCode::Char(',') => app.open_settings(),
+                        // `Ctrl+K` opens the keybindings editor.
+                        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.open_keybindings()
+                        }
                         // `t` / `s` open the columns / sort dropdown (anchored under their chip).
                         KeyCode::Char('t') => {
                             if let Some((row, _, end)) = app.page_cols_click {
@@ -4276,6 +4460,15 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Apply user keybindings: rewrite a bound chord to its action's canonical key so the
+                // match below runs unchanged; a freed default key is swallowed (no-op). Esc/q/Ctrl-C
+                // (and the new-build Ctrl-R/Ctrl-X gate above) aren't remappable, so they pass through.
+                let key = match app.keybindings.resolve(keybindings::Context::List, &key) {
+                    keybindings::Resolution::Rewrite(event) => event,
+                    keybindings::Resolution::Swallow => continue,
+                    keybindings::Resolution::Passthrough => key,
+                };
+
                 // Normal key handling
                 match (key.code, key.modifiers) {
                     // Quit — but if a restored panel [4] is open while another pane holds focus,
@@ -4297,6 +4490,9 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(130);
                     }
+                    // `Ctrl+K` opens the keybindings editor (remap shortcuts). Before the nav arms,
+                    // whose `(Char('k'), _)` would otherwise swallow it.
+                    (KeyCode::Char('k'), KeyModifiers::CONTROL) => app.open_keybindings(),
 
                     // Navigation
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => {

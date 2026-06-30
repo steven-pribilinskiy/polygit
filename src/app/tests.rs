@@ -201,11 +201,12 @@
         let mut state = state_named(&["a"]);
         // No query → every row matches.
         assert_eq!(state.settings_filtered_rows().len(), AppState::SETTINGS_ROWS);
-        // "auto" matches the four Auto-* rows (fuzzy, case-insensitive).
+        // "auto" matches the five Auto-* rows (fuzzy, case-insensitive): Auto-pull on launch /
+        // limit / in tree, Auto branch-check, and Auto-update.
         state.settings_search = "auto".to_string();
         let matches = state.settings_filtered_rows();
         assert!(matches.iter().all(|&idx| SETTINGS_LABELS[idx].to_lowercase().contains("auto")));
-        assert_eq!(matches.len(), 4);
+        assert_eq!(matches.len(), 5);
         // Navigation moves within the filtered set.
         state.settings_selected = matches[0];
         state.settings_move(1);

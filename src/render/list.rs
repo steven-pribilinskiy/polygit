@@ -371,7 +371,9 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     // captured list geometry — stable across frames, so a 1-frame lag on resize is imperceptible.
     let hovered_row: Option<usize> = if app.hover_effects {
         app.hover.and_then(|(_, hrow)| {
-            let geom = app.list_rows_area;
+            // Last frame's rows geometry (`list_rows_area` is reset to empty each frame before this
+            // runs); a 1-frame lag on resize is imperceptible.
+            let geom = app.list_rows_area_prev;
             (geom.height > 0 && hrow >= geom.y && hrow < geom.y + geom.height)
                 .then(|| app.list_scroll + (hrow - geom.y) as usize)
         })

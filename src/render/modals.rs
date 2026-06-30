@@ -253,18 +253,32 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
         preview_header.push(Span::raw(" "));
         preview_header.push(Span::styled(unfold_all, Style::default().fg(Color::DarkGray)));
     }
-    let header: Vec<Line> = vec![
-        field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string()),
-        field("Built", built_in),
-        field("Binary", format!("{} ({})", human_size(app.build_info_binary_size), app.exe_path)),
-        field(
+    // The self-update check found a newer published release (Auto-update notify/install).
+    let release_line = app.latest_release.as_ref().and_then(|(version, date)| {
+        (crate::changelog::version_cmp(version, env!("CARGO_PKG_VERSION")) == std::cmp::Ordering::Greater)
+            .then(|| {
+                Line::from(Span::styled(
+                    format!("↑ v{version} available ({date}) — press p to install"),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ))
+            })
+    });
+    let header: Vec<Line> = [
+        Some(field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string())),
+        release_line,
+        Some(field("Built", built_in)),
+        Some(field("Binary", format!("{} ({})", human_size(app.build_info_binary_size), app.exe_path))),
+        Some(field(
             "Settings",
             format!("{}  ({} files in config)", app.build_info_settings_path, app.build_info_config_count),
-        ),
-        Line::from(status),
-        Line::from(String::new()),
-        Line::from(preview_header),
-    ];
+        )),
+        Some(Line::from(status)),
+        Some(Line::from(String::new())),
+        Some(Line::from(preview_header)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
     // A roomy modal: header + a scrollable, collapsible settings tree filling the rest.
     let pad = if app.panel_padding { 2 } else { 0 };
@@ -1551,15 +1565,12 @@ pub(crate) const SETTINGS_LABEL_W: u16 = 22;
 
 /// Render one settings row — `> Label   ● value  ○ value` — and capture its label/chip click
 /// regions (keyed by the global `row_idx`). `left_x` is the row's left edge.
-/// The option index to underline for a radio row (Theme only): when `auto` is selected, underline
-/// the autodetected option it resolves to (`dark`=1 / `light`=2). `None` for every other row/state.
-pub(crate) fn radio_underline_idx(app: &AppState, row_idx: usize) -> Option<usize> {
-    // Row 20 is "Theme" (and the Design tab reuses the same index for its Theme radio).
-    if row_idx == 20 && app.theme == crate::app::Theme::Auto {
-        Some(if app.auto_dark { 1 } else { 2 })
-    } else {
-        None
-    }
+/// The option index to underline on the **Theme** radio when `auto` is selected: the autodetected
+/// option it resolves to (`dark`=1 / `light`=2). `None` otherwise. Callers gate this on the row
+/// actually being the Theme row (by label) — it carries no row index of its own, so it can't drift
+/// when settings rows are reordered.
+pub(crate) fn theme_autodetect_underline(app: &AppState) -> Option<usize> {
+    (app.theme == crate::app::Theme::Auto).then_some(if app.auto_dark { 1 } else { 2 })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1836,6 +1847,26 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 vec![("on", app.show_merged_prs), ("off", !app.show_merged_prs)],
             )],
         ),
+        (
+            "Updates",
+            vec![
+                (
+                    "Auto-update",
+                    vec![
+                        ("off", app.auto_update == crate::app::AutoUpdate::Off),
+                        ("notify", app.auto_update == crate::app::AutoUpdate::Notify),
+                        ("install", app.auto_update == crate::app::AutoUpdate::Install),
+                    ],
+                ),
+                (
+                    "Update check",
+                    vec![
+                        ("daily", app.update_interval == crate::app::UpdateInterval::Daily),
+                        ("weekly", app.update_interval == crate::app::UpdateInterval::Weekly),
+                    ],
+                ),
+            ],
+        ),
     ];
 
     // Sections display + index in alphabetical order (matching `SETTINGS_TABS` / `SETTINGS_LABELS`):
@@ -1996,7 +2027,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     // Precomputed (not via `app` inside the closure, which would conflict with the closure's
     // disjoint field borrows): the Theme row's autodetect underline.
-    let theme_underline = radio_underline_idx(app, 20);
+    let theme_underline = theme_autodetect_underline(app);
     let emoji_icons = app.icon_style == crate::app::IconStyle::Emoji;
     // Precomputed before push_row (its closure borrows app.settings_click, so a `&self` method call
     // mid-loop would conflict): per-section collapse state for the accordion layout.
@@ -2007,9 +2038,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let mut push_row = |row_idx: usize, left_x: u16, row_y: u16, out: &mut Vec<Line>| {
         let (label, options) = &all_rows[row_idx];
         let in_view = row_y < inner.y + inner.height;
-        let underline_idx = if row_idx == 20 { theme_underline } else { None };
+        let underline_idx = if *label == "Theme" { theme_underline } else { None };
         // Hide zeros (row 19) is inert under emoji icons (which always hide zeros).
-        let disabled = row_idx == 19 && emoji_icons;
+        let disabled = *label == "Hide zeros" && emoji_icons;
         out.push(settings_row_line(
             row_idx,
             app.settings_selected == row_idx,
@@ -2045,8 +2076,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             let (label, options) = &all_rows[row_idx];
             let row_y = inner.y + lines.len() as u16;
             let in_view = row_y < inner.y + inner.height;
-            let underline_idx = if row_idx == 20 { theme_underline } else { None };
-            let disabled = row_idx == 19 && emoji_icons;
+            let underline_idx = if *label == "Theme" { theme_underline } else { None };
+            let disabled = *label == "Hide zeros" && emoji_icons;
             lines.push(settings_row_line(
                 row_idx,
                 app.settings_selected == row_idx,
@@ -2221,8 +2252,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 }
                 AccItem::Row(row) => {
                     let (label, options) = &all_rows[*row];
-                    let underline_idx = if *row == 20 { theme_underline } else { None };
-                    let disabled = *row == 19 && emoji_icons;
+                    let underline_idx = if *label == "Theme" { theme_underline } else { None };
+                    let disabled = *label == "Hide zeros" && emoji_icons;
                     lines.push(settings_row_line(
                         *row,
                         app.settings_on_header.is_none() && app.settings_selected == *row,
@@ -2314,8 +2345,8 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 }
                 FlatItem::Row(row) => {
                     let (label, options) = &all_rows[*row];
-                    let underline_idx = if *row == 20 { theme_underline } else { None };
-                    let disabled = *row == 19 && emoji_icons;
+                    let underline_idx = if *label == "Theme" { theme_underline } else { None };
+                    let disabled = *label == "Hide zeros" && emoji_icons;
                     lines.push(settings_row_line(
                         *row,
                         app.settings_selected == *row,
@@ -2879,4 +2910,238 @@ pub(crate) fn render_base_picker(frame: &mut Frame, app: &mut AppState, area: Re
         &mut app.hint_click,
     ));
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// One rendered line in the keybindings editor: a group header, or an action with its current
+/// chords. Built fresh each frame from `keybindings::action_defs()` + the live bindings.
+enum KbRow {
+    Header(String),
+    Action { idx: usize, label: &'static str, chords: String, overridden: bool },
+}
+
+/// Render the keybindings editor — remap any shortcut. Keyboard-first (j/k move, enter rebind,
+/// c clear, d default, R reset all) AND mouse-first (clickable rows / [set] / [x], hover-wired).
+pub(crate) fn render_keybindings_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    use crate::keybindings::action_defs;
+
+    // Flatten the action table into header + action rows (declaration order, grouped by `group`).
+    let mut flat: Vec<KbRow> = Vec::new();
+    let mut sel_flat = 0usize;
+    let mut last_group = "";
+    for (idx, def) in action_defs().iter().enumerate() {
+        if def.group != last_group {
+            flat.push(KbRow::Header(def.group.to_string()));
+            last_group = def.group;
+        }
+        let chords = app.keybindings.chords_for(def.action);
+        let chords_str = if chords.is_empty() {
+            "(unset)".to_string()
+        } else {
+            chords.iter().map(|chord| chord.display()).collect::<Vec<_>>().join(" · ")
+        };
+        if idx == app.keybindings_selected {
+            sel_flat = flat.len();
+        }
+        flat.push(KbRow::Action {
+            idx,
+            label: def.label,
+            chords: chords_str,
+            overridden: app.keybindings.is_overridden(def.action),
+        });
+    }
+
+    let width = area.width.saturating_sub(8).clamp(48, 96);
+    let height = area.height.saturating_sub(4).clamp(14, 40);
+    let modal = centered_rect(width, height, area);
+    let (close_line, close_click) = modal_close_button(modal);
+
+    // Footer hints — flip to a yes/no prompt while a conflict or reset-all confirm is pending.
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    if app.keybindings_capture.is_some() {
+        footer.push(("press any key to bind".to_string(), Style::default().fg(Color::Yellow), None));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("esc", " cancel", HintKey::Esc));
+    } else if app.keybindings_conflict.is_some() {
+        footer.push(("reassign? ".to_string(), Style::default().fg(Color::Yellow), None));
+        footer.extend(footer_chip("y", " yes", HintKey::Char('y')));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("n", " no", HintKey::Char('n')));
+    } else if app.keybindings_reset_confirm {
+        footer.push(("reset ALL to defaults? ".to_string(), Style::default().fg(Color::Yellow), None));
+        footer.extend(footer_chip("y", " yes", HintKey::Char('y')));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("n", " no", HintKey::Char('n')));
+    } else {
+        footer.extend(footer_chip("↑↓", " move", HintKey::Char('j')));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("⏎", " rebind", HintKey::Enter));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("c", " clear", HintKey::Char('c')));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("d", " default", HintKey::Char('d')));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("R", " reset all", HintKey::Char('R')));
+        footer.push(footer_sep());
+        footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Keybindings — remap shortcuts ")
+        .title_top(close_line)
+        .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    app.keybindings_area = modal;
+    app.keybindings_close_click = close_click;
+    app.keybindings_row_click.clear();
+    app.keybindings_set_click.clear();
+    app.keybindings_clear_click.clear();
+
+    if inner.height < 2 || inner.width < 10 {
+        return;
+    }
+
+    // Top line: a transient status, the load diagnostic, or a one-line how-to.
+    let status_line = if let Some(status) = &app.keybindings_status {
+        Line::from(Span::styled(status.clone(), Style::default().fg(Color::Green)))
+    } else if let Some(error) = &app.keybindings.load_error {
+        Line::from(Span::styled(format!("⚠ {error}"), Style::default().fg(Color::Red)))
+    } else {
+        Line::from(Span::styled(
+            "~/.config/polygit/keybindings.json · enter to rebind the selected action",
+            dim,
+        ))
+    };
+    frame.render_widget(Paragraph::new(status_line), Rect { height: 1, ..inner });
+
+    let list = Rect { y: inner.y + 1, height: inner.height - 1, ..inner };
+    let viewport = list.height as usize;
+
+    // Keep the selected action visible.
+    let max_scroll = flat.len().saturating_sub(viewport);
+    if sel_flat < app.keybindings_scroll {
+        app.keybindings_scroll = sel_flat;
+    } else if sel_flat >= app.keybindings_scroll + viewport {
+        app.keybindings_scroll = sel_flat - viewport + 1;
+    }
+    app.keybindings_scroll = app.keybindings_scroll.min(max_scroll);
+    let scroll = app.keybindings_scroll;
+    app.keybindings_inner = list;
+
+    // Right-aligned action buttons (reserve the last col for the scrollbar).
+    let content_right = list.x + list.width.saturating_sub(2);
+    let clear_w = 3u16; // "[x]"
+    let set_w = 5u16; // "[set]"
+    let clear_start = content_right.saturating_sub(clear_w);
+    let set_start = clear_start.saturating_sub(1 + set_w);
+    let label_w = 30u16.min(set_start.saturating_sub(list.x).saturating_sub(2));
+
+    let conflict_for = app.keybindings_conflict;
+    let capture_for = app.keybindings_capture;
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (offset, row) in flat.iter().skip(scroll).take(viewport).enumerate() {
+        let screen_row = list.y + offset as u16;
+        match row {
+            KbRow::Header(title) => {
+                lines.push(Line::from(Span::styled(
+                    title.clone(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                )));
+            }
+            KbRow::Action { idx, label, chords, overridden } => {
+                let action = action_defs()[*idx].action;
+                let selected = *idx == app.keybindings_selected;
+                let base = if selected {
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let label_text = pad_to(&format!("  {label}"), (label_w + 2) as usize);
+                let mut spans: Vec<Span> = vec![Span::styled(label_text, base)];
+
+                // The selected row in capture mode / with a pending conflict shows an inline prompt
+                // instead of chords + buttons.
+                if selected && capture_for == Some(action) {
+                    spans.push(Span::styled(
+                        pad_to(" press a key…  (esc cancels)", (list.width as usize).saturating_sub(label_w as usize + 2)),
+                        Style::default().fg(Color::Yellow).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ));
+                } else if selected && conflict_for.is_some_and(|(act, ..)| act == action) {
+                    let (_, chord, other) = conflict_for.unwrap();
+                    let other_label = crate::keybindings::def_for(other).label;
+                    spans.push(Span::styled(
+                        pad_to(
+                            &format!(" {} already used by {other_label} — y reassign / n cancel", chord.display()),
+                            (list.width as usize).saturating_sub(label_w as usize + 2),
+                        ),
+                        Style::default().fg(Color::Yellow).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ));
+                } else {
+                    let chord_style = if *overridden {
+                        if selected { base } else { Style::default().fg(Color::Yellow) }
+                    } else if selected {
+                        base
+                    } else if chords == "(unset)" {
+                        Style::default().fg(Color::DarkGray)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    // Pad the chords up to just before the [set] button.
+                    let chords_w = set_start.saturating_sub(list.x + label_w + 2) as usize;
+                    spans.push(Span::styled(pad_to(&format!(" {chords}"), chords_w), chord_style));
+                    let btn = if selected {
+                        Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Cyan)
+                    };
+                    // Pad to the [set] column, then the two buttons.
+                    let gap = set_start.saturating_sub(list.x + label_w + 2 + chords_w as u16);
+                    if gap > 0 {
+                        spans.push(Span::styled(" ".repeat(gap as usize), base));
+                    }
+                    spans.push(Span::styled("[set]", btn));
+                    spans.push(Span::styled(" ", base));
+                    spans.push(Span::styled("[x]", btn));
+                    app.keybindings_set_click.push((screen_row, set_start, set_start + set_w, *idx));
+                    app.keybindings_clear_click.push((screen_row, clear_start, clear_start + clear_w, *idx));
+                }
+                app.keybindings_row_click.push((screen_row, list.x, set_start, *idx));
+                lines.push(Line::from(spans));
+            }
+        }
+    }
+    frame.render_widget(Paragraph::new(lines), list);
+
+    let track = Rect { x: list.x, y: list.y, width: list.width, height: list.height };
+    render_scrollbar(frame, app, track, scroll, flat.len(), viewport, crate::app::ScrollKind::Keybindings);
+}
+
+/// Pad `text` with trailing spaces to `width` display cells (truncating if longer).
+fn pad_to(text: &str, width: usize) -> String {
+    let current = UnicodeWidthStr::width(text);
+    if current >= width {
+        // Truncate by chars to fit (best-effort; labels are ASCII so width == chars here).
+        let mut out = String::new();
+        let mut used = 0;
+        for ch in text.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + cw > width {
+                break;
+            }
+            out.push(ch);
+            used += cw;
+        }
+        out.push_str(&" ".repeat(width.saturating_sub(used)));
+        out
+    } else {
+        format!("{text}{}", " ".repeat(width - current))
+    }
 }

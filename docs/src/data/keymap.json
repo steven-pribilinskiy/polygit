@@ -532,6 +532,25 @@
       },
       {
         "keys": [
+          "Ctrl",
+          "K"
+        ],
+        "action": "Open the keybindings editor (remap shortcuts)",
+        "note": "every list / global / repo-page shortcut is remappable; overrides persist to ~/.config/polygit/keybindings.json. Also the [^K remap] button on the help Hotkeys tab. ↑↓ move · ⏎ rebind (press the new key) · c clear · d default · R reset all. Esc/q/Ctrl+C and the new-build Ctrl+R/Ctrl+X stay fixed",
+        "keywords": [
+          "keybinding",
+          "keybindings",
+          "remap",
+          "rebind",
+          "shortcut",
+          "hotkey",
+          "customize",
+          "keymap"
+        ],
+        "group": "App & modals"
+      },
+      {
+        "keys": [
           "click vX.Y.Z"
         ],
         "action": "Open the Changelog (every release as an accordion, latest two expanded; j/k select, space/enter fold). A What's New modal also pops automatically after reloading into a newer build.",

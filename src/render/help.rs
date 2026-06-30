@@ -80,12 +80,13 @@ pub(crate) const DESIGN_PREVIEW_LABEL: &str = "preview confirm dialog";
 /// The label + options (text, is-active) for a Design System radio, by the **settings** global row
 /// index it mirrors (Theme=5 · Background=6 · Contrast=7 · Selection=8). Owned/`'static` so the
 /// `&AppState` read ends before the caller mutably borrows `app.help_design_click`.
-pub(crate) fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str, Vec<(&'static str, bool)>) {
+/// The Design-tab radios, keyed by the **settings row label** (not a hardcoded index, which drifts
+/// when rows are reordered). The caller pairs this with `settings_row(label)` so a chip click reuses
+/// `set_setting_option` and lands on the right field.
+pub(crate) fn design_radio_data(app: &AppState, label: &str) -> (&'static str, Vec<(&'static str, bool)>) {
     use crate::app::{Background, Contrast, SelectionStyle, Theme};
-    // Indices match the settings rows (Theme 20 · Background 21 · Contrast 22 · List selection 23),
-    // so the Design tab's chip clicks reuse `set_setting_option` and hit the right field.
-    match row_idx {
-        20 => (
+    match label {
+        "Theme" => (
             "Theme",
             vec![
                 ("auto", app.theme == Theme::Auto),
@@ -93,7 +94,7 @@ pub(crate) fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str
                 ("light", app.theme == Theme::Light),
             ],
         ),
-        21 => (
+        "Background" => (
             "Background",
             vec![
                 ("normal", app.background == Background::Normal),
@@ -101,17 +102,18 @@ pub(crate) fn design_radio_data(app: &AppState, row_idx: usize) -> (&'static str
                 ("terminal", app.background == Background::Terminal),
             ],
         ),
-        22 => (
+        "Contrast" => (
             "Contrast",
             vec![
                 ("normal", app.contrast == Contrast::Normal),
                 ("soft", app.contrast == Contrast::Soft),
             ],
         ),
+        // Keyed by the settings label "List selection"; displayed as the shorter "Selection".
         _ => (
             "Selection",
             vec![
-                ("blue", app.selection_style == crate::app::SelectionStyle::Blue),
+                ("blue", app.selection_style == SelectionStyle::Blue),
                 ("subtle", app.selection_style == SelectionStyle::Subtle),
             ],
         ),
@@ -161,11 +163,13 @@ pub(crate) fn design_sections(app: &AppState) -> Vec<DesignSection> {
     };
     let mark = |on: bool| if on { " ◀ active" } else { "" };
 
-    // Theming radios (Icons live in the Legend tab).
+    // Theming radios (Icons live in the Legend tab). Keyed by settings-row LABEL so the sentinel
+    // row index (used by the chip click → set_setting_option) always lands on the right field.
     let mut theming: Vec<(Line<'static>, Option<String>)> = Vec::new();
-    for row_idx in [20usize, 21, 22, 23] {
-        let (label, options) = design_radio_data(app, row_idx);
-        let underline_idx = radio_underline_idx(app, row_idx);
+    for design_label in ["Theme", "Background", "Contrast", "List selection"] {
+        let row_idx = crate::app::settings_row(design_label);
+        let (label, options) = design_radio_data(app, design_label);
+        let underline_idx = if label == "Theme" { theme_autodetect_underline(app) } else { None };
         let line = settings_row_line(
             row_idx, false, label, &options, (0, 0), false, underline_idx, false, None, &mut throwaway,
         );
@@ -1000,12 +1004,17 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         tab_spans.push(Span::raw(" "));
         tab_col += chip_w + 1;
     }
-    // On the Hotkeys tab, offer a clickable button that pops the interactive keyboard viewer.
+    // On the Hotkeys tab, offer clickable buttons that pop the interactive keyboard viewer and the
+    // keybindings editor (remap shortcuts).
     app.help_keyboard_click = None;
-    let kbd_btn = if app.help_tab == HelpTab::Hotkeys { "[K ⌨ keyboard]" } else { "" };
+    app.help_remap_click = None;
+    let on_hotkeys = app.help_tab == HelpTab::Hotkeys;
+    let kbd_btn = if on_hotkeys { "[K ⌨ keyboard]" } else { "" };
     let kbd_w = UnicodeWidthStr::width(kbd_btn) as u16;
+    let remap_btn = if on_hotkeys { "[^K remap]" } else { "" };
+    let remap_w = UnicodeWidthStr::width(remap_btn) as u16;
     // Right-aligned buttons, laid out right→left: [esc], then maximize/restore, then (Hotkeys
-    // only) the keyboard viewer.
+    // only) the keyboard viewer and the remap button.
     let esc = "[esc]";
     let esc_w = esc.len() as u16;
     let max_btn = if app.help_maximized { "[m restore]" } else { "[m maximize]" };
@@ -1013,8 +1022,14 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let esc_col = tab_bar_area.x + tab_bar_area.width.saturating_sub(esc_w);
     let max_col = esc_col.saturating_sub(max_w + 1);
     let kbd_col = max_col.saturating_sub(if kbd_w > 0 { kbd_w + 1 } else { 0 });
-    if kbd_col > tab_col {
-        tab_spans.push(Span::raw(" ".repeat((kbd_col - tab_col) as usize)));
+    let remap_col = kbd_col.saturating_sub(if remap_w > 0 { remap_w + 1 } else { 0 });
+    if remap_col > tab_col {
+        tab_spans.push(Span::raw(" ".repeat((remap_col - tab_col) as usize)));
+    }
+    if remap_w > 0 {
+        app.help_remap_click = Some((tab_bar_area.y, remap_col, remap_col + remap_w));
+        tab_spans.push(Span::styled(remap_btn.to_string(), Style::default().fg(Color::LightCyan)));
+        tab_spans.push(Span::raw(" "));
     }
     if kbd_w > 0 {
         app.help_keyboard_click = Some((tab_bar_area.y, kbd_col, kbd_col + kbd_w));
@@ -1095,8 +1110,9 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
                 // Re-run the radio at its real screen row to capture the chip click regions (the
                 // pre-built Line is position-independent; only the click columns need the row).
                 if let Ok(row_idx) = sentinel[DESIGN_RADIO_PREFIX.len()..].parse::<usize>() {
-                    let (label, options) = design_radio_data(app, row_idx);
-                    let underline_idx = radio_underline_idx(app, row_idx);
+                    let row_label = crate::app::SETTINGS_LABELS.get(row_idx).copied().unwrap_or("");
+                    let (label, options) = design_radio_data(app, row_label);
+                    let underline_idx = if label == "Theme" { theme_autodetect_underline(app) } else { None };
                     let _ = settings_row_line(
                         row_idx,
                         false,

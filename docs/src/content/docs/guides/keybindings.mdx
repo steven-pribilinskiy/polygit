@@ -29,6 +29,40 @@ fill the modal; a description clipped with `…` shows its full text on hover.
 
 <KeymapExplorer />
 
+## Remapping shortcuts
+
+The keys above are **defaults** — every list-view, global, and repo-page shortcut is remappable.
+Press **`Ctrl+K`** (or the **`[^K remap]`** button on the help **Hotkeys** tab) to open the
+in-terminal **Keybindings editor**: actions grouped by area, each with its current key(s).
+
+- **`↑↓`/`j`/`k`** move · **`Enter`** (or click `[set]`) rebinds the selected action — then
+  **press the new key** · **`c`** (or click `[x]`) clears it · **`d`** resets that one to its
+  default · **`R`** resets everything (with a `y`/`n` confirm) · **`Esc`** closes.
+- Rebinding to a key another action already uses prompts to **reassign** (move the key) or cancel.
+- Resolution is **context-aware** — the same letter can mean different things on the repo list vs
+  the repo page without colliding. Clearing a key genuinely **frees** it (it stops triggering the
+  old action).
+- **`Esc`**, **`q`**, **`Ctrl+C`**, and the new-build **`Ctrl+R`** / **`Ctrl+X`** stay fixed (not
+  remappable), so you can always escape and quit.
+
+### `keybindings.json`
+
+Overrides persist to **`~/.config/polygit/keybindings.json`** — a plain, hand-editable map of
+action id → keys. Only **changed** actions are written, so default keys added in later versions
+still reach an existing config file. Keys are written like `ctrl+f`, `G`, `shift+enter`, `space`,
+`/`. Move the fuzzy finder to `Ctrl+F` and give "next repo" a second key:
+
+```json
+{
+  "open_finder": ["ctrl+f"],
+  "nav_down": ["j", "down", "n"]
+}
+```
+
+The editor and the file are two views of the same data — edit either; an empty `[]` for an action
+clears it (the key does nothing until rebound). Action ids are shown in the editor and match the
+keymap above (`open_finder`, `nav_down`, `retry`, `page_pull_branch`, …).
+
 ## Notes
 
 - **Retry vs refetch** — `r`/`R` only re-run repos that need it (failed or skipped);
