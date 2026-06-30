@@ -96,6 +96,7 @@ pub struct ExplorerPrefs {
     pub sort: SortKey,
     pub sort_ascending: bool,
     pub date_format: DateFormat,
+    pub tree_mode: bool,
 }
 
 impl Default for ExplorerPrefs {
@@ -105,11 +106,12 @@ impl Default for ExplorerPrefs {
             sort: SortKey::Name,
             sort_ascending: true,
             date_format: DateFormat::Relative,
+            tree_mode: false,
         }
     }
 }
 
-/// One filesystem entry in the current directory listing.
+/// One filesystem entry in the current listing (a flat dir row, or a node in the tree view).
 #[derive(Debug, Clone)]
 pub struct FsEntry {
     pub name: String,
@@ -122,6 +124,10 @@ pub struct FsEntry {
     pub created: Option<SystemTime>,
     /// Unix `rwxr-xr-x`-style permissions (empty on non-unix).
     pub permissions: String,
+    /// Indent depth in the tree view (0 in flat view).
+    pub depth: usize,
+    /// In the tree view, whether this directory row is expanded (drives the ▸/▾ glyph).
+    pub expanded: bool,
 }
 
 /// The selected file's loaded preview (syntax-highlighted lines, or a placeholder).
@@ -146,6 +152,13 @@ pub struct Explorer {
     pub sort: SortKey,
     pub sort_ascending: bool,
     pub date_format: DateFormat,
+    /// `true` = recursive **tree** view (expandable dirs rooted at the repo); `false` = flat folder
+    /// view (the current directory's entries, with a `..` row).
+    pub tree_mode: bool,
+    /// In tree view, the set of expanded directory paths.
+    pub expanded: std::collections::HashSet<PathBuf>,
+    /// The deepest "expand to level N" applied, for the level stepper.
+    pub tree_level: usize,
     /// The selected file's preview (lazy; refreshed on selection change).
     pub preview: Option<Preview>,
     /// Horizontal scroll offset (columns) for the preview pane.
@@ -203,6 +216,9 @@ impl Explorer {
             sort: prefs.sort,
             sort_ascending: prefs.sort_ascending,
             date_format: prefs.date_format,
+            tree_mode: prefs.tree_mode,
+            expanded: std::collections::HashSet::new(),
+            tree_level: 0,
             preview: None,
             preview_hscroll: 0,
             focus: ExplorerFocus::List,
@@ -224,11 +240,40 @@ impl Explorer {
         self.entries.get(self.selected)
     }
 
-    /// Re-list the current directory, sort it, and kick off background dir-size computation.
+    /// Rebuild the rows — a flat directory listing, or the recursive tree (respecting `expanded`) —
+    /// and kick off background dir-size computation for any directories now visible.
     fn reload(&mut self) {
-        self.entries = list_dir(&self.cwd, &self.root);
-        self.apply_sort();
+        if self.tree_mode {
+            self.entries = self.build_tree_rows();
+        } else {
+            self.entries = list_dir(&self.cwd, &self.root);
+            self.apply_sort();
+        }
         self.spawn_dir_sizes();
+    }
+
+    /// The flattened tree of visible rows: a depth-first walk from the root, descending only into
+    /// directories in `expanded`; siblings at each level are sorted by the active sort key.
+    fn build_tree_rows(&self) -> Vec<FsEntry> {
+        let mut out = Vec::new();
+        self.push_tree_level(&self.root, 0, &mut out);
+        out
+    }
+
+    fn push_tree_level(&self, dir: &Path, depth: usize, out: &mut Vec<FsEntry>) {
+        let mut children = list_children(dir);
+        self.sort_entries(&mut children);
+        for mut entry in children {
+            entry.depth = depth;
+            let is_expanded = entry.is_dir && self.expanded.contains(&entry.path);
+            entry.expanded = is_expanded;
+            let path = entry.path.clone();
+            let descend = entry.is_dir && is_expanded;
+            out.push(entry);
+            if descend {
+                self.push_tree_level(&path, depth + 1, out);
+            }
+        }
     }
 
     /// Spawn a low-priority background thread to compute recursive sizes for the directories in the
@@ -260,7 +305,8 @@ impl Explorer {
         });
     }
 
-    /// Set the sort key: same key flips direction; a new key selects it ascending. Re-sorts in place.
+    /// Set the sort key: same key flips direction; a new key selects it ascending. Re-sorts (flat) or
+    /// rebuilds the tree (per-level sort), keeping the selection on the same entry.
     pub fn set_sort(&mut self, key: SortKey) {
         if self.sort == key {
             self.sort_ascending = !self.sort_ascending;
@@ -269,8 +315,7 @@ impl Explorer {
             self.sort_ascending = true;
         }
         let keep = self.selected_entry().map(|entry| entry.path.clone());
-        self.apply_sort();
-        // Keep the selection on the same entry after a re-sort.
+        self.reload();
         if let Some(path) = keep {
             if let Some(index) = self.entries.iter().position(|entry| entry.path == path) {
                 self.selected = index;
@@ -279,16 +324,85 @@ impl Explorer {
         self.preview = None;
     }
 
-    /// Sort `entries`: the synthetic ".." first, then directories before files, then by the sort key
-    /// (ascending/descending). A stable name tiebreak keeps equal keys in a predictable order.
+    // ── Tree view ────────────────────────────────────────────────────────────────────────────────
+
+    /// Toggle the recursive tree view ⇄ the flat folder view (persisted by the caller). Switching to
+    /// the tree resets to the root; switching to flat lands in the root too.
+    pub fn toggle_tree_mode(&mut self) {
+        self.tree_mode = !self.tree_mode;
+        self.cwd = self.root.clone();
+        self.selected = 0;
+        self.list_scroll = 0;
+        self.preview = None;
+        self.finder = None;
+        self.reload();
+    }
+
+    /// Expand / collapse the selected directory in the tree view.
+    pub fn toggle_expanded(&mut self) {
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
+        if !entry.is_dir {
+            return;
+        }
+        let path = entry.path.clone();
+        if !self.expanded.insert(path.clone()) {
+            self.expanded.remove(&path);
+        }
+        let keep = self.selected_entry().map(|entry| entry.path.clone());
+        self.reload();
+        if let Some(path) = keep {
+            if let Some(index) = self.entries.iter().position(|entry| entry.path == path) {
+                self.selected = index;
+            }
+        }
+    }
+
+    /// Expand every directory shallower than `level` (so the tree shows down to that depth), tracking
+    /// the new level for the stepper. `level` 0 = fully collapsed.
+    pub fn expand_to_level(&mut self, level: usize) {
+        self.expanded.clear();
+        if level > 0 {
+            self.collect_dirs_to_depth(&self.root.clone(), 0, level);
+        }
+        self.tree_level = level;
+        let keep = self.selected_entry().map(|entry| entry.path.clone());
+        self.reload();
+        self.selected = keep
+            .and_then(|path| self.entries.iter().position(|entry| entry.path == path))
+            .unwrap_or(0)
+            .min(self.entries.len().saturating_sub(1));
+    }
+
+    fn collect_dirs_to_depth(&mut self, dir: &Path, depth: usize, level: usize) {
+        if depth >= level {
+            return;
+        }
+        for entry in list_children(dir) {
+            if entry.is_dir {
+                self.expanded.insert(entry.path.clone());
+                self.collect_dirs_to_depth(&entry.path, depth + 1, level);
+            }
+        }
+    }
+
+    /// Sort `self.entries` in place (flat view). Tree building sorts each level via `sort_entries`.
     fn apply_sort(&mut self) {
+        let mut entries = std::mem::take(&mut self.entries);
+        self.sort_entries(&mut entries);
+        self.entries = entries;
+    }
+
+    /// Sort a slice of entries: the synthetic ".." first, then directories before files, then by the
+    /// active sort key (asc/desc). A stable name tiebreak keeps equal keys in a predictable order.
+    fn sort_entries(&self, entries: &mut [FsEntry]) {
         let key = self.sort;
         let ascending = self.sort_ascending;
-        // Snapshot the size used for sorting (dirs use their cached recursive size) so the comparator
-        // doesn't borrow `self` while `self.entries` is being reordered.
+        // Snapshot the size used for sorting (dirs use their cached recursive size).
         let sizes: std::collections::HashMap<PathBuf, u64> = if key == SortKey::Size {
             let cache = self.dir_sizes.lock().unwrap();
-            self.entries
+            entries
                 .iter()
                 .map(|entry| {
                     let size = if entry.is_dir {
@@ -302,7 +416,7 @@ impl Explorer {
         } else {
             std::collections::HashMap::new()
         };
-        self.entries.sort_by(|left, right| {
+        entries.sort_by(|left, right| {
             // ".." pinned to the very top, dirs before files — independent of key/direction.
             let group = |entry: &FsEntry| (!entry.is_parent, !entry.is_dir);
             if group(left) != group(right) {
@@ -341,19 +455,61 @@ impl Explorer {
         self.preview = None;
     }
 
-    /// Enter the selected row: descend into a directory (or `..`), or focus the preview for a file.
+    /// Enter the selected row: tree view toggles a directory's expansion; flat view descends into it
+    /// (or `..`). A file focuses the preview in either view.
     pub fn enter(&mut self) {
         let Some(entry) = self.entries.get(self.selected).cloned() else {
             return;
         };
-        if entry.is_dir {
+        if !entry.is_dir {
+            self.focus = ExplorerFocus::Preview;
+        } else if self.tree_mode {
+            self.toggle_expanded();
+        } else {
             self.navigate_to(entry.path);
+        }
+    }
+
+    /// The `←`/`h` action: tree view collapses an expanded dir, else jumps to the parent row; flat
+    /// view goes up a directory.
+    pub fn nav_left(&mut self) {
+        if !self.tree_mode {
+            self.go_up();
+            return;
+        }
+        let Some(entry) = self.selected_entry() else { return };
+        if entry.is_dir && entry.expanded {
+            self.toggle_expanded();
+        } else {
+            // Jump to the nearest shallower row (the parent in the tree).
+            let depth = entry.depth;
+            if depth > 0 {
+                if let Some(index) = (0..self.selected).rev().find(|&index| self.entries[index].depth < depth) {
+                    self.selected = index;
+                    self.preview = None;
+                }
+            }
+        }
+    }
+
+    /// The `→`/`l` action: tree view expands a collapsed dir (or steps into the first child); flat
+    /// view opens the directory / focuses the preview.
+    pub fn nav_right(&mut self) {
+        if !self.tree_mode {
+            self.enter();
+            return;
+        }
+        let Some(entry) = self.selected_entry() else { return };
+        if entry.is_dir && !entry.expanded {
+            self.toggle_expanded();
+        } else if entry.is_dir {
+            self.move_selection(1); // already expanded → step into the first child
         } else {
             self.focus = ExplorerFocus::Preview;
         }
     }
 
-    /// Go up to the parent directory (bounded by `root`).
+    /// Go up to the parent directory (flat view only; bounded by `root`).
     pub fn go_up(&mut self) {
         if self.cwd == self.root {
             return;
@@ -553,36 +709,7 @@ fn load_preview_lines(path: &Path, name: &str, dark: bool) -> Vec<Line<'static>>
 /// List a directory: a synthetic `..` (unless at root) first, then directories, then files —
 /// each group sorted case-insensitively by name. Hidden entries (dotfiles) are included.
 fn list_dir(dir: &Path, root: &Path) -> Vec<FsEntry> {
-    let mut dirs: Vec<FsEntry> = Vec::new();
-    let mut files: Vec<FsEntry> = Vec::new();
-    if let Ok(read) = std::fs::read_dir(dir) {
-        for entry in read.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            let meta = entry.metadata().ok();
-            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let fs_entry = FsEntry {
-                name,
-                path,
-                is_dir,
-                is_parent: false,
-                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                modified: meta.as_ref().and_then(|m| m.modified().ok()),
-                created: meta.as_ref().and_then(|m| m.created().ok()),
-                permissions: meta.as_ref().map(permission_string).unwrap_or_default(),
-            };
-            if is_dir {
-                dirs.push(fs_entry);
-            } else {
-                files.push(fs_entry);
-            }
-        }
-    }
-    let by_name = |a: &FsEntry, b: &FsEntry| a.name.to_lowercase().cmp(&b.name.to_lowercase());
-    dirs.sort_by(by_name);
-    files.sort_by(by_name);
-
-    let mut out = Vec::with_capacity(dirs.len() + files.len() + 1);
+    let mut out = Vec::new();
     if dir != root {
         if let Some(parent) = dir.parent() {
             out.push(FsEntry {
@@ -594,11 +721,35 @@ fn list_dir(dir: &Path, root: &Path) -> Vec<FsEntry> {
                 modified: None,
                 created: None,
                 permissions: String::new(),
+                depth: 0,
+                expanded: false,
             });
         }
     }
-    out.extend(dirs);
-    out.extend(files);
+    out.extend(list_children(dir));
+    out
+}
+
+/// A directory's immediate children as unsorted `FsEntry`s (no `..`). The caller sorts.
+fn list_children(dir: &Path) -> Vec<FsEntry> {
+    let mut out: Vec<FsEntry> = Vec::new();
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            let meta = entry.metadata().ok();
+            out.push(FsEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: entry.path(),
+                is_dir: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                is_parent: false,
+                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                modified: meta.as_ref().and_then(|m| m.modified().ok()),
+                created: meta.as_ref().and_then(|m| m.created().ok()),
+                permissions: meta.as_ref().map(permission_string).unwrap_or_default(),
+                depth: 0,
+                expanded: false,
+            });
+        }
+    }
     out
 }
 
@@ -808,6 +959,8 @@ mod tests {
             modified: None,
             created: None,
             permissions: String::new(),
+            depth: 0,
+            expanded: false,
         }
     }
 
@@ -852,15 +1005,19 @@ mod tests {
         std::fs::write(root.join("zeta.txt"), b"z").unwrap();
         std::fs::write(root.join("alpha.txt"), b"a").unwrap();
         // Listing the SUBdir (not root) so a synthetic ".." is included.
+        // A subdir gets a synthetic ".." pinned first (ordering of the rest is applied by the
+        // explorer's sort, not list_dir, so only assert the parent row here).
         let rows = list_dir(&sub, &root);
-        // sub is empty except for "..".
         assert_eq!(rows.len(), 1);
         assert!(rows[0].is_parent && rows[0].name == "..");
 
+        // The root listing has no "..", and contains exactly its entries (unsorted — sort is the
+        // explorer's job). Assert membership, not order.
         let rows = list_dir(&root, &root);
-        // root != root is false, so no "..": just sub (dir) then alpha.txt, zeta.txt (files, sorted).
-        let names: Vec<&str> = rows.iter().map(|entry| entry.name.as_str()).collect();
-        assert_eq!(names, vec!["sub", "alpha.txt", "zeta.txt"]);
+        assert!(!rows.iter().any(|entry| entry.is_parent));
+        let mut names: Vec<&str> = rows.iter().map(|entry| entry.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["alpha.txt", "sub", "zeta.txt"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

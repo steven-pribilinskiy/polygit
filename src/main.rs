@@ -3380,6 +3380,10 @@ async fn run_event_loop(
                         KeyCode::Char('s') => app.open_dropdown(app::DropdownKind::ExplorerSort, anchor.1, anchor.0),
                         // Toggle relative ↔ absolute date stamps.
                         KeyCode::Char('d') => app.toggle_explorer_date_format(),
+                        // Toggle tree ⇄ flat view; +/- step the tree expansion level.
+                        KeyCode::Char('v') => app.toggle_explorer_tree_mode(),
+                        KeyCode::Char('+') | KeyCode::Char('=') => app.explorer_expand_level(true),
+                        KeyCode::Char('-') => app.explorer_expand_level(false),
                         // Open help over the explorer (its Hotkeys tab shows the explorer's keys).
                         KeyCode::Char('?') => app.show_help = true,
                         // Down / up — drive the preview when it's focused, else the list.
@@ -3409,15 +3413,16 @@ async fn run_event_loop(
                         KeyCode::Char('G') | KeyCode::End => {
                             if let Some(explorer) = app.explorer.as_mut() { explorer.select_last(); }
                         }
-                        // Left/right: preview-focused → horizontal scroll; list-focused → up-dir / open.
+                        // Left/right: preview-focused → horizontal scroll; list-focused → collapse /
+                        // up-dir (tree/flat) and expand / open.
                         KeyCode::Char('h') | KeyCode::Left => {
                             if let Some(explorer) = app.explorer.as_mut() {
-                                if preview_focus { explorer.scroll_preview_h(-8); } else { explorer.go_up(); }
+                                if preview_focus { explorer.scroll_preview_h(-8); } else { explorer.nav_left(); }
                             }
                         }
                         KeyCode::Char('l') | KeyCode::Right => {
                             if let Some(explorer) = app.explorer.as_mut() {
-                                if preview_focus { explorer.scroll_preview_h(8); } else { explorer.enter(); }
+                                if preview_focus { explorer.scroll_preview_h(8); } else { explorer.nav_right(); }
                             }
                         }
                         KeyCode::Enter => {
