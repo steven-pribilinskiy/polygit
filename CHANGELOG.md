@@ -3,6 +3,22 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.4.0 — 2026-07-01
+Explorer: gitignore-aware, virtualized preview, recursive find, horizontal scroll
+- **`.gitignore`d entries are hidden by default** (node_modules, dist, build output, `.git`) — so the
+  listing and folder-size walk stay fast and focused. **`i` toggles them on/off** (persisted).
+- **Virtualized preview** — only the visible window is syntax-highlighted, so a 700 KB `package-lock.json`
+  opens instantly instead of stalling.
+- **Horizontal scrollbar** in the preview for long lines (drag it, or `←`/`→` when the preview is focused).
+- **Fuzzy find now live-previews** the focused match (and the first result on open); `Esc` clears it.
+  In the **tree view**, `/` searches the whole tree **recursively**, auto-expanding the ancestors of every
+  match (and skipping gitignored).
+- **`Backspace` goes up a directory** (flat) / collapses-or-jumps-to-parent (tree).
+- **More syntaxes highlight** — `jsonc`/`json5`, `cjs`/`mjs`, `cts`/`mts`, `zsh`/`bash`, `yml` now map to a
+  known grammar.
+- Footer polish: `⏎` reads **preview** for a file / **open** for a directory, a **`tab panes`** hint was
+  added, and **`d dates`** only shows when a time column is visible (with a clearer `abs`/`rel` label).
+
 ## v3.3.0 — 2026-07-01
 Explorer tree view
 - **`v` toggles the explorer between a recursive tree view and the flat folder view** (persisted).

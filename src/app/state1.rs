@@ -1158,21 +1158,33 @@ impl AppState {
         self.scroll_hits
             .iter()
             .find(|hit| {
-                hit.total > hit.viewport
-                    && hit.track.width > 0
-                    && col == hit.track.x + hit.track.width - 1
-                    && row >= hit.track.y
-                    && row < hit.track.y + hit.track.height
+                if hit.total <= hit.viewport || hit.track.width == 0 {
+                    return false;
+                }
+                if hit.track.height == 1 && hit.track.width > 1 {
+                    // Horizontal bar: along the bottom row, any column within the track.
+                    row == hit.track.y && col >= hit.track.x && col < hit.track.x + hit.track.width
+                } else {
+                    // Vertical bar: the rightmost column of the track.
+                    col == hit.track.x + hit.track.width - 1
+                        && row >= hit.track.y
+                        && row < hit.track.y + hit.track.height
+                }
             })
             .map(|hit| hit.kind)
     }
 
-    /// The scroll offset mapping track row `row` to an absolute position for `kind` (clamped).
-    pub fn scroll_value_for(&self, kind: ScrollKind, row: u16) -> Option<usize> {
+    /// The scroll offset mapping a click at `(col, row)` on `kind`'s track to an absolute position —
+    /// along the column for a horizontal bar, the row for a vertical one (clamped).
+    pub fn scroll_value_for(&self, kind: ScrollKind, col: u16, row: u16) -> Option<usize> {
         let hit = self.scroll_hits.iter().find(|hit| hit.kind == kind)?;
-        let track_height = f64::from(hit.track.height.max(1));
-        let rel = f64::from(row.saturating_sub(hit.track.y));
-        let fraction = (rel / track_height).clamp(0.0, 1.0);
+        let horizontal = hit.track.height == 1 && hit.track.width > 1;
+        let (rel, span) = if horizontal {
+            (f64::from(col.saturating_sub(hit.track.x)), f64::from(hit.track.width.max(1)))
+        } else {
+            (f64::from(row.saturating_sub(hit.track.y)), f64::from(hit.track.height.max(1)))
+        };
+        let fraction = (rel / span).clamp(0.0, 1.0);
         let max_scroll = hit.total.saturating_sub(hit.viewport);
         Some(((fraction * hit.total as f64) as usize).min(max_scroll))
     }
@@ -1270,6 +1282,12 @@ impl AppState {
             ScrollKind::ExplorerPreview => {
                 if let Some(preview) = self.explorer.as_mut().and_then(|ex| ex.preview.as_mut()) {
                     preview.scroll = value;
+                }
+                false
+            }
+            ScrollKind::ExplorerPreviewH => {
+                if let Some(explorer) = self.explorer.as_mut() {
+                    explorer.preview_hscroll = value;
                 }
                 false
             }

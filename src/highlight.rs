@@ -33,33 +33,52 @@ fn theme(dark: bool) -> &'static Theme {
     theme_set().get(name)
 }
 
-/// Highlight `content` (whole file text) into ratatui lines, choosing a syntax by file extension /
-/// name (falling back to the first line, then plain text). `dark` picks the theme. Returns one
-/// `Line` per source line. Binary / huge files should be filtered by the caller.
-pub fn highlight_file(file_name: &str, content: &str, dark: bool) -> Vec<Line<'static>> {
-    let set = syntaxes();
-    let theme = theme(dark);
+/// Map an extension `two-face`/`syntect` doesn't know to one it does (so JSON-with-comments, modern
+/// JS/TS variants, etc. still highlight). Returns the original if there's no alias.
+fn alias_extension(ext: &str) -> &str {
+    match ext {
+        "jsonc" | "json5" => "json",
+        "cjs" | "mjs" => "js",
+        "cts" | "mts" => "ts",
+        "zsh" | "bash" => "sh",
+        "yml" => "yaml",
+        "htm" => "html",
+        other => other,
+    }
+}
+
+/// Resolve a syntax for `file_name` (by extension, with aliasing; then the whole name; then the
+/// first line; else plain text).
+fn syntax_for<'set>(set: &'set SyntaxSet, file_name: &str, first_line: &str) -> &'set syntect::parsing::SyntaxReference {
     let extension = std::path::Path::new(file_name)
         .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("");
-    let syntax = set
-        .find_syntax_by_extension(extension)
+    set.find_syntax_by_extension(extension)
+        .or_else(|| set.find_syntax_by_extension(alias_extension(extension)))
         .or_else(|| set.find_syntax_by_token(file_name))
-        .or_else(|| content.lines().next().and_then(|line| set.find_syntax_by_first_line(line)))
-        .unwrap_or_else(|| set.find_syntax_plain_text());
+        .or_else(|| set.find_syntax_by_first_line(first_line))
+        .unwrap_or_else(|| set.find_syntax_plain_text())
+}
 
+/// Highlight just the given window of source `lines` (already split, no trailing newlines) — for the
+/// virtualized preview, so only the visible rows are highlighted (huge files stay instant). The
+/// syntect highlighter runs over the window in order, so multi-line constructs render correctly
+/// within it; state from above the window isn't carried (an acceptable trade for config files).
+pub fn highlight_window(file_name: &str, lines: &[&str], dark: bool) -> Vec<Line<'static>> {
+    let set = syntaxes();
+    let theme = theme(dark);
+    let syntax = syntax_for(set, file_name, lines.first().copied().unwrap_or(""));
     let mut highlighter = HighlightLines::new(syntax, theme);
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for raw in content.lines() {
-        match highlighter.highlight_line(raw, set) {
+    lines
+        .iter()
+        .map(|raw| match highlighter.highlight_line(raw, set) {
             Ok(ranges) => {
                 let spans: Vec<Span<'static>> = ranges
                     .into_iter()
                     .map(|(style, text)| {
                         // Use ONLY the syntect foreground (+ bold/italic) — never the theme's
-                        // per-span background, so the preview sits cleanly on the panel surface
-                        // (some themes box types/functions in a bg color, which reads as noise).
+                        // per-span background, so the preview sits cleanly on the panel surface.
                         let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
                         let mut out = Style::default().fg(fg);
                         if style.font_style.contains(FontStyle::BOLD) {
@@ -71,13 +90,11 @@ pub fn highlight_file(file_name: &str, content: &str, dark: bool) -> Vec<Line<'s
                         Span::styled(text.to_string(), out)
                     })
                     .collect();
-                lines.push(Line::from(spans));
+                Line::from(spans)
             }
-            // On any highlighter hiccup, fall back to the raw line (never drop content).
-            Err(_) => lines.push(Line::from(raw.to_string())),
-        }
-    }
-    lines
+            Err(_) => Line::from((*raw).to_string()),
+        })
+        .collect()
 }
 
 /// Whether `content` looks like binary (has NUL bytes in the sampled prefix) — the caller shows a
