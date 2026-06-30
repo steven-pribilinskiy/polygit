@@ -3,6 +3,11 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.4.1 — 2026-07-01
+Explorer: horizontal mouse-wheel scroll
+- The preview now scrolls **horizontally** with a horizontal wheel / trackpad (`ScrollLeft`/`ScrollRight`)
+  and with **Shift+wheel** over the preview.
+
 ## v3.4.0 — 2026-07-01
 Explorer: gitignore-aware, virtualized preview, recursive find, horizontal scroll
 - **`.gitignore`d entries are hidden by default** (node_modules, dist, build output, `.git`) — so the

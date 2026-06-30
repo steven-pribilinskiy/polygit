@@ -1999,16 +1999,32 @@ async fn run_event_loop(
                     let on_divider = mouse.column == divider_col
                         && mouse.row >= area.y
                         && mouse.row < area.y + area.height;
+                    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+                    let over_preview = point_in(preview_area, mouse.column, mouse.row);
                     match mouse.kind {
+                        // Shift+wheel over the preview scrolls it horizontally; plain wheel vertical.
+                        MouseEventKind::ScrollDown if shift && over_preview => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview_h(6); }
+                        }
+                        MouseEventKind::ScrollUp if shift && over_preview => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview_h(-6); }
+                        }
+                        // Native horizontal wheel / trackpad.
+                        MouseEventKind::ScrollRight => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview_h(6); }
+                        }
+                        MouseEventKind::ScrollLeft => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview_h(-6); }
+                        }
                         MouseEventKind::ScrollDown => {
-                            if point_in(preview_area, mouse.column, mouse.row) {
+                            if over_preview {
                                 if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview(3); }
                             } else if let Some(explorer) = app.explorer.as_mut() {
                                 explorer.list_scroll = explorer.list_scroll.saturating_add(3);
                             }
                         }
                         MouseEventKind::ScrollUp => {
-                            if point_in(preview_area, mouse.column, mouse.row) {
+                            if over_preview {
                                 if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview(-3); }
                             } else if let Some(explorer) = app.explorer.as_mut() {
                                 explorer.list_scroll = explorer.list_scroll.saturating_sub(3);
