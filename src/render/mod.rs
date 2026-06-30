@@ -945,6 +945,22 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     app.clickable.clear();
     app.hint_click.clear();
     app.max_click.clear();
+    // The list pane's click geometry is captured ONLY by `render_list`. When a pane is maximized
+    // (Info/Result/RepoPage) `render_list` doesn't run, so these would otherwise keep last frame's
+    // rects and a click on the maximized pane would fall THROUGH to a stale list row / header / kebab
+    // behind it. Reset them here every frame; `render_list` re-populates them when the list shows.
+    app.list_area = Rect::default();
+    app.preview_area = Rect::default();
+    app.list_rows_area = Rect::default();
+    app.list_footer_area = Rect::default();
+    app.header_area = Rect::default();
+    app.list_cols_click = None;
+    app.list_sort_click = None;
+    app.list_filter_click = None;
+    app.header_click.clear();
+    app.pr_cell_click.clear();
+    app.fav_cell_click.clear();
+    app.kebab_open_click.clear();
 
     // A maximized repo page is full-screen and replaces the normal layout (it carries its own
     // border footer, so — unlike the other panes — it returns early with no status bar). A restored
