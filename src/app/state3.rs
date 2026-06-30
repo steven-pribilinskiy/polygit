@@ -1571,6 +1571,30 @@ impl AppState {
         }
     }
 
+    /// Toggle the explorer between the recursive tree view and the flat folder view; persists.
+    pub fn toggle_explorer_tree_mode(&mut self) {
+        if let Some(explorer) = self.explorer.as_mut() {
+            explorer.toggle_tree_mode();
+            self.explorer_prefs.tree_mode = explorer.tree_mode;
+            self.save_state();
+        }
+    }
+
+    /// Step the tree expansion one level deeper / shallower (the level stepper buttons/keys).
+    pub fn explorer_expand_level(&mut self, deeper: bool) {
+        if let Some(explorer) = self.explorer.as_mut() {
+            if !explorer.tree_mode {
+                explorer.toggle_tree_mode();
+                self.explorer_prefs.tree_mode = true;
+                self.save_state();
+            }
+            if let Some(explorer) = self.explorer.as_mut() {
+                let next = if deeper { explorer.tree_level + 1 } else { explorer.tree_level.saturating_sub(1) };
+                explorer.expand_to_level(next);
+            }
+        }
+    }
+
     /// Toggle the explorer's time columns between relative ("2d ago") and absolute stamps; persists.
     pub fn toggle_explorer_date_format(&mut self) {
         use crate::explorer::DateFormat;

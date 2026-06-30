@@ -3177,6 +3177,8 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         name: String,
         is_dir: bool,
         is_parent: bool,
+        depth: usize,
+        expanded: bool,
         size: String,
         size_tier: SizeTier,
         perms: String,
@@ -3184,7 +3186,7 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         created: String,
         kind: String,
     }
-    let (rows, selected, list_scroll, split, columns, sort, ascending, date_format, focus, title, finder, preview_lines, preview_scroll, preview_hscroll) = {
+    let (rows, selected, list_scroll, split, columns, sort, ascending, date_format, focus, title, finder, preview_lines, preview_scroll, preview_hscroll, tree_mode) = {
         let explorer = app.explorer.as_ref().unwrap();
         let rows: Vec<RowCell> = explorer
             .entries
@@ -3196,6 +3198,8 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
                     name: entry.name.clone(),
                     is_dir: entry.is_dir,
                     is_parent: entry.is_parent,
+                    depth: entry.depth,
+                    expanded: entry.expanded,
                     size,
                     size_tier: SizeTier::of(bytes),
                     perms: entry.permissions.clone(),
@@ -3227,6 +3231,7 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
             explorer.preview.as_ref().map(|preview| preview.lines.clone()),
             explorer.preview.as_ref().map(|preview| preview.scroll).unwrap_or(0),
             explorer.preview_hscroll,
+            explorer.tree_mode,
         )
     };
 
@@ -3234,8 +3239,6 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
     let (close_line, close_click) = modal_close_button(modal);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     footer.extend(footer_chip("↑↓", " nav", HintKey::Char('j')));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("⏎", " open", HintKey::Enter));
     footer.push(footer_sep());
     footer.extend(footer_chip("/", " find", HintKey::Char('/')));
     footer.push(footer_sep());
@@ -3245,13 +3248,25 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
     footer.push(footer_sep());
     footer.extend(footer_chip("d", " dates", HintKey::Char('d')));
     footer.push(footer_sep());
+    // Tree ⇄ flat toggle + the level stepper (only the active mode gets the live label).
+    footer.extend(footer_chip("v", if tree_mode { " flat" } else { " tree" }, HintKey::Char('v')));
+    if tree_mode {
+        footer.push(footer_sep());
+        footer.extend(footer_chip("-/+", " level", HintKey::Char('+')));
+    }
+    footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let title_label = if tree_mode {
+        format!(" Explore (tree) — {title} ")
+    } else {
+        format!(" Explore — {title} ")
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
-        .title(format!(" Explore — {title} "))
+        .title(title_label)
         .title_top(close_line)
         .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
     let inner = block.inner(modal);
@@ -3381,7 +3396,15 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
             let cell = rows.get(entry_index)?;
             let screen_y = rows_area.y + (display_pos - list_scroll) as u16;
             row_clicks.push((screen_y, rows_area.x, rows_area.x + rows_area.width, entry_index));
-            let icon = if cell.is_parent { "↰ " } else if cell.is_dir { "▸ " } else { "  " };
+            // Tree-view indent + expand glyph (▾ open / ▸ closed); flat dirs keep the ▸ "enter" arrow.
+            let indent = "  ".repeat(cell.depth);
+            let icon = if cell.is_parent {
+                "↰ ".to_string()
+            } else if cell.is_dir {
+                format!("{} ", if cell.expanded { "▾" } else { "▸" })
+            } else {
+                "  ".to_string()
+            };
             // Explicit colors for EVERY cell (never rely on the terminal default) so a re-render
             // can't leave a row looking dimmed.
             let name_style = if cell.is_dir {
@@ -3390,7 +3413,7 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
                 Style::default().fg(text_fg)
             };
             let mut spans = vec![
-                Span::styled(pad(&format!("{icon}{}", cell.name), name_w), name_style),
+                Span::styled(pad(&format!("{indent}{icon}{}", cell.name), name_w), name_style),
                 Span::raw(" "),
             ];
             for (column, _, width, _) in &active {

@@ -1262,7 +1262,7 @@
   {
     "id": "explorer",
     "title": "File explorer",
-    "blurb": "A two-pane file browser for the selected repo (Ctrl+E): a directory list beside a syntax-highlighted preview, split by a draggable divider.",
+    "blurb": "A two-pane file browser for the selected repo (Ctrl+E): a directory list (flat or recursive tree) beside a syntax-highlighted preview, split by a draggable divider.",
     "bindings": [
       {
         "keys": [
@@ -1279,7 +1279,7 @@
           "←",
           "h"
         ],
-        "action": "Up a directory (or scroll the preview left when focused)",
+        "action": "Collapse the dir / jump to parent (tree) or go up a directory (flat) — preview: scroll left",
         "group": "Navigate"
       },
       {
@@ -1288,7 +1288,7 @@
           "l",
           "Enter"
         ],
-        "action": "Open a directory, or focus the preview for a file (preview: scroll right)",
+        "action": "Expand / step into a dir (tree) or open it (flat); a file focuses the preview — preview: scroll right",
         "group": "Navigate"
       },
       {
@@ -1307,6 +1307,23 @@
         ],
         "action": "Swap focus between the list and the preview",
         "group": "Navigate"
+      },
+      {
+        "keys": [
+          "v"
+        ],
+        "action": "Toggle the recursive tree view ⇄ the flat folder view",
+        "note": "persisted",
+        "group": "View"
+      },
+      {
+        "keys": [
+          "+",
+          "-"
+        ],
+        "action": "Expand / collapse the tree one level deeper / shallower",
+        "note": "the level stepper; in flat view, + switches to the tree",
+        "group": "View"
       },
       {
         "keys": [

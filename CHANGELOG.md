@@ -3,6 +3,16 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.3.0 — 2026-07-01
+Explorer tree view
+- **`v` toggles the explorer between a recursive tree view and the flat folder view** (persisted).
+  In the tree, directories expand/collapse in place (`←`/`→`/`Enter`, or click), nested under the
+  repo root with indent + ▾/▸ glyphs.
+- **`+` / `-` step the tree expansion one level deeper / shallower** (expand-to-level), so you can
+  reveal the whole structure to a chosen depth at once. The footer shows `v flat · -/+ level`.
+- Columns, sort, sizes, dates, the finder and the preview all work the same in either view; sorting
+  applies per-level in the tree.
+
 ## v3.2.1 — 2026-07-01
 Explorer discoverability: footer mnemonic + contextual help
 - The status-bar footer now shows **`^E explore`** (dims when no repo is selected, like the other

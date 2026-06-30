@@ -731,7 +731,7 @@ fn help_group_order(section_id: &str) -> &'static [&'static str] {
             "App & modals",
         ],
         "page" => &["Navigate", "Columns & info", "Row actions", "Panes", "Other"],
-        "explorer" => &["Navigate", "Columns & sort", "Preview", "Find", "Other"],
+        "explorer" => &["Navigate", "View", "Columns & sort", "Preview", "Find", "Other"],
         _ => &[],
     }
 }
