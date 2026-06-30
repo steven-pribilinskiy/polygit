@@ -4,207 +4,517 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    Background, BranchCheck, ButtonHoverStyle, ChangedRowEffect, ClaudeAgent, ColumnFlags, Contrast,
-    DesignLayout, HelpTab, IconStyle, RepoPageColumns, RepoPageStashColumns, RepoTabsMode,
-    SelectionStyle, SettingsLayout,
-    SortColumn, SortDir, SplitterMode, Theme, TooltipPrefs,
+    AutoUpdate, Background, BranchCheck, ButtonHoverStyle, ChangedRowEffect, ClaudeAgent,
+    CliHelpMode, ColumnFlags, Contrast, DesignLayout, DiffView, HelpTab, IconStyle, InfoLayout,
+    RepoPageColumns, RepoPageStashColumns, RepoTabsMode, RightView, SelectionStyle, SettingsLayout,
+    SortColumn, SortDir, SplitterMode, Theme, TooltipPrefs, UpdateInterval,
 };
 
-/// UI preferences persisted between runs at `~/.config/polygit/state.json`.
-/// `#[serde(default)]` keeps older state files (missing newer fields) loadable.
+/// `state.json` schema version. Files carrying this key load via the nested path; files without it
+/// (or `0`) are the legacy FLAT schema and migrate through `LegacyFlatState` → `From`. Bump only
+/// when the nested *shape* changes again.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// UI preferences persisted between runs at `~/.config/polygit/state.json`, grouped into logical
+/// sections (mirroring the Settings UI plus a few non-settings groups). `#[serde(default)]` on every
+/// section + sub-struct keeps partial / future files loadable; a whole missing section defaults from
+/// the sub-struct's `Default`. Old FLAT files (no `version`) migrate once via `LegacyFlatState`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PersistedState {
-    pub columns: ColumnFlags,
-    /// The info block (`i`) was shown on last exit.
-    pub info_pinned: bool,
-    /// Left/right splitter position.
+    /// Schema version (see `SCHEMA_VERSION`). Present ⇒ nested; absent/0 ⇒ legacy flat.
+    pub version: u32,
+    pub agent: AgentPrefs,
+    /// File-explorer preferences (columns, sort, date format).
+    pub explorer: crate::explorer::ExplorerPrefs,
+    pub interaction: InteractionPrefs,
+    pub layout: LayoutPrefs,
+    pub lists: ListPrefs,
+    pub pull_requests: PullRequestPrefs,
+    pub repo_page: RepoPagePrefs,
+    pub session: SessionState,
+    pub sync: SyncPrefs,
+    pub theming: ThemingPrefs,
+    pub tooltips: TooltipPrefs,
+    pub updates: UpdatePrefs,
+    pub view: ViewPrefs,
+    pub workspaces: WorkspacePrefs,
+}
+
+/// AI coding-agent launch (the `c` hotkey).
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPrefs {
+    /// Which agent CLI `c` launches (claude / codex / gemini).
+    pub claude_agent: ClaudeAgent,
+    /// Append the agent's "bypass all approval prompts" flag when launching.
+    pub claude_skip_permissions: bool,
+}
+
+/// Mouse / attention interaction.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InteractionPrefs {
+    /// Highlight actionable elements under the mouse (enables all-motion tracking). Default on.
+    pub hover_effects: bool,
+    /// Post-change attention indicator on changed cells: off / flash / highlight.
+    pub changed_row_effect: ChangedRowEffect,
+}
+
+impl Default for InteractionPrefs {
+    fn default() -> Self {
+        InteractionPrefs { hover_effects: true, changed_row_effect: ChangedRowEffect::default() }
+    }
+}
+
+/// Pane geometry + layout chrome (split ratios, borders, padding, splitter, info/result panels).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayoutPrefs {
+    /// 1-cell padding inside every bordered panel/modal. Default on.
+    pub panel_padding: bool,
+    /// Draw borders around the two main panes. Default on.
+    pub show_borders: bool,
+    /// How the pane splitters are presented (dedicated lane vs hover grip). Default hover.
+    pub splitter_mode: SplitterMode,
+    /// Periodic local branch/status refresh (off / auto). Default off.
+    pub branch_check: BranchCheck,
+    /// Info panel grouping layout (titled / spaced / flat). Default titled.
+    pub info_layout: InfoLayout,
+    /// Left/right splitter position (0 ⇒ use the default; clamped on load).
     pub split_ratio: f64,
-    /// The result/log panel (bottom of the preview) was shown on last exit (defaults on).
-    #[serde(default = "default_true")]
-    pub show_result_panel: bool,
     /// Info/result split ratio inside the preview (info-panel fraction).
     pub preview_split_ratio: f64,
-    /// 1-cell padding inside every bordered panel/modal (default on).
-    #[serde(default = "default_true")]
-    pub panel_padding: bool,
-    /// Glyph set (Unicode vs emoji).
-    pub icon_style: IconStyle,
-    /// Hide zero-count cells in the list columns (emoji mode always hides them; this extends it to
-    /// the Unicode set too).
-    #[serde(default)]
-    pub hide_zero_counts: bool,
-    /// Color theme (auto / dark / light).
-    pub theme: Theme,
-    /// Contrast level (normal / soft) — text + accent saturation.
-    pub contrast: Contrast,
-    /// Selected-row highlight style (blue bar vs subtle tint).
-    pub selection_style: SelectionStyle,
-    /// Button hover style (reverse-video vs soft tint) for hints/tabs/chips/keys.
-    #[serde(default)]
-    pub button_hover_style: ButtonHoverStyle,
-    /// Settings modal layout (tabbed / accordion / flat).
-    pub settings_layout: SettingsLayout,
-    /// Section names collapsed in the accordion settings layout.
-    #[serde(default)]
-    pub collapsed_settings: Vec<String>,
-    /// Relative paths of repos marked as favorites.
-    #[serde(default)]
-    pub favorites: Vec<String>,
-    /// Pin a "★ Favorites" section to the top of the list (default off).
-    #[serde(default)]
-    pub favorites_first: bool,
-    /// Bookmarked folders (absolute paths) for the folder picker.
-    #[serde(default)]
-    pub folder_bookmarks: Vec<String>,
-    /// Hide the dash-fill leader lines in group / folder headers (default off).
-    #[serde(default)]
+    /// Restored repo-panel height as a fraction of the main area (0 ⇒ default).
+    pub dock_ratio: f64,
+    /// The result/log panel (bottom of the preview) was shown on last exit. Default on.
+    pub show_result_panel: bool,
+    /// The info block (`i`) was shown on last exit.
+    pub info_pinned: bool,
+}
+
+impl Default for LayoutPrefs {
+    fn default() -> Self {
+        LayoutPrefs {
+            panel_padding: true,
+            show_borders: true,
+            splitter_mode: SplitterMode::Hover,
+            branch_check: BranchCheck::default(),
+            info_layout: InfoLayout::default(),
+            split_ratio: 0.0,
+            preview_split_ratio: 0.0,
+            dock_ratio: 0.0,
+            show_result_panel: true,
+            info_pinned: false,
+        }
+    }
+}
+
+/// Repo-list display: grouping/tree, columns, sort, favorites.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ListPrefs {
+    /// Grouped list view was on at last exit. Default on.
+    pub grouping_enabled: bool,
+    /// Directory-tree view was on at last exit.
+    pub tree_enabled: bool,
+    /// Hide the dash-fill leader lines in group / folder headers.
     pub hide_folder_lines: bool,
-    /// Which AI coding-agent CLI the `c` hotkey launches (claude / codex / gemini).
-    #[serde(default)]
-    pub claude_agent: ClaudeAgent,
-    /// Append the agent's "bypass all approval prompts" flag when launching (default off).
-    #[serde(default)]
-    pub claude_skip_permissions: bool,
-    /// Legacy single workspace (absolute paths). Kept for migration only — on load it folds into
-    /// `workspaces["default"]` when `workspaces` is empty. No longer written.
-    #[serde(default)]
-    pub roots: Vec<String>,
-    /// Named workspaces: name → folders/roots (absolute paths). Opened with `-w <name>` or the
-    /// `ws` picker; the folder picker (`A`) adds/removes roots in the active one. Default launch
-    /// (no `-w`) uses the CLI dirs or the cwd, never a workspace.
-    #[serde(default)]
-    pub workspaces: HashMap<String, Vec<String>>,
-    /// Background tone (normal / soft) — surface only. `None` in pre-split state files;
-    /// `resolve_background` derives it from `contrast` for backward compatibility.
-    pub background: Option<Background>,
-    /// Repo-list sort column. Tolerant: the removed `"discovery"` value (and anything
-    /// unknown) loads as the default (Name) without discarding the rest of the file.
-    #[serde(default, deserialize_with = "sort_column_tolerant")]
+    /// Repo-list sort column. Tolerant: removed `"discovery"` (and unknown) → `Name`.
+    #[serde(deserialize_with = "sort_column_tolerant")]
     pub sort_column: SortColumn,
     /// Repo-list sort direction.
     pub sort_dir: SortDir,
-    /// Last-active help-modal tab.
-    pub help_tab: HelpTab,
-    /// Grouped list view was on at last exit (default on).
-    #[serde(default = "default_true")]
-    pub grouping_enabled: bool,
-    /// Names (or `folder::name` keys) of collapsed groups.
-    pub collapsed_groups: Vec<String>,
-    /// Directory-tree view was on at last exit.
-    pub tree_enabled: bool,
-    /// Relative paths of collapsed folders.
-    pub collapsed_folders: Vec<String>,
-    /// Repo-page branch columns (all on by default).
-    pub repo_page_columns: RepoPageColumns,
-    /// Which optional Stashes-tab columns are shown — age / stats (default both on).
-    #[serde(default)]
-    pub repo_page_stash_columns: RepoPageStashColumns,
-    /// Repo-page bottom info panel shown (default on).
-    #[serde(default = "default_true")]
-    pub repo_page_info: bool,
-    /// Per-repo+branch base-branch overrides, keyed `"{repo_abs_path}\u{1f}{branch}"` → base ref.
-    /// When set, the repo page diffs that branch's stats against the chosen base instead of the
-    /// auto-detected fork parent.
-    pub base_overrides: HashMap<String, String>,
-    /// Pull every repo automatically on launch (default on). When off, repos load from the
-    /// status cache and pulling is a manual action (`e`/`E`).
-    #[serde(default = "default_true")]
-    pub auto_pull_on_launch: bool,
-    /// Skip the launch auto-pull when more than this many repos are discovered. `0` = no limit.
-    #[serde(default = "default_auto_pull_max")]
-    pub auto_pull_max_repos: u32,
-    /// Allow the launch auto-pull while the directory-tree view is active (default off — tree
-    /// view suppresses auto-pull).
-    pub auto_pull_in_tree: bool,
-    /// Highlight actionable elements under the mouse cursor. Off by default: it enables all-motion
-    /// mouse tracking, which takes over the terminal's own text selection / URL hover. Default on.
-    #[serde(default = "default_true")]
-    pub hover_effects: bool,
-    /// Draw borders around the two main panes (default on). Off reclaims the border rows/cols.
-    #[serde(default = "default_true")]
-    pub show_borders: bool,
-    /// How the pane splitters are presented: a dedicated 1-cell lane (default) or a thin grip shown
-    /// only on hover (default). (Replaces the old `show_splitter` bool; unknown old keys ignored.)
-    #[serde(default = "default_splitter_hover")]
-    pub splitter_mode: SplitterMode,
-    /// Post-change attention indicator on changed cells: off / flash / highlight (default flash).
-    /// (Replaces the old `changed_row_flash` / `changed_row_highlight` bools; old keys are ignored.)
-    #[serde(default)]
-    pub changed_row_effect: ChangedRowEffect,
-    /// Split the repo page into branches/worktrees/stashes tabs (off / auto). Default auto.
-    #[serde(default = "default_tabs_auto")]
-    pub repo_page_tabs: RepoTabsMode,
-    /// Repo-page window state: maximized (full-screen) when true, restored (docked panel) when false.
-    /// Default restored.
-    #[serde(default)]
-    pub repo_page_maximized: bool,
-    /// In the maximized (full-screen) repo page, show the tabbed view (true) instead of the flat
-    /// stacked single view (false). Toggled with `v`. Default flat (stacked).
-    #[serde(default)]
-    pub repo_page_maximized_tabbed: bool,
-    /// Repo-page sections collapsed in the flat (stacked) view — by section name
-    /// ("Branches"/"Worktrees"/"Stashes"/"Commits").
-    #[serde(default)]
-    pub repo_page_collapsed_sections: Vec<String>,
-    /// Restored repo-panel height as a fraction of the main area (0 = use the default).
-    #[serde(default)]
-    pub dock_ratio: f64,
-    /// Periodic local branch/status refresh (off / auto). Default off.
-    #[serde(default)]
-    pub branch_check: BranchCheck,
-    /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). All default on.
-    #[serde(default)]
-    pub tooltips: TooltipPrefs,
-    /// Kebab-menu "wrap copied prompt in `cd <repo> && claude '…'`" checkbox (default off).
-    #[serde(default)]
-    pub kebab_session_prefix: bool,
-    /// Help Design System tab layout (flat / tabbed). Default flat.
-    #[serde(default)]
-    pub design_layout: DesignLayout,
-    /// The app version last run — drives the "What's New" modal after an update. Empty on first run.
-    #[serde(default)]
-    pub last_seen_version: String,
-    /// CLI builder: when to show each flag's help text (always / on-hover / never). Default on-hover.
-    #[serde(default)]
-    pub cli_help_mode: crate::app::CliHelpMode,
-    /// Diff modal render style (raw / unified / split). Default raw.
-    #[serde(default)]
-    pub diff_view: crate::app::DiffView,
-    /// Result pane view on last exit: log vs diff (the flat log/raw/unified/split chip row).
-    #[serde(default)]
-    pub right_view: crate::app::RightView,
-    /// Result pane diff render style (raw / unified / split). Default raw.
-    #[serde(default)]
-    pub pane_diff_view: crate::app::DiffView,
-    /// Info panel grouping layout (titled sections / blank-line groups / flat). Default titled.
-    #[serde(default)]
-    pub info_layout: crate::app::InfoLayout,
-    /// Surface merged & closed PRs (not just open ones) in the PR column + info panel. Default off
-    /// — detection always finds all states, this only gates display.
-    #[serde(default)]
+    /// Relative paths of repos marked as favorites.
+    pub favorites: Vec<String>,
+    /// Pin a "★ Favorites" section to the top of the list.
+    pub favorites_first: bool,
+    /// Which list columns are shown.
+    pub columns: ColumnFlags,
+    /// Hide zero-count cells in the list columns (emoji mode always hides them).
+    pub hide_zero_counts: bool,
+}
+
+impl Default for ListPrefs {
+    fn default() -> Self {
+        ListPrefs {
+            grouping_enabled: true,
+            tree_enabled: false,
+            hide_folder_lines: false,
+            sort_column: SortColumn::default(),
+            sort_dir: SortDir::default(),
+            favorites: Vec::new(),
+            favorites_first: false,
+            columns: ColumnFlags::default(),
+            hide_zero_counts: false,
+        }
+    }
+}
+
+/// Pull-request display.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PullRequestPrefs {
+    /// Surface merged & closed PRs (not just open) in the PR column + info panel.
     pub show_merged_prs: bool,
-    /// Self-update policy for published GitHub releases (off / notify / install). Default off.
-    #[serde(default)]
-    pub auto_update: crate::app::AutoUpdate,
-    /// How often the self-update check polls GitHub (daily / weekly). Default daily.
-    #[serde(default)]
-    pub update_interval: crate::app::UpdateInterval,
-    /// Unix seconds of the last release check, so the cadence is honored across launches.
-    #[serde(default)]
+}
+
+/// Auto-pull-on-launch policy.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SyncPrefs {
+    /// Pull every repo automatically on launch. Default on.
+    pub auto_pull_on_launch: bool,
+    /// Skip the launch auto-pull above this many repos (`0` = no limit). Default 100.
+    pub auto_pull_max_repos: u32,
+    /// Allow the launch auto-pull while the directory-tree view is active.
+    pub auto_pull_in_tree: bool,
+}
+
+impl Default for SyncPrefs {
+    fn default() -> Self {
+        SyncPrefs { auto_pull_on_launch: true, auto_pull_max_repos: 100, auto_pull_in_tree: false }
+    }
+}
+
+/// Colors + glyphs.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemingPrefs {
+    /// Glyph set (Unicode vs emoji).
+    pub icon_style: IconStyle,
+    /// Color theme (auto / dark / light).
+    pub theme: Theme,
+    /// Background tone (normal / soft). `None` in pre-split files; `resolve_background` derives it.
+    pub background: Option<Background>,
+    /// Contrast level (normal / soft).
+    pub contrast: Contrast,
+    /// Selected-row highlight style (blue bar vs subtle tint).
+    pub selection_style: SelectionStyle,
+    /// Button hover style (reverse-video vs soft tint).
+    pub button_hover_style: ButtonHoverStyle,
+}
+
+/// Self-update from published GitHub releases (distinct from the local new-build watcher).
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdatePrefs {
+    /// Update policy for published releases (off / notify / install).
+    pub auto_update: AutoUpdate,
+    /// How often the self-update check polls GitHub (daily / weekly).
+    pub update_interval: UpdateInterval,
+    /// Unix seconds of the last release check (cadence spans launches).
     pub last_update_check: i64,
 }
 
-impl PersistedState {
+/// Saved workspaces + folder bookmarks.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspacePrefs {
+    /// Named workspaces: name → folders/roots (absolute paths).
+    pub workspaces: HashMap<String, Vec<String>>,
+    /// Legacy single workspace — folded into `workspaces["default"]` by `migrated()` when
+    /// `workspaces` is empty. No longer written.
+    pub roots: Vec<String>,
+    /// Bookmarked folders (absolute paths) for the folder picker.
+    pub folder_bookmarks: Vec<String>,
+}
+
+impl WorkspacePrefs {
     /// The named workspaces, folding a legacy single `roots` list into `workspaces["default"]`
     /// when no named workspaces exist yet (so old state files keep their saved folder set).
-    pub fn workspaces_migrated(&self) -> HashMap<String, Vec<String>> {
+    pub fn migrated(&self) -> HashMap<String, Vec<String>> {
         if self.workspaces.is_empty() && !self.roots.is_empty() {
             HashMap::from([("default".to_string(), self.roots.clone())])
         } else {
             self.workspaces.clone()
         }
     }
+}
+
+/// Repo-page columns + view state.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepoPagePrefs {
+    /// Branch columns (all on by default).
+    pub repo_page_columns: RepoPageColumns,
+    /// Optional Stashes-tab columns — age / stats (default both on).
+    pub repo_page_stash_columns: RepoPageStashColumns,
+    /// Bottom info panel shown. Default on.
+    pub repo_page_info: bool,
+    /// Per-repo+branch base-branch overrides, keyed `"{repo_abs_path}\u{1f}{branch}"` → base ref.
+    pub base_overrides: HashMap<String, String>,
+    /// Split into branches/worktrees/stashes tabs (off / auto). Default auto.
+    pub repo_page_tabs: RepoTabsMode,
+    /// Window state: maximized (full-screen) vs restored (docked panel). Default restored.
+    pub repo_page_maximized: bool,
+    /// In the maximized page, show the tabbed view instead of the flat stacked single view.
+    pub repo_page_maximized_tabbed: bool,
+    /// Sections collapsed in the flat (stacked) view, by section name.
+    pub repo_page_collapsed_sections: Vec<String>,
+}
+
+impl Default for RepoPagePrefs {
+    fn default() -> Self {
+        RepoPagePrefs {
+            repo_page_columns: RepoPageColumns::default(),
+            repo_page_stash_columns: RepoPageStashColumns::default(),
+            repo_page_info: true,
+            base_overrides: HashMap::new(),
+            repo_page_tabs: RepoTabsMode::Auto,
+            repo_page_maximized: false,
+            repo_page_maximized_tabbed: false,
+            repo_page_collapsed_sections: Vec::new(),
+        }
+    }
+}
+
+/// Result-pane / diff view state.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ViewPrefs {
+    /// Diff modal render style (raw / unified / split). Default raw.
+    pub diff_view: DiffView,
+    /// Result pane view on last exit: log vs diff.
+    pub right_view: RightView,
+    /// Result pane diff render style (raw / unified / split). Default raw.
+    pub pane_diff_view: DiffView,
+}
+
+/// Transient / chrome state that isn't a Settings toggle (last-seen version, active tabs, collapsed
+/// sets, UI-layout prefs).
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionState {
+    /// The app version last run — drives the "What's New" modal after an update.
+    pub last_seen_version: String,
+    /// Last-active help-modal tab.
+    pub help_tab: HelpTab,
+    /// Names (or `folder::name` keys) of collapsed groups.
+    pub collapsed_groups: Vec<String>,
+    /// Relative paths of collapsed folders.
+    pub collapsed_folders: Vec<String>,
+    /// Section names collapsed in the accordion settings layout.
+    pub collapsed_settings: Vec<String>,
+    /// Settings modal layout (tabbed / accordion / flat).
+    pub settings_layout: SettingsLayout,
+    /// Help Design System tab layout (flat / tabbed).
+    pub design_layout: DesignLayout,
+    /// CLI builder: when to show each flag's help text (always / on-hover / never).
+    pub cli_help_mode: CliHelpMode,
+    /// Kebab-menu "wrap copied prompt in `cd <repo> && claude '…'`" checkbox.
+    pub kebab_session_prefix: bool,
+}
+
+/// The legacy FLAT `state.json` schema (every release before the nested v1 schema). Read-only:
+/// deserialized from an old file, then remapped into the nested `PersistedState` via `From`. Keeps
+/// all the original per-field defaults + tolerant deserializers so old files load identically.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct LegacyFlatState {
+    pub columns: ColumnFlags,
+    pub info_pinned: bool,
+    pub split_ratio: f64,
+    #[serde(default = "default_true")]
+    pub show_result_panel: bool,
+    pub preview_split_ratio: f64,
+    #[serde(default = "default_true")]
+    pub panel_padding: bool,
+    pub icon_style: IconStyle,
+    #[serde(default)]
+    pub hide_zero_counts: bool,
+    pub theme: Theme,
+    pub contrast: Contrast,
+    pub selection_style: SelectionStyle,
+    #[serde(default)]
+    pub button_hover_style: ButtonHoverStyle,
+    pub settings_layout: SettingsLayout,
+    #[serde(default)]
+    pub collapsed_settings: Vec<String>,
+    #[serde(default)]
+    pub favorites: Vec<String>,
+    #[serde(default)]
+    pub favorites_first: bool,
+    #[serde(default)]
+    pub folder_bookmarks: Vec<String>,
+    #[serde(default)]
+    pub hide_folder_lines: bool,
+    #[serde(default)]
+    pub claude_agent: ClaudeAgent,
+    #[serde(default)]
+    pub claude_skip_permissions: bool,
+    #[serde(default)]
+    pub roots: Vec<String>,
+    #[serde(default)]
+    pub workspaces: HashMap<String, Vec<String>>,
+    pub background: Option<Background>,
+    #[serde(default, deserialize_with = "sort_column_tolerant")]
+    pub sort_column: SortColumn,
+    pub sort_dir: SortDir,
+    pub help_tab: HelpTab,
+    #[serde(default = "default_true")]
+    pub grouping_enabled: bool,
+    pub collapsed_groups: Vec<String>,
+    pub tree_enabled: bool,
+    pub collapsed_folders: Vec<String>,
+    pub repo_page_columns: RepoPageColumns,
+    #[serde(default)]
+    pub repo_page_stash_columns: RepoPageStashColumns,
+    #[serde(default = "default_true")]
+    pub repo_page_info: bool,
+    pub base_overrides: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub auto_pull_on_launch: bool,
+    #[serde(default = "default_auto_pull_max")]
+    pub auto_pull_max_repos: u32,
+    pub auto_pull_in_tree: bool,
+    #[serde(default = "default_true")]
+    pub hover_effects: bool,
+    #[serde(default = "default_true")]
+    pub show_borders: bool,
+    #[serde(default = "default_splitter_hover")]
+    pub splitter_mode: SplitterMode,
+    #[serde(default)]
+    pub changed_row_effect: ChangedRowEffect,
+    #[serde(default = "default_tabs_auto")]
+    pub repo_page_tabs: RepoTabsMode,
+    #[serde(default)]
+    pub repo_page_maximized: bool,
+    #[serde(default)]
+    pub repo_page_maximized_tabbed: bool,
+    #[serde(default)]
+    pub repo_page_collapsed_sections: Vec<String>,
+    #[serde(default)]
+    pub dock_ratio: f64,
+    #[serde(default)]
+    pub branch_check: BranchCheck,
+    #[serde(default)]
+    pub tooltips: TooltipPrefs,
+    #[serde(default)]
+    pub kebab_session_prefix: bool,
+    #[serde(default)]
+    pub design_layout: DesignLayout,
+    #[serde(default)]
+    pub last_seen_version: String,
+    #[serde(default)]
+    pub cli_help_mode: CliHelpMode,
+    #[serde(default)]
+    pub diff_view: DiffView,
+    #[serde(default)]
+    pub right_view: RightView,
+    #[serde(default)]
+    pub pane_diff_view: DiffView,
+    #[serde(default)]
+    pub info_layout: InfoLayout,
+    #[serde(default)]
+    pub show_merged_prs: bool,
+    #[serde(default)]
+    pub auto_update: AutoUpdate,
+    #[serde(default)]
+    pub update_interval: UpdateInterval,
+    #[serde(default)]
+    pub last_update_check: i64,
+}
+
+impl From<LegacyFlatState> for PersistedState {
+    /// Remap a deserialized legacy flat file into the nested schema. Reads the legacy struct's
+    /// already-defaulted values (so the `default_true` fields keep their true defaults), and
+    /// preserves BOTH `roots` and `workspaces` so the read-time `migrated()` fold is unchanged.
+    fn from(legacy: LegacyFlatState) -> Self {
+        PersistedState {
+            version: SCHEMA_VERSION,
+            agent: AgentPrefs {
+                claude_agent: legacy.claude_agent,
+                claude_skip_permissions: legacy.claude_skip_permissions,
+            },
+            // New in v3 — no legacy equivalent (columns off, name-ascending, relative dates).
+            explorer: crate::explorer::ExplorerPrefs::default(),
+            interaction: InteractionPrefs {
+                hover_effects: legacy.hover_effects,
+                changed_row_effect: legacy.changed_row_effect,
+            },
+            layout: LayoutPrefs {
+                panel_padding: legacy.panel_padding,
+                show_borders: legacy.show_borders,
+                splitter_mode: legacy.splitter_mode,
+                branch_check: legacy.branch_check,
+                info_layout: legacy.info_layout,
+                split_ratio: legacy.split_ratio,
+                preview_split_ratio: legacy.preview_split_ratio,
+                dock_ratio: legacy.dock_ratio,
+                show_result_panel: legacy.show_result_panel,
+                info_pinned: legacy.info_pinned,
+            },
+            lists: ListPrefs {
+                grouping_enabled: legacy.grouping_enabled,
+                tree_enabled: legacy.tree_enabled,
+                hide_folder_lines: legacy.hide_folder_lines,
+                sort_column: legacy.sort_column,
+                sort_dir: legacy.sort_dir,
+                favorites: legacy.favorites,
+                favorites_first: legacy.favorites_first,
+                columns: legacy.columns,
+                hide_zero_counts: legacy.hide_zero_counts,
+            },
+            pull_requests: PullRequestPrefs { show_merged_prs: legacy.show_merged_prs },
+            repo_page: RepoPagePrefs {
+                repo_page_columns: legacy.repo_page_columns,
+                repo_page_stash_columns: legacy.repo_page_stash_columns,
+                repo_page_info: legacy.repo_page_info,
+                base_overrides: legacy.base_overrides,
+                repo_page_tabs: legacy.repo_page_tabs,
+                repo_page_maximized: legacy.repo_page_maximized,
+                repo_page_maximized_tabbed: legacy.repo_page_maximized_tabbed,
+                repo_page_collapsed_sections: legacy.repo_page_collapsed_sections,
+            },
+            session: SessionState {
+                last_seen_version: legacy.last_seen_version,
+                help_tab: legacy.help_tab,
+                collapsed_groups: legacy.collapsed_groups,
+                collapsed_folders: legacy.collapsed_folders,
+                collapsed_settings: legacy.collapsed_settings,
+                settings_layout: legacy.settings_layout,
+                design_layout: legacy.design_layout,
+                cli_help_mode: legacy.cli_help_mode,
+                kebab_session_prefix: legacy.kebab_session_prefix,
+            },
+            sync: SyncPrefs {
+                auto_pull_on_launch: legacy.auto_pull_on_launch,
+                auto_pull_max_repos: legacy.auto_pull_max_repos,
+                auto_pull_in_tree: legacy.auto_pull_in_tree,
+            },
+            theming: ThemingPrefs {
+                icon_style: legacy.icon_style,
+                theme: legacy.theme,
+                background: legacy.background,
+                contrast: legacy.contrast,
+                selection_style: legacy.selection_style,
+                button_hover_style: legacy.button_hover_style,
+            },
+            tooltips: legacy.tooltips,
+            updates: UpdatePrefs {
+                auto_update: legacy.auto_update,
+                update_interval: legacy.update_interval,
+                last_update_check: legacy.last_update_check,
+            },
+            view: ViewPrefs {
+                diff_view: legacy.diff_view,
+                right_view: legacy.right_view,
+                pane_diff_view: legacy.pane_diff_view,
+            },
+            workspaces: WorkspacePrefs {
+                workspaces: legacy.workspaces,
+                roots: legacy.roots,
+                folder_bookmarks: legacy.folder_bookmarks,
+            },
+        }
+    }
+}
+
+/// Round a ratio to 4 decimals so persisted geometry doesn't carry f64 noise like
+/// `0.49333333333333335`. Applied on write only — the load-side clamps stay authoritative.
+pub(crate) fn round4(value: f64) -> f64 {
+    (value * 10_000.0).round() / 10_000.0
 }
 
 fn default_true() -> bool {
@@ -270,19 +580,57 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(new_dir)
 }
 
+/// v3's nested state file. Kept SEPARATE from the legacy flat `state.json` so the two schemas never
+/// collide: v3 reads/writes `state-v3.json`, while pre-v3 builds keep using their own `state.json`.
+/// Pinning an older build is therefore non-destructive — each version owns its config file.
 pub fn state_path() -> Option<PathBuf> {
+    Some(config_dir()?.join("state-v3.json"))
+}
+
+/// The legacy flat `state.json` (still owned by pre-v3 builds). v3 reads it ONCE to seed
+/// `state-v3.json` on first run, and never writes it.
+pub fn legacy_state_path() -> Option<PathBuf> {
     Some(config_dir()?.join("state.json"))
 }
 
-/// Load persisted UI state. A missing/corrupt file deserializes from `{}` so every field's
-/// serde default applies (notably the `default = "default_true"` ones), unlike the derived
-/// `Default` which would zero booleans like `repo_page_info`.
+/// Whether the raw JSON carries a `version >= 1` key — i.e. it's the NESTED schema. Absent / `0` /
+/// unparseable ⇒ treat as the legacy flat schema. Tolerant: a parse error ⇒ `false` ⇒ legacy path
+/// ⇒ `"{}"` fallback (never panics).
+fn is_versioned(raw: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64))
+        .is_some_and(|version| version >= 1)
+}
+
+/// Parse raw state.json text into the nested `PersistedState`. Versioned files deserialize directly;
+/// legacy flat files go through `LegacyFlatState` → `From`. Any failure falls back to `"{}"` so every
+/// serde default applies (notably the `default_true` ones). Pure — no filesystem (so tests are hermetic).
+pub(crate) fn parse(raw: &str) -> PersistedState {
+    if is_versioned(raw) {
+        serde_json::from_str(raw)
+            .or_else(|_| serde_json::from_str("{}"))
+            .expect("empty object deserializes with serde defaults")
+    } else {
+        let legacy: LegacyFlatState = serde_json::from_str(raw)
+            .or_else(|_| serde_json::from_str("{}"))
+            .expect("empty object deserializes with serde defaults");
+        PersistedState::from(legacy)
+    }
+}
+
+/// Load persisted UI state. Prefer v3's `state-v3.json`; if it's absent (first v3 launch), SEED from
+/// the legacy flat `state.json` (a pre-v3 build's file) and migrate it — without ever modifying
+/// `state.json`, so older builds keep their own config intact. The first `save()` writes `state-v3.json`.
 pub fn load() -> PersistedState {
-    let contents = state_path().and_then(|path| std::fs::read_to_string(&path).ok());
-    let raw = contents.as_deref().unwrap_or("{}");
-    serde_json::from_str(raw)
-        .or_else(|_| serde_json::from_str("{}"))
-        .expect("empty object deserializes with serde defaults")
+    if let Some(v3) = state_path() {
+        if let Ok(raw) = std::fs::read_to_string(&v3) {
+            return parse(&raw); // existing v3 file (nested)
+        }
+    }
+    // No state-v3.json yet — seed from the old flat state.json (left untouched), or defaults.
+    let legacy = legacy_state_path().and_then(|path| std::fs::read_to_string(&path).ok());
+    parse(legacy.as_deref().unwrap_or("{}"))
 }
 
 /// Persist UI state, best-effort (errors are ignored).
@@ -318,52 +666,52 @@ mod tests {
 
     #[test]
     fn legacy_roots_migrate_into_default_workspace() {
-        // An old file with a single `roots` list and no `workspaces` → workspaces["default"].
-        let json = r#"{"roots":["/a","/b"]}"#;
-        let state: PersistedState = serde_json::from_str(json).unwrap();
-        let workspaces = state.workspaces_migrated();
+        // An OLD flat file (no `version`) with a single `roots` list and no `workspaces` →
+        // workspaces["default"]. Goes through the legacy migration path via `parse`.
+        let state = parse(r#"{"roots":["/a","/b"]}"#);
+        let workspaces = state.workspaces.migrated();
         assert_eq!(workspaces.get("default"), Some(&vec!["/a".to_string(), "/b".to_string()]));
         // Named workspaces present → legacy roots are ignored (no migration).
-        let json = r#"{"roots":["/legacy"],"workspaces":{"work":["/x"]}}"#;
-        let state: PersistedState = serde_json::from_str(json).unwrap();
-        let workspaces = state.workspaces_migrated();
+        let state = parse(r#"{"roots":["/legacy"],"workspaces":{"work":["/x"]}}"#);
+        let workspaces = state.workspaces.migrated();
         assert_eq!(workspaces.get("work"), Some(&vec!["/x".to_string()]));
         assert!(!workspaces.contains_key("default"));
         // Neither present → empty.
-        assert!(PersistedState::default().workspaces_migrated().is_empty());
+        assert!(PersistedState::default().workspaces.migrated().is_empty());
     }
 
     #[test]
     fn old_state_without_background_loads() {
-        // A pre-split state file has no `background` key; serde(default) → None.
-        let json = r#"{"contrast":"soft","theme":"dark"}"#;
-        let state: PersistedState = serde_json::from_str(json).unwrap();
-        assert_eq!(state.background, None);
-        assert_eq!(resolve_background(state.background, state.contrast), Background::Soft);
+        // A pre-split flat file has no `background` key; the legacy path → None.
+        let state = parse(r#"{"contrast":"soft","theme":"dark"}"#);
+        assert_eq!(state.theming.background, None);
+        assert_eq!(resolve_background(state.theming.background, state.theming.contrast), Background::Soft);
     }
 
     #[test]
     fn removed_discovery_sort_loads_as_name_without_losing_other_fields() {
-        // An old file with the removed "discovery" sort must not reset the whole file.
-        let json = r#"{"sort_column":"discovery","panel_padding":true,"grouping_enabled":true}"#;
-        let state: PersistedState = serde_json::from_str(json).unwrap();
-        assert_eq!(state.sort_column, SortColumn::Name);
-        assert!(state.panel_padding);
-        assert!(state.grouping_enabled);
+        // An old flat file with the removed "discovery" sort must not reset the whole file.
+        let state = parse(r#"{"sort_column":"discovery","panel_padding":true,"grouping_enabled":true}"#);
+        assert_eq!(state.lists.sort_column, SortColumn::Name);
+        assert!(state.layout.panel_padding);
+        assert!(state.lists.grouping_enabled);
     }
 
     #[test]
     fn base_overrides_default_empty_and_round_trip() {
-        // An old file without the key loads with an empty override map (no panic, no reset).
-        let old: PersistedState = serde_json::from_str(r#"{"panel_padding":true}"#).unwrap();
-        assert!(old.base_overrides.is_empty());
-        assert!(old.panel_padding);
-        // A set override round-trips through serialize → deserialize.
-        let mut state = PersistedState::default();
-        state.base_overrides.insert("/repo\u{1f}feature".to_string(), "origin/stage".to_string());
+        // An old flat file without the key loads with an empty override map (no panic, no reset).
+        let old = parse(r#"{"panel_padding":true}"#);
+        assert!(old.repo_page.base_overrides.is_empty());
+        assert!(old.layout.panel_padding);
+        // A set override round-trips through the NESTED (versioned) serialize → parse path.
+        let mut state = PersistedState { version: SCHEMA_VERSION, ..Default::default() };
+        state.repo_page.base_overrides.insert("/repo\u{1f}feature".to_string(), "origin/stage".to_string());
         let json = serde_json::to_string(&state).unwrap();
-        let back: PersistedState = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.base_overrides.get("/repo\u{1f}feature").map(String::as_str), Some("origin/stage"));
+        let back = parse(&json);
+        assert_eq!(
+            back.repo_page.base_overrides.get("/repo\u{1f}feature").map(String::as_str),
+            Some("origin/stage")
+        );
     }
 
     #[test]
@@ -375,8 +723,66 @@ mod tests {
             (r#"{"sort_column":"garbage"}"#, SortColumn::Name),
         ];
         for (json, expected) in cases {
-            let state: PersistedState = serde_json::from_str(json).unwrap();
-            assert_eq!(state.sort_column, expected, "for {json}");
+            assert_eq!(parse(json).lists.sort_column, expected, "for {json}");
         }
+    }
+
+    #[test]
+    fn legacy_flat_file_migrates_to_nested() {
+        // A representative OLD flat file (no `version`) — values must land in the right sections.
+        let flat = r#"{
+            "theme":"light","contrast":"normal","split_ratio":0.625,
+            "repo_page_info":false,"repo_page_maximized":true,
+            "workspaces":{"work":["/x","/y"]},
+            "base_overrides":{"repo-x":"origin/main"},
+            "last_seen_version":"2.50.0","auto_pull_on_launch":false,"icon_style":"emoji"
+        }"#;
+        let state = parse(flat);
+        assert_eq!(state.version, SCHEMA_VERSION);
+        assert_eq!(state.theming.theme, Theme::Light);
+        assert_eq!(state.theming.icon_style, IconStyle::Emoji);
+        assert_eq!(state.layout.split_ratio, 0.625);
+        assert!(!state.repo_page.repo_page_info);
+        assert!(state.repo_page.repo_page_maximized);
+        assert_eq!(state.workspaces.workspaces.get("work"), Some(&vec!["/x".to_string(), "/y".to_string()]));
+        assert_eq!(state.repo_page.base_overrides.get("repo-x").map(String::as_str), Some("origin/main"));
+        assert_eq!(state.session.last_seen_version, "2.50.0");
+        assert!(!state.sync.auto_pull_on_launch);
+    }
+
+    #[test]
+    fn versioned_file_loads_directly() {
+        // A nested file with `version` deserializes straight through (no legacy remap).
+        let mut state = PersistedState { version: SCHEMA_VERSION, ..Default::default() };
+        state.theming.theme = Theme::Dark;
+        state.sync.auto_pull_max_repos = 250;
+        let json = serde_json::to_string(&state).unwrap();
+        let back = parse(&json);
+        assert_eq!(back.version, SCHEMA_VERSION);
+        assert_eq!(back.theming.theme, Theme::Dark);
+        assert_eq!(back.sync.auto_pull_max_repos, 250);
+    }
+
+    #[test]
+    fn empty_object_uses_defaults() {
+        // `{}` has no version → legacy path → the `default_true` carry-through must hold.
+        let state = parse("{}");
+        assert!(state.layout.show_result_panel);
+        assert!(state.layout.panel_padding);
+        assert!(state.repo_page.repo_page_info);
+        assert!(state.sync.auto_pull_on_launch);
+        assert!(state.lists.grouping_enabled);
+        assert!(state.interaction.hover_effects);
+        assert_eq!(state.sync.auto_pull_max_repos, 100);
+        // A whole missing section also defaults correctly (sub-struct Default).
+        assert_eq!(state.layout.splitter_mode, SplitterMode::Hover);
+        assert_eq!(state.repo_page.repo_page_tabs, RepoTabsMode::Auto);
+    }
+
+    #[test]
+    fn round4_trims_ratio_noise() {
+        assert_eq!(round4(0.493_333_333_333_353_5), 0.4933);
+        assert_eq!(round4(0.319_148_936_170_212_8), 0.3191);
+        assert_eq!(round4(0.4), 0.4);
     }
 }

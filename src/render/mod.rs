@@ -546,6 +546,30 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         {
             button_hits.push(row_rect(row, start, end));
         }
+    } else if let Some(explorer) = app.explorer.as_ref() {
+        // File explorer: only its own controls hover (close, hint chips, the two scrollbars, and the
+        // file rows) — never the list/info/result panes behind it.
+        if let Some((row, start, end)) = explorer.close_click.filter(|&(r, s, e)| contains(r, s, e)) {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some(scroll) = scrollbar_col_hit(Some(&[
+            crate::app::ScrollKind::ExplorerList,
+            crate::app::ScrollKind::ExplorerPreview,
+        ])) {
+            hits.push(scroll);
+        } else if let Some(&(row, start, end, index)) =
+            explorer.rows_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            // The selected row gets the deeper selection-hover tint; others the soft hover.
+            if index == explorer.selected {
+                strong_hits.push(row_rect(row, start, end));
+            } else {
+                hits.push(row_rect(row, start, end));
+            }
+        }
     } else {
         // No modal: hover follows the cursor across whatever panes rendered this frame (it's
         // independent of focus — so the docked repo page no longer kills the list/info/result
@@ -1045,6 +1069,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.show_keybindings {
             render_keybindings_modal(frame, app, area);
         }
+        if app.explorer.is_some() {
+            render_explorer(frame, app, area);
+        }
         if app.dropdown.is_some() {
             render_dropdown(frame, app, area);
         }
@@ -1230,6 +1257,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.show_keybindings {
         render_keybindings_modal(frame, app, area);
+    }
+    if app.explorer.is_some() {
+        render_explorer(frame, app, area);
     }
     if app.dropdown.is_some() {
         render_dropdown(frame, app, area);

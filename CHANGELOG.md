@@ -3,6 +3,57 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.2.0 — 2026-06-30
+Explorer overhaul: sortable columns, fuzzy finder, folder sizes, better highlighting
+- **Syntax highlighting rebuilt on `two-face`** (the bat project's curated sets) — broad language
+  coverage (TypeScript/TSX, TOML, Dockerfile, …) and high-contrast themes (Monokai on dark, OneHalf
+  on light). Only the foreground is applied, so there's no more washed-out, boxed-in coloring.
+- **Sortable columns** — click a column header (or the `s sort ▾` dropdown) to sort by name / size /
+  permissions / modified / created / kind; the active header shows ▲/▼ and a re-click flips it.
+  Directories always sort before files.
+- **`t cols ▾` column picker + `s sort ▾` sort picker dropdowns** — the same machinery as the main
+  panels (checkboxes, mnemonics, select-all / reset). Columns fixed-width so they never overlap.
+- **Fuzzy file finder** (`/`) — filters the listing as you type (subsequence match, best first), ⏎
+  jumps to / opens the match.
+- **Folder sizes** — directories show their recursive size, computed on a background thread.
+- **Size coloring by magnitude** — bytes dim, KB normal, MB bold, GB bold + brightest, so large
+  files stand out at a glance.
+- **`d` toggles dates** between relative ("2d ago") and absolute stamps ("2026-06-30 14:05").
+- **Horizontal preview scroll** (`←`/`→` while the preview is focused) for long lines; the splitter
+  highlights on hover. Replaces the old `1`-`5` column toggles with the dropdown.
+
+## v3.1.0 — 2026-06-30
+File explorer for the selected repo · syntax-highlighted preview · faster cached builds
+- **`Explore` — a two-pane file explorer for the selected repo** (`Ctrl+E`, or the `Explore files…`
+  kebab item). A directory **list pane** (name always shown; **size / permissions / modified /
+  created / kind** columns toggleable with `1`-`5`, off by default + persisted) beside a
+  **syntax-highlighted preview pane**, split by a **draggable divider** (`[`/`]` or drag). Navigate
+  with `↑↓`/`jk`, `←`/`h` up a dir, `⏎`/`→` open a dir or focus the preview, `Tab` swaps panes.
+  Mouse: click a row to select (click again to open), wheel scrolls whichever pane is under the
+  cursor. Hover stays inside the modal; looks right on every theme (the preview follows dark/light).
+- **Syntax highlighting via `syntect`** (broad file-type coverage) rendered into the TUI with
+  `syntect-tui` — the preview theme tracks the app's dark/light background.
+- **Faster builds with `sccache`** — dependency crates (incl. `syntect`) are compiled once and
+  cached across clean/release builds, so the new dependency adds no recurring build cost.
+
+## v3.0.0 — 2026-06-30
+Organized `state.json` (nested sections + migration) · `polygit update` CLI · Build-info alphabetized
+- **Settings now live in a new, organized file: `~/.config/polygit/state-v3.json`** — logical nested
+  sections (agent · interaction · layout · lists · pull_requests · repo_page · session · sync · theming ·
+  tooltips · updates · view · workspaces) with a schema `version`, instead of one flat ~60-key blob. On
+  first v3 launch it **seeds from your old flat `state.json`**. Geometry ratios are rounded to 4 decimals
+  (no more `0.49333333333333335`).
+- **Pre-v3 builds keep their own `state.json` — pinning an older version is non-destructive.** v3 reads/writes
+  `state-v3.json`; older builds read/write the legacy `state.json`; the two never collide, so nothing is lost
+  switching between them (they just don't share settings). The version-picker floor is **v3.0.0** so pinning
+  an older build (behind the `a` "show older" toggle) shows a heads-up — run `polygit update` or pin a newer
+  version from the picker to come back.
+- **`polygit update` (alias `upgrade`)** — a CLI command that self-installs the latest published release.
+  Surfaced in Help → CLI, Help → About, and the Build info modal. Complements Settings → Updates → Auto-update,
+  which now **defaults to `notify`** (toast when a newer release exists; never auto-installs without `install`).
+- **Build info tree is alphabetized** — the `state.json` viewer now sorts keys at every level, so the nested
+  sections (and the keys within them) read tidily regardless of on-disk order.
+
 ## v2.109.0 — 2026-06-30
 Auto-update from GitHub releases + two settings/list fixes
 - **Auto-update setting** (Settings → Updates): **off / notify / install**, with an **Update check**

@@ -2,9 +2,11 @@ mod app;
 mod cache;
 mod changelog;
 mod diffview;
+mod explorer;
 mod git;
 mod graph;
 mod groups;
+mod highlight;
 mod keybindings;
 mod keymap;
 mod persist;
@@ -124,6 +126,9 @@ enum Commands {
         #[command(subcommand)]
         action: Option<WsAction>,
     },
+    /// Self-update: download the latest published release and install it over this binary.
+    #[command(visible_alias = "upgrade")]
+    Update,
 }
 
 /// `ws` subcommands.
@@ -622,6 +627,10 @@ fn kebab_activate(
                 open_url(&url);
             }
         }
+        app::KebabAction::Explore => {
+            app.close_kebab();
+            app.open_explorer(idx);
+        }
     }
     None
 }
@@ -834,6 +843,46 @@ fn confirm_for_row(repo_idx: usize, row: &PageRow) -> Option<ConfirmDialog> {
     }
 }
 
+/// `polygit update` / `upgrade`: fetch the newest published release and, if it's newer than this
+/// build, download + install it over the running binary. Headless (prints + exits) — the same
+/// install path as the in-app version picker, always targeting the latest. See Help → CLI / About.
+async fn run_self_update() -> Result<i32> {
+    let current = env!("CARGO_PKG_VERSION");
+    let Some(target) = crate::update::current_target() else {
+        eprintln!(
+            "self-update isn't supported on this platform (native Windows → run under WSL, or \
+             reinstall via the install script)."
+        );
+        return Ok(1);
+    };
+    let exe = std::env::current_exe()
+        .map_err(|err| anyhow::anyhow!("can't resolve the running executable: {err}"))?
+        .display()
+        .to_string();
+    println!("polygit v{current} — checking GitHub for a newer release…");
+    let releases = crate::update::fetch_releases().await?;
+    let Some((latest, date)) = releases.first() else {
+        println!("no releases found.");
+        return Ok(0);
+    };
+    match crate::changelog::version_cmp(latest, current) {
+        std::cmp::Ordering::Greater => {
+            println!("installing v{latest} ({date}) over {exe}…");
+            crate::update::download_and_install(latest, target, &exe).await?;
+            println!("✓ updated to v{latest} — restart polygit to run it.");
+            Ok(0)
+        }
+        std::cmp::Ordering::Equal => {
+            println!("✓ already on the latest release (v{current}).");
+            Ok(0)
+        }
+        std::cmp::Ordering::Less => {
+            println!("you're ahead of the latest release (local v{current} > published v{latest}).");
+            Ok(0)
+        }
+    }
+}
+
 async fn run() -> Result<i32> {
     let cli = Cli::parse();
 
@@ -848,6 +897,9 @@ async fn run() -> Result<i32> {
     let profiling = profile::profile_enabled(cli.profile);
 
     // Subcommands.
+    if let Some(Commands::Update) = &cli.command {
+        return run_self_update().await;
+    }
     if let Some(Commands::Ws { action }) = &cli.command {
         match action {
             Some(WsAction::Ls) => return list_workspaces(),
@@ -926,7 +978,7 @@ fn resolve_roots(
     match workspace {
         Some(name) => {
             if out.is_empty() {
-                if let Some(roots) = crate::persist::load().workspaces_migrated().get(name) {
+                if let Some(roots) = crate::persist::load().workspaces.migrated().get(name) {
                     for root in roots {
                         add(PathBuf::from(root), &mut out);
                     }
@@ -949,7 +1001,7 @@ fn resolve_roots(
 /// Print the saved workspaces (name → folders) to stdout. Used by `ws ls` and as the no-TTY
 /// fallback for the `ws` picker.
 fn list_workspaces() -> Result<i32> {
-    let workspaces = crate::persist::load().workspaces_migrated();
+    let workspaces = crate::persist::load().workspaces.migrated();
     if workspaces.is_empty() {
         println!("No saved workspaces yet.");
         println!("Create one:  polygit -w <name> <dir>...");
@@ -972,7 +1024,7 @@ fn list_workspaces() -> Result<i32> {
 /// Interactive workspace picker (`polygit ws`): a full-screen list of saved workspaces. Returns the
 /// chosen `(name, roots)`, or `None` if cancelled / none saved.
 fn pick_workspace() -> Result<Option<(String, Vec<PathBuf>)>> {
-    let workspaces = crate::persist::load().workspaces_migrated();
+    let workspaces = crate::persist::load().workspaces.migrated();
     if workspaces.is_empty() {
         list_workspaces()?;
         return Ok(None);
@@ -1267,6 +1319,7 @@ async fn run_event_loop(
     let mut dragging_divider = false;
     let mut dragging_dock = false;
     let mut dragging_preview_split = false;
+    let mut dragging_explorer_split = false;
     // Tracks the list selection between frames: when it changes (keyboard / Alt+wheel nav, filter
     // preview, …) the view scrolls just enough to keep it visible. The plain wheel changes only
     // `list_scroll`, not the selection, so it never triggers this — the view scrolls freely.
@@ -1927,6 +1980,95 @@ async fn run_event_loop(
                 // Build-info modal: footer hints (`r` restart / `esc` close) are handled by the
                 // hint-click injection above; the `[x]` button or a click outside closes it (a click
                 // inside is inert, so you can select/scroll the JSON preview without it vanishing).
+                // File explorer: click rows to select (a second click on a dir / the selected file
+                // opens it), drag the divider to resize, wheel scrolls whichever pane is under the
+                // cursor, `[x]`/outside closes.
+                if app.explorer.is_some() && app.dropdown.is_none() {
+                    let (area, list_area, preview_area, divider_col, close_click, header_click) = {
+                        let explorer = app.explorer.as_ref().unwrap();
+                        (
+                            explorer.area,
+                            explorer.list_area,
+                            explorer.preview_area,
+                            explorer.divider_col,
+                            explorer.close_click,
+                            explorer.header_click.clone(),
+                        )
+                    };
+                    let on_divider = mouse.column == divider_col
+                        && mouse.row >= area.y
+                        && mouse.row < area.y + area.height;
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            if point_in(preview_area, mouse.column, mouse.row) {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview(3); }
+                            } else if let Some(explorer) = app.explorer.as_mut() {
+                                explorer.list_scroll = explorer.list_scroll.saturating_add(3);
+                            }
+                        }
+                        MouseEventKind::ScrollUp => {
+                            if point_in(preview_area, mouse.column, mouse.row) {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview(-3); }
+                            } else if let Some(explorer) = app.explorer.as_mut() {
+                                explorer.list_scroll = explorer.list_scroll.saturating_sub(3);
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Left) if on_divider => {
+                            dragging_explorer_split = true;
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.set_split_from_col(mouse.column); }
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) if dragging_explorer_split => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.set_split_from_col(mouse.column); }
+                        }
+                        MouseEventKind::Up(MouseButton::Left) if dragging_explorer_split => {
+                            dragging_explorer_split = false;
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            // A click on a column header sorts by it (toggles direction on the active).
+                            let clicked_header = header_click
+                                .iter()
+                                .find(|&&(row, start, end, _)| {
+                                    mouse.row == row && mouse.column >= start && mouse.column < end
+                                })
+                                .map(|&(.., key)| key);
+                            let clicked_row = app
+                                .explorer
+                                .as_ref()
+                                .and_then(|explorer| {
+                                    explorer.rows_click.iter().find(|&&(row, start, end, _)| {
+                                        mouse.row == row && mouse.column >= start && mouse.column < end
+                                    })
+                                    .map(|&(.., index)| index)
+                                });
+                            if let Some(key) = clicked_header {
+                                app.set_explorer_sort(key);
+                            } else if let Some(index) = clicked_row {
+                                if let Some(explorer) = app.explorer.as_mut() {
+                                    if explorer.selected == index {
+                                        // Second click on the already-selected row opens it.
+                                        explorer.enter();
+                                    } else {
+                                        explorer.selected = index;
+                                        explorer.preview = None;
+                                        explorer.focus = crate::explorer::ExplorerFocus::List;
+                                    }
+                                }
+                            } else if region_hit(close_click, mouse.column, mouse.row)
+                                || !point_in(area, mouse.column, mouse.row)
+                            {
+                                app.close_explorer();
+                            } else if point_in(preview_area, mouse.column, mouse.row) {
+                                if let Some(explorer) = app.explorer.as_mut() {
+                                    explorer.focus = crate::explorer::ExplorerFocus::Preview;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    let _ = list_area;
+                    continue;
+                }
+
                 if app.show_build_info {
                     match mouse.kind {
                         // Plain wheel scrolls the preview (selection untouched, web-app style);
@@ -3163,6 +3305,121 @@ async fn run_event_loop(
                         KeyCode::Char('c') => app.keybindings_clear_selected(),
                         KeyCode::Char('d') => app.keybindings_reset_selected(),
                         KeyCode::Char('R') => app.keybindings_reset_confirm = true,
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // File explorer (skip while a dropdown is open over it — the dropdown gate below wins).
+                // List: arrows/jk move · ←/h up a dir · →/l/⏎ open dir or focus preview · tab pane ·
+                // [/] resize · / find · t cols · s sort · d dates · esc/q close. Preview-focused: ←/→
+                // scroll horizontally.
+                if app.explorer.is_some() && app.dropdown.is_none() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    // Finder mode: keys feed the fuzzy query until it's committed or dismissed.
+                    let finder_open = app.explorer.as_ref().is_some_and(|explorer| explorer.finder.is_some());
+                    if finder_open {
+                        match key.code {
+                            KeyCode::Esc => {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.close_finder(); }
+                            }
+                            KeyCode::Enter => {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.finder_commit(); }
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.finder_backspace(); }
+                            }
+                            KeyCode::Down => {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.finder_move(1); }
+                            }
+                            KeyCode::Up => {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.finder_move(-1); }
+                            }
+                            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.finder_push(ch); }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                    let preview_focus = app
+                        .explorer
+                        .as_ref()
+                        .map(|explorer| explorer.focus == explorer::ExplorerFocus::Preview)
+                        .unwrap_or(false);
+                    let page = app.explorer.as_ref().map(|e| e.preview_area.height.max(1) as isize).unwrap_or(10);
+                    let anchor = app.explorer.as_ref().map(|e| (e.area.y + 1, e.area.x + 30)).unwrap_or((1, 30));
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.close_explorer(),
+                        KeyCode::Tab | KeyCode::BackTab => {
+                            if let Some(explorer) = app.explorer.as_mut() {
+                                explorer.focus = match explorer.focus {
+                                    explorer::ExplorerFocus::List => explorer::ExplorerFocus::Preview,
+                                    explorer::ExplorerFocus::Preview => explorer::ExplorerFocus::List,
+                                };
+                            }
+                        }
+                        KeyCode::Char('[') => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.adjust_split(-0.03); }
+                        }
+                        KeyCode::Char(']') => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.adjust_split(0.03); }
+                        }
+                        // Fuzzy file finder.
+                        KeyCode::Char('/') => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.open_finder(); }
+                        }
+                        // Column picker / sort picker dropdowns (same machinery as the main panels).
+                        KeyCode::Char('t') => app.open_dropdown(app::DropdownKind::ExplorerColumns, anchor.1, anchor.0),
+                        KeyCode::Char('s') => app.open_dropdown(app::DropdownKind::ExplorerSort, anchor.1, anchor.0),
+                        // Toggle relative ↔ absolute date stamps.
+                        KeyCode::Char('d') => app.toggle_explorer_date_format(),
+                        // Down / up — drive the preview when it's focused, else the list.
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if preview_focus {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview(1); }
+                            } else if let Some(explorer) = app.explorer.as_mut() { explorer.move_selection(1); }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if preview_focus {
+                                if let Some(explorer) = app.explorer.as_mut() { explorer.scroll_preview(-1); }
+                            } else if let Some(explorer) = app.explorer.as_mut() { explorer.move_selection(-1); }
+                        }
+                        KeyCode::PageDown => {
+                            if let Some(explorer) = app.explorer.as_mut() {
+                                if preview_focus { explorer.scroll_preview(page); } else { explorer.move_selection(page); }
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            if let Some(explorer) = app.explorer.as_mut() {
+                                if preview_focus { explorer.scroll_preview(-page); } else { explorer.move_selection(-page); }
+                            }
+                        }
+                        KeyCode::Char('g') | KeyCode::Home => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.select_first(); }
+                        }
+                        KeyCode::Char('G') | KeyCode::End => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.select_last(); }
+                        }
+                        // Left/right: preview-focused → horizontal scroll; list-focused → up-dir / open.
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            if let Some(explorer) = app.explorer.as_mut() {
+                                if preview_focus { explorer.scroll_preview_h(-8); } else { explorer.go_up(); }
+                            }
+                        }
+                        KeyCode::Char('l') | KeyCode::Right => {
+                            if let Some(explorer) = app.explorer.as_mut() {
+                                if preview_focus { explorer.scroll_preview_h(8); } else { explorer.enter(); }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(explorer) = app.explorer.as_mut() { explorer.enter(); }
+                        }
                         _ => {}
                     }
                     continue;
@@ -4493,6 +4750,8 @@ async fn run_event_loop(
                     // `Ctrl+K` opens the keybindings editor (remap shortcuts). Before the nav arms,
                     // whose `(Char('k'), _)` would otherwise swallow it.
                     (KeyCode::Char('k'), KeyModifiers::CONTROL) => app.open_keybindings(),
+                    // `Ctrl+E` opens the file explorer for the selected repo.
+                    (KeyCode::Char('e'), KeyModifiers::CONTROL) => app.open_explorer_selected(),
 
                     // Navigation
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => {

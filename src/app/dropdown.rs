@@ -148,6 +148,24 @@ impl AppState {
                     enabled: true,
                 })
                 .collect(),
+            DropdownKind::ExplorerColumns => crate::explorer::ExplorerColumn::ALL
+                .iter()
+                .map(|&(column, label, mnemonic)| DropdownItem {
+                    label: label.to_string(),
+                    on: self.explorer.as_ref().is_some_and(|explorer| column.enabled(&explorer.columns)),
+                    mnemonic,
+                    enabled: true,
+                })
+                .collect(),
+            DropdownKind::ExplorerSort => crate::explorer::SortKey::ALL
+                .iter()
+                .map(|&(key, label, mnemonic)| DropdownItem {
+                    label: label.to_string(),
+                    on: self.explorer.as_ref().is_some_and(|explorer| explorer.sort == key),
+                    mnemonic,
+                    enabled: true,
+                })
+                .collect(),
         }
     }
 
@@ -212,6 +230,8 @@ impl AppState {
             DropdownKind::PageColumns => PAGE_COLS.len(),
             DropdownKind::PageSort => PAGE_SORTS.len(),
             DropdownKind::StashColumns => STASH_COLS.len(),
+            DropdownKind::ExplorerColumns => crate::explorer::ExplorerColumn::ALL.len(),
+            DropdownKind::ExplorerSort => crate::explorer::SortKey::ALL.len(),
         })
     }
 
@@ -257,6 +277,12 @@ impl AppState {
             Some(DropdownKind::StashColumns) => {
                 STASH_COLS.iter().all(|&(column, ..)| self.repo_page_stash_column_on(column))
             }
+            Some(DropdownKind::ExplorerColumns) => self
+                .explorer
+                .as_ref()
+                .is_some_and(|explorer| {
+                    crate::explorer::ExplorerColumn::ALL.iter().all(|&(column, ..)| column.enabled(&explorer.columns))
+                }),
             _ => false,
         }
     }
@@ -287,6 +313,16 @@ impl AppState {
                     }
                 }
             }
+            Some(DropdownKind::ExplorerColumns) => {
+                let current = self.explorer.as_ref().map(|explorer| explorer.columns);
+                if let Some(columns) = current {
+                    for &(column, ..) in &crate::explorer::ExplorerColumn::ALL {
+                        if column.enabled(&columns) != target {
+                            self.toggle_explorer_column(column);
+                        }
+                    }
+                }
+            }
             _ => return,
         }
         self.save_state();
@@ -299,6 +335,12 @@ impl AppState {
             Some(DropdownKind::PageColumns) => self.repo_page_columns = RepoPageColumns::default(),
             Some(DropdownKind::StashColumns) => {
                 self.repo_page_stash_columns = RepoPageStashColumns::default()
+            }
+            Some(DropdownKind::ExplorerColumns) => {
+                self.explorer_prefs.columns = crate::explorer::ExplorerColumns::default();
+                if let Some(explorer) = self.explorer.as_mut() {
+                    explorer.columns = self.explorer_prefs.columns;
+                }
             }
             _ => return,
         }
@@ -358,6 +400,18 @@ impl AppState {
                     self.save_state();
                 }
                 false
+            }
+            DropdownKind::ExplorerColumns => {
+                if let Some((column, ..)) = crate::explorer::ExplorerColumn::ALL.get(index) {
+                    self.toggle_explorer_column(*column);
+                }
+                false
+            }
+            DropdownKind::ExplorerSort => {
+                if let Some((key, ..)) = crate::explorer::SortKey::ALL.get(index) {
+                    self.set_explorer_sort(*key);
+                }
+                true
             }
         }
     }

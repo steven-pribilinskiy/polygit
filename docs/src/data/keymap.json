@@ -495,6 +495,21 @@
       },
       {
         "keys": [
+          "Ctrl",
+          "E"
+        ],
+        "action": "Open the file explorer for the selected repo",
+        "note": "two-pane file browser (list + syntax-highlighted preview, powered by two-face) rooted at the repo. Also the `Explore files…` kebab item. Inside: ↑↓/jk move · ←/h up a dir · ⏎/→ open dir or focus preview · tab swap panes · / fuzzy-find · t columns dropdown · s sort dropdown (or click a column header — ▲/▼) · d toggle relative/absolute dates · [ ] resize · ←/→ scroll the preview horizontally when focused · esc/q close. Folders show recursive sizes; size is colored by magnitude.",
+        "keywords": [
+          "explorer",
+          "files",
+          "browse",
+          "preview"
+        ],
+        "group": "Clipboard & run"
+      },
+      {
+        "keys": [
           "D"
         ],
         "action": "Open the documentation website in the browser",

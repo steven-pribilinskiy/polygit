@@ -14,11 +14,13 @@ use crate::changelog::version_cmp;
 /// The GitHub repo releases are published to (matches `docs/public/install.sh`).
 pub const REPO: &str = "steven-pribilinskiy/polygit";
 
-/// The first release that ships the in-app version picker. By default the picker only offers
-/// versions at or above this floor, because those are the ones you can switch *out of* again from
-/// inside the app — so you can never strand yourself on a build with no switcher. Bump only if the
-/// picker's on-disk contract changes.
-pub const VERSION_SELECT_MIN: &str = "2.72.0";
+/// The floor the version picker offers by default. Two reasons gate it: (1) these builds ship the
+/// in-app switcher (so you can never strand yourself on a build with no picker), and (2) since
+/// v3.0.0 they share the NESTED `state.json` schema — a pre-v3 (flat-schema) build can't read a
+/// nested file and would reset your settings to defaults. Pre-v3 builds are still reachable behind
+/// the picker's `a` "show older" toggle + the below-floor warning. Bump when the on-disk contract
+/// changes again.
+pub const VERSION_SELECT_MIN: &str = "3.0.0";
 
 /// Whether `version` ships the in-app picker (at or above the floor).
 pub fn supports_in_app_switch(version: &str) -> bool {
@@ -165,6 +167,9 @@ mod tests {
     fn floor_gates_versions() {
         assert!(supports_in_app_switch(VERSION_SELECT_MIN));
         assert!(supports_in_app_switch("3.0.0"));
+        assert!(supports_in_app_switch("3.1.0"));
+        // Below the v3.0.0 nested-schema floor — gated behind the picker's "show older" toggle.
+        assert!(!supports_in_app_switch("2.109.0"));
         assert!(!supports_in_app_switch("2.71.1"));
         assert!(!supports_in_app_switch("2.5.2"));
     }
