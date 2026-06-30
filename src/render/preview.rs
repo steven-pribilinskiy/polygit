@@ -959,29 +959,6 @@ pub(crate) fn build_info_lines(
     };
     push_copyable(&mut lines, &mut clicks, "Path", display, path);
 
-    // Layout radio control — switch grouping (titled / spaced / flat). Hidden when maximized (which
-    // forces titled sections). A blank line separates it from the fields above.
-    if !maximized {
-        lines.push(Line::from(String::new()));
-        let mut spans: Vec<Span> = vec![Span::styled(format!("{:<13}", "Layout"), label)];
-        let mut col = LABEL_W as u16;
-        for option in crate::app::InfoLayout::ALL {
-            let on = option == app.info_layout;
-            let chip = format!("{} {}", if on { "●" } else { "○" }, option.label());
-            let width = UnicodeWidthStr::width(chip.as_str()) as u16;
-            let style = if on {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-            } else {
-                dim
-            };
-            clicks.push((lines.len(), col, col + width, InfoAction::SetInfoLayout(option)));
-            spans.push(Span::styled(chip, style));
-            spans.push(Span::raw("  "));
-            col += width + 2;
-        }
-        lines.push(Line::from(spans));
-    }
-
     (lines, clicks)
 }
 

@@ -330,7 +330,7 @@
           "L"
         ],
         "action": "Cycle the info panel's grouping layout (titled sections → spaced → flat)",
-        "note": "or click the Layout radio at the bottom of the info panel; a maximized info pane always shows titled sections. Persisted",
+        "note": "or set it in Settings → Layout → Info layout; a maximized info pane always shows titled sections. Persisted",
         "keywords": [
           "info",
           "layout",

@@ -240,12 +240,6 @@ impl AppState {
         self.save_state();
     }
 
-    /// Set the info panel's grouping layout (the radio chips at the bottom of the panel).
-    pub fn set_info_layout(&mut self, layout: crate::app::InfoLayout) {
-        self.info_layout = layout;
-        self.save_state();
-    }
-
     /// Toggle the grouped list view, keeping the selection on the same repo (shared by the
     /// `z` key and the status-bar hint). Toasts a pointer at the config when no groups exist.
     pub fn toggle_grouping_view(&mut self) {
@@ -702,8 +696,11 @@ impl AppState {
             }
             (8, 0) => self.branch_check = BranchCheck::Off,
             (8, 1) => self.branch_check = BranchCheck::Auto,
+            (9, 0) => self.info_layout = crate::app::InfoLayout::Sections,
+            (9, 1) => self.info_layout = crate::app::InfoLayout::Groups,
+            (9, 2) => self.info_layout = crate::app::InfoLayout::Flat,
             // Lists
-            (9, 0) | (9, 1) => {
+            (10, 0) | (10, 1) => {
                 let enable = option_idx == 0;
                 if self.grouping_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -711,7 +708,7 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
-            (10, 0) | (10, 1) => {
+            (11, 0) | (11, 1) => {
                 let enable = option_idx == 0;
                 if self.tree_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -719,51 +716,51 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
-            (11, 0) => self.hide_folder_lines = true,
-            (11, 1) => self.hide_folder_lines = false,
+            (12, 0) => self.hide_folder_lines = true,
+            (12, 1) => self.hide_folder_lines = false,
             // Pull requests
-            (12, 0) => self.show_merged_prs = true,
-            (12, 1) => self.show_merged_prs = false,
+            (13, 0) => self.show_merged_prs = true,
+            (13, 1) => self.show_merged_prs = false,
             // Sync
-            (13, 0) => self.auto_pull_on_launch = true,
-            (13, 1) => self.auto_pull_on_launch = false,
-            (14, 0) => self.auto_pull_max_repos = 50,
-            (14, 1) => self.auto_pull_max_repos = 100,
-            (14, 2) => self.auto_pull_max_repos = 250,
-            (14, 3) => self.auto_pull_max_repos = 0,
-            (15, 0) => self.auto_pull_in_tree = true,
-            (15, 1) => self.auto_pull_in_tree = false,
+            (14, 0) => self.auto_pull_on_launch = true,
+            (14, 1) => self.auto_pull_on_launch = false,
+            (15, 0) => self.auto_pull_max_repos = 50,
+            (15, 1) => self.auto_pull_max_repos = 100,
+            (15, 2) => self.auto_pull_max_repos = 250,
+            (15, 3) => self.auto_pull_max_repos = 0,
+            (16, 0) => self.auto_pull_in_tree = true,
+            (16, 1) => self.auto_pull_in_tree = false,
             // Theming
-            (16, 0) => self.icon_style = IconStyle::Unicode,
-            (16, 1) => self.icon_style = IconStyle::Emoji,
+            (17, 0) => self.icon_style = IconStyle::Unicode,
+            (17, 1) => self.icon_style = IconStyle::Emoji,
             // Hide zeros is forced on (and inert) in emoji mode — ignore clicks then.
-            (17, 0) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = true,
-            (17, 1) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = false,
-            (18, 0) => self.theme = Theme::Auto,
-            (18, 1) => self.theme = Theme::Dark,
-            (18, 2) => self.theme = Theme::Light,
-            (19, 0) => self.background = Background::Normal,
-            (19, 1) => self.background = Background::Soft,
-            (19, 2) => self.background = Background::Terminal,
-            (20, 0) => self.contrast = Contrast::Normal,
-            (20, 1) => self.contrast = Contrast::Soft,
-            (21, 0) => self.selection_style = SelectionStyle::Blue,
-            (21, 1) => self.selection_style = SelectionStyle::Subtle,
-            (22, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
-            (22, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
+            (18, 0) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = true,
+            (18, 1) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = false,
+            (19, 0) => self.theme = Theme::Auto,
+            (19, 1) => self.theme = Theme::Dark,
+            (19, 2) => self.theme = Theme::Light,
+            (20, 0) => self.background = Background::Normal,
+            (20, 1) => self.background = Background::Soft,
+            (20, 2) => self.background = Background::Terminal,
+            (21, 0) => self.contrast = Contrast::Normal,
+            (21, 1) => self.contrast = Contrast::Soft,
+            (22, 0) => self.selection_style = SelectionStyle::Blue,
+            (22, 1) => self.selection_style = SelectionStyle::Subtle,
+            (23, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
+            (23, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
             // Tooltips
-            (23, 0) => self.tooltips.set_all(true),
-            (23, 1) => self.tooltips.set_all(false),
-            (24, 0) => self.tooltips.footer = true,
-            (24, 1) => self.tooltips.footer = false,
-            (25, 0) => self.tooltips.headers = true,
-            (25, 1) => self.tooltips.headers = false,
-            (26, 0) => self.tooltips.counts = true,
-            (26, 1) => self.tooltips.counts = false,
-            (27, 0) => self.tooltips.settings = true,
-            (27, 1) => self.tooltips.settings = false,
-            (28, 0) => self.tooltips.links = true,
-            (28, 1) => self.tooltips.links = false,
+            (24, 0) => self.tooltips.set_all(true),
+            (24, 1) => self.tooltips.set_all(false),
+            (25, 0) => self.tooltips.footer = true,
+            (25, 1) => self.tooltips.footer = false,
+            (26, 0) => self.tooltips.headers = true,
+            (26, 1) => self.tooltips.headers = false,
+            (27, 0) => self.tooltips.counts = true,
+            (27, 1) => self.tooltips.counts = false,
+            (28, 0) => self.tooltips.settings = true,
+            (28, 1) => self.tooltips.settings = false,
+            (29, 0) => self.tooltips.links = true,
+            (29, 1) => self.tooltips.links = false,
             _ => return,
         }
         self.save_state();
@@ -803,52 +800,57 @@ impl AppState {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
             },
+            9 => match self.info_layout {
+                crate::app::InfoLayout::Sections => 0,
+                crate::app::InfoLayout::Groups => 1,
+                crate::app::InfoLayout::Flat => 2,
+            },
             // Lists
-            9 => usize::from(!self.grouping_enabled),
-            10 => usize::from(!self.tree_enabled),
-            11 => usize::from(!self.hide_folder_lines),
+            10 => usize::from(!self.grouping_enabled),
+            11 => usize::from(!self.tree_enabled),
+            12 => usize::from(!self.hide_folder_lines),
             // Pull requests
-            12 => usize::from(!self.show_merged_prs),
+            13 => usize::from(!self.show_merged_prs),
             // Sync
-            13 => usize::from(!self.auto_pull_on_launch),
-            14 => match self.auto_pull_max_repos {
+            14 => usize::from(!self.auto_pull_on_launch),
+            15 => match self.auto_pull_max_repos {
                 50 => 0,
                 100 => 1,
                 250 => 2,
                 _ => 3,
             },
-            15 => usize::from(!self.auto_pull_in_tree),
+            16 => usize::from(!self.auto_pull_in_tree),
             // Theming
-            16 => match self.icon_style {
+            17 => match self.icon_style {
                 IconStyle::Unicode => 0,
                 IconStyle::Emoji => 1,
             },
             // Emoji always hides zeros → force-selected "on" regardless of the stored flag.
-            17 => usize::from(!(self.hide_zero_counts || self.icon_style == IconStyle::Emoji)),
-            18 => match self.theme {
+            18 => usize::from(!(self.hide_zero_counts || self.icon_style == IconStyle::Emoji)),
+            19 => match self.theme {
                 Theme::Auto => 0,
                 Theme::Dark => 1,
                 Theme::Light => 2,
             },
-            19 => match self.background {
+            20 => match self.background {
                 Background::Normal => 0,
                 Background::Soft => 1,
                 Background::Terminal => 2,
             },
-            20 => match self.contrast {
+            21 => match self.contrast {
                 Contrast::Normal => 0,
                 Contrast::Soft => 1,
             },
-            21 => match self.selection_style {
+            22 => match self.selection_style {
                 SelectionStyle::Blue => 0,
                 SelectionStyle::Subtle => 1,
             },
-            22 => match self.button_hover_style {
+            23 => match self.button_hover_style {
                 ButtonHoverStyle::Inverted => 0,
                 ButtonHoverStyle::Subtle => 1,
             },
             // Tooltips — All tooltips: 0 = all on, 1 = all off, 2 = mixed (neither radio active).
-            23 => {
+            24 => {
                 if self.tooltips.all_on() {
                     0
                 } else if self.tooltips.all_off() {
@@ -857,11 +859,11 @@ impl AppState {
                     2
                 }
             }
-            24 => usize::from(!self.tooltips.footer),
-            25 => usize::from(!self.tooltips.headers),
-            26 => usize::from(!self.tooltips.counts),
-            27 => usize::from(!self.tooltips.settings),
-            28 => usize::from(!self.tooltips.links),
+            25 => usize::from(!self.tooltips.footer),
+            26 => usize::from(!self.tooltips.headers),
+            27 => usize::from(!self.tooltips.counts),
+            28 => usize::from(!self.tooltips.settings),
+            29 => usize::from(!self.tooltips.links),
             _ => 0,
         }
     }
@@ -875,13 +877,14 @@ impl AppState {
             6 => &["dedicated", "on hover"],
             7 => &["off", "auto"],
             8 => &["off", "auto"],
-            14 => &["50", "100", "250", "\u{221e}"],
-            16 => &["unicode", "emoji"],
-            18 => &["auto", "dark", "light"],
-            19 => &["normal", "soft", "terminal"],
-            20 => &["normal", "soft"],
-            21 => &["blue", "subtle"],
-            22 => &["inverted", "subtle"],
+            9 => &["titled", "spaced", "flat"],
+            15 => &["50", "100", "250", "\u{221e}"],
+            17 => &["unicode", "emoji"],
+            19 => &["auto", "dark", "light"],
+            20 => &["normal", "soft", "terminal"],
+            21 => &["normal", "soft"],
+            22 => &["blue", "subtle"],
+            23 => &["inverted", "subtle"],
             _ => &["on", "off"],
         }
     }
@@ -891,12 +894,13 @@ impl AppState {
     pub fn settings_default_option(row: usize) -> usize {
         match row {
             // Rows whose DEFAULT is the first option (index 0). Agent: AI agent→claude(0). Interaction:
-            // hover on(2). Layout: panel padding on(4), borders on(5), branch-check off(8). Lists:
-            // grouping on(9). Sync: auto-pull-on-launch(13). Theming: icons unicode(16), theme auto(18),
-            // background normal(19), contrast normal(20), selection blue(21). Tooltips (23–28) all on.
-            0 | 2 | 4 | 5 | 8 | 9 | 13 | 16 | 18 | 19 | 20 | 21 | 23 | 24 | 25 | 26 | 27 | 28 => 0,
+            // hover on(2). Layout: panel padding on(4), borders on(5), branch-check off(8), info layout
+            // titled(9). Lists: grouping on(10). Sync: auto-pull-on-launch(14). Theming: icons unicode(17),
+            // theme auto(19), background normal(20), contrast normal(21), selection blue(22). Tooltips
+            // (24–29) all on.
+            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 => 0,
             // Index-1 defaults: changed-row effect flash(3), pane splitter on-hover(6), repo-page-tabs
-            // auto(7), auto-pull-limit 100(14), button-hover subtle(22), and every remaining boolean off.
+            // auto(7), auto-pull-limit 100(15), button-hover subtle(23), and every remaining boolean off.
             _ => 1,
         }
     }
@@ -951,6 +955,7 @@ impl AppState {
         self.repo_page_tabbed_override = None;
         self.maximized = None;
         self.branch_check = BranchCheck::Off;
+        self.info_layout = crate::app::InfoLayout::default();
         self.tooltips = TooltipPrefs::default();
         self.claude_agent = ClaudeAgent::default();
         self.claude_skip_permissions = false;

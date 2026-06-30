@@ -2771,7 +2771,6 @@ async fn run_event_loop(
                                     copy_to_clipboard(&text);
                                 }
                                 InfoAction::ToggleExpand(field) => app.toggle_info_expanded(&field),
-                                InfoAction::SetInfoLayout(layout) => app.set_info_layout(layout),
                             }
                         } else if let Some(repo_idx) = app
                             .kebab_open_click
