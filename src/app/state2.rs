@@ -828,7 +828,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 29;
+    pub const SETTINGS_ROWS: usize = 30;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -1060,47 +1060,48 @@ impl AppState {
                 self.repo_page_tabbed_override = None; // changing the preference clears any `v` flip
             }
             8 => self.branch_check = self.branch_check.cycle(),
+            9 => self.info_layout = self.info_layout.cycle(),
             // Lists
-            9 => {
+            10 => {
                 let prev = self.selected_repo_index();
                 self.grouping_enabled = !self.grouping_enabled;
                 self.reselect_repo(prev);
             }
-            10 => {
+            11 => {
                 let prev = self.selected_repo_index();
                 self.tree_enabled = !self.tree_enabled;
                 self.reselect_repo(prev);
             }
-            11 => self.hide_folder_lines = !self.hide_folder_lines,
+            12 => self.hide_folder_lines = !self.hide_folder_lines,
             // Pull requests
-            12 => self.show_merged_prs = !self.show_merged_prs,
+            13 => self.show_merged_prs = !self.show_merged_prs,
             // Sync
-            13 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
-            14 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
-            15 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            14 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            15 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            16 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
             // Theming
-            16 => {
+            17 => {
                 self.icon_style = match self.icon_style {
                     IconStyle::Unicode => IconStyle::Emoji,
                     IconStyle::Emoji => IconStyle::Unicode,
                 };
             }
             // Inert in emoji mode (always hides zeros); only togglable with the Unicode set.
-            17 if self.icon_style != IconStyle::Emoji => {
+            18 if self.icon_style != IconStyle::Emoji => {
                 self.hide_zero_counts = !self.hide_zero_counts;
             }
-            18 => self.theme = self.theme.cycle(),
-            19 => self.background = self.background.cycle(),
-            20 => self.contrast = self.contrast.cycle(),
-            21 => self.selection_style = self.selection_style.cycle(),
-            22 => self.button_hover_style = self.button_hover_style.cycle(),
+            19 => self.theme = self.theme.cycle(),
+            20 => self.background = self.background.cycle(),
+            21 => self.contrast = self.contrast.cycle(),
+            22 => self.selection_style = self.selection_style.cycle(),
+            23 => self.button_hover_style = self.button_hover_style.cycle(),
             // Tooltips
-            23 => self.tooltips.set_all(!self.tooltips.all_on()),
-            24 => self.tooltips.footer = !self.tooltips.footer,
-            25 => self.tooltips.headers = !self.tooltips.headers,
-            26 => self.tooltips.counts = !self.tooltips.counts,
-            27 => self.tooltips.settings = !self.tooltips.settings,
-            28 => self.tooltips.links = !self.tooltips.links,
+            24 => self.tooltips.set_all(!self.tooltips.all_on()),
+            25 => self.tooltips.footer = !self.tooltips.footer,
+            26 => self.tooltips.headers = !self.tooltips.headers,
+            27 => self.tooltips.counts = !self.tooltips.counts,
+            28 => self.tooltips.settings = !self.tooltips.settings,
+            29 => self.tooltips.links = !self.tooltips.links,
             _ => {}
         }
         self.save_state();

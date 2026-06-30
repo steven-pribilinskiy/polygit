@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.107.0 — 2026-06-30
+Info-panel layout toggle moved into Settings → Layout
+- the titled/spaced/flat grouping control is now a **Settings → Layout → Info layout** row (radio:
+  titled / spaced / flat) instead of a radio at the bottom of the info panel — the panel stays clean.
+  The `L` key still cycles it; a maximized info pane still always shows titled sections.
+
 ## v2.106.1 — 2026-06-30
 Fix: clicks on a maximized pane no longer fall through to the list behind it
 - the list pane's click geometry (rows, header dropdowns, kebab, pr/fav cells) is captured only by

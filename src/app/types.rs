@@ -84,17 +84,6 @@ pub enum InfoLayout {
 }
 
 impl InfoLayout {
-    pub const ALL: [InfoLayout; 3] = [InfoLayout::Sections, InfoLayout::Groups, InfoLayout::Flat];
-
-    /// Short chip label for the radio control.
-    pub fn label(self) -> &'static str {
-        match self {
-            InfoLayout::Sections => "titled",
-            InfoLayout::Groups => "spaced",
-            InfoLayout::Flat => "flat",
-        }
-    }
-
     pub fn cycle(self) -> Self {
         match self {
             InfoLayout::Sections => InfoLayout::Groups,
@@ -1720,7 +1709,7 @@ impl RepoTabsMode {
 pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Agent", 2),
     ("Interaction", 2),
-    ("Layout", 5),
+    ("Layout", 6),
     ("Lists", 3),
     ("Pull requests", 1),
     ("Sync", 3),
@@ -1744,7 +1733,7 @@ pub struct SettingInfo {
 
 /// Every settings row in global (alphabetical-section) order — see `SETTINGS_TABS`. The ONLY place
 /// row labels + tips live; everything else derives from this or is asserted against it.
-pub const SETTINGS: [SettingInfo; 29] = [
+pub const SETTINGS: [SettingInfo; 30] = [
     // Agent
     SettingInfo { label: "AI agent", tip: "Which AI agent `c` launches for the selected repo, run in its directory", option_tips: &[] },
     SettingInfo { label: "Skip permissions", tip: "Launch the agent with its skip-permissions flag (e.g. claude's --dangerously-skip-permissions)", option_tips: &[] },
@@ -1761,6 +1750,7 @@ pub const SETTINGS: [SettingInfo; 29] = [
     SettingInfo { label: "Pane splitter", tip: "Draw the draggable splitter grip between the panes", option_tips: &[] },
     SettingInfo { label: "Repo page tabs", tip: "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ sections have rows)", option_tips: &[] },
     SettingInfo { label: "Auto branch-check", tip: "Periodically refresh each repo's local branch/status (no pull) — auto scales the interval with the repo count", option_tips: &[] },
+    SettingInfo { label: "Info layout", tip: "How the info panel groups its fields: titled (dim UPPERCASE section headers + blank lines), spaced (blank lines only), or flat. A maximized info pane always shows titled sections. (also the `L` key)", option_tips: &[] },
     // Lists
     SettingInfo { label: "Grouping", tip: "Render the repo list as named group sections (from groups.json)", option_tips: &[] },
     SettingInfo { label: "Tree view", tip: "Render the repos as a collapsible directory tree", option_tips: &[] },
@@ -1836,8 +1826,6 @@ pub enum InfoAction {
     CopyText(String),
     /// Expand/collapse a truncated field, keyed by its label (e.g. "Path").
     ToggleExpand(String),
-    /// Set the info panel's grouping layout (the radio control at the bottom of the panel).
-    SetInfoLayout(InfoLayout),
 }
 
 /// The semantic glyphs the UI renders, swappable between Unicode and emoji via `IconStyle`.

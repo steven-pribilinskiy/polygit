@@ -1772,6 +1772,14 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                         ("auto", app.branch_check == crate::app::BranchCheck::Auto),
                     ],
                 ),
+                (
+                    "Info layout",
+                    vec![
+                        ("titled", app.info_layout == crate::app::InfoLayout::Sections),
+                        ("spaced", app.info_layout == crate::app::InfoLayout::Groups),
+                        ("flat", app.info_layout == crate::app::InfoLayout::Flat),
+                    ],
+                ),
             ],
         ),
         (
