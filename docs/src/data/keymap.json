@@ -1381,6 +1381,14 @@
       },
       {
         "keys": [
+          "Shift",
+          "wheel"
+        ],
+        "action": "Scroll the preview horizontally (also a horizontal wheel / trackpad)",
+        "group": "Preview"
+      },
+      {
+        "keys": [
           "/"
         ],
         "action": "Fuzzy-find files in the current directory (recursive + auto-expanding in tree view)",
