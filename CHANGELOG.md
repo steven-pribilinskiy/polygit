@@ -3,6 +3,39 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v2.109.0 — 2026-06-30
+Auto-update from GitHub releases + two settings/list fixes
+- **Auto-update setting** (Settings → Updates): **off / notify / install**, with an **Update check**
+  cadence (**daily / weekly**). `install` downloads + stages a newer published release over the
+  binary, then the existing `↺ new build installed` notice prompts a reload (`Ctrl+R`) — your session
+  is never interrupted. `notify` toasts and surfaces an `↑ vX.Y.Z available` line in Build info. This
+  is **separate from the local-dev flow**, where `make build` installs over the binary on your PATH;
+  the tooltips spell that out. The check honors the cadence across launches (persisted last-check).
+- **Fix: the Theme radio was disabled in emoji mode.** The settings rows render in alphabetical-section
+  order, but several per-row flags were keyed by hardcoded indices that drifted as sections were added
+  — so the emoji "always hides zeros" disable landed on **Theme** (greying it out) instead of **Hide
+  zeros**, and the Design tab's Theme chip wrote Background. These are now resolved **by label**, so a
+  future row insert can't re-break them.
+- **Fix: the `⋮` kebab (and hover ★) stopped appearing on hover.** The per-frame reset of the list's
+  click geometry (added in 2.106.1 for maximized-pane safety) wiped `list_rows_area` before the
+  hover-row derivation read it, so it never resolved a row. Last frame's geometry is now preserved for
+  the hover affordances.
+
+## v2.108.0 — 2026-06-30
+Remap any shortcut — keybindings editor + `keybindings.json`
+- **Every list-view, global, and repo-page shortcut is now remappable.** Press **`Ctrl+K`** (or the
+  **`[^K remap]`** button on the help **Hotkeys** tab) to open the **Keybindings editor**: actions
+  grouped by area with their current keys, a `[set]` to rebind (press the new key), `[x]` to clear,
+  `d` to reset one to default, `R` to reset all. Keyboard-first (`↑↓` move · `⏎` rebind · `c` clear)
+  **and** mouse-first (every row / `[set]` / `[x]` clickable + hover-lit). Rebinding to a key another
+  action already uses prompts to **reassign** (move the key) or cancel.
+- Overrides persist to **`~/.config/polygit/keybindings.json`** (`{ "<action>": ["<key>", …] }`,
+  hand-editable). Only changed actions are written, so new default keys in later versions still reach
+  old config files. Example: `{ "open_finder": ["ctrl+f"] }` moves the fuzzy finder to `Ctrl+F`.
+- Resolution is context-aware: the same letter can mean different things on the list vs the repo page
+  without colliding. Unbinding a default frees that key (it no longer triggers the old action).
+- `Esc` / `q` / `Ctrl+C` and the new-build `Ctrl+R` / `Ctrl+X` stay fixed (not remappable).
+
 ## v2.107.0 — 2026-06-30
 Info-panel layout toggle moved into Settings → Layout
 - the titled/spaced/flat grouping control is now a **Settings → Layout → Info layout** row (radio:

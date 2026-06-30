@@ -290,6 +290,32 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
             }
         }
+    } else if app.show_keybindings {
+        // Buttons first (they sit on top of the row), then the row body, the close button, the
+        // footer chips, and finally the scrollbar column.
+        if let Some(&(row, start, end, _)) =
+            app.keybindings_set_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.keybindings_clear_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.keybindings_row_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.keybindings_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some(rect) = scrollbar_col_hit(Some(&[crate::app::ScrollKind::Keybindings])) {
+            hits.push(rect);
+        }
     } else if app.show_help {
         if let Some(&(row, start, end, tab)) =
             app.help_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
@@ -304,6 +330,10 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
             app.help_keyboard_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.help_remap_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
         } else if let Some((row, start, end)) =
@@ -951,6 +981,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // behind it. Reset them here every frame; `render_list` re-populates them when the list shows.
     app.list_area = Rect::default();
     app.preview_area = Rect::default();
+    // Preserve last frame's rows geometry for the hover-only affordances (kebab / hover ★) BEFORE
+    // clearing it — they need the frame the list last rendered, not this frame's reset-to-empty rect.
+    app.list_rows_area_prev = app.list_rows_area;
     app.list_rows_area = Rect::default();
     app.list_footer_area = Rect::default();
     app.header_area = Rect::default();
@@ -1008,6 +1041,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         // The keyboard viewer sits on top of help (it's launched from the Hotkeys tab).
         if app.show_keyboard {
             render_keyboard_modal(frame, app, area);
+        }
+        if app.show_keybindings {
+            render_keybindings_modal(frame, app, area);
         }
         if app.dropdown.is_some() {
             render_dropdown(frame, app, area);
@@ -1191,6 +1227,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     // The keyboard viewer sits on top of help (it's launched from the Hotkeys tab).
     if app.show_keyboard {
         render_keyboard_modal(frame, app, area);
+    }
+    if app.show_keybindings {
+        render_keybindings_modal(frame, app, area);
     }
     if app.dropdown.is_some() {
         render_dropdown(frame, app, area);

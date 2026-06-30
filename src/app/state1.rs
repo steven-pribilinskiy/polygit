@@ -395,6 +395,9 @@ impl AppState {
             pane_diff_view: self.pane_diff_view,
             info_layout: self.info_layout,
             show_merged_prs: self.show_merged_prs,
+            auto_update: self.auto_update,
+            update_interval: self.update_interval,
+            last_update_check: self.last_update_check,
         });
     }
 
@@ -761,6 +764,12 @@ impl AppState {
             (28, 1) => self.tooltips.settings = false,
             (29, 0) => self.tooltips.links = true,
             (29, 1) => self.tooltips.links = false,
+            // Updates
+            (30, 0) => self.auto_update = AutoUpdate::Off,
+            (30, 1) => self.auto_update = AutoUpdate::Notify,
+            (30, 2) => self.auto_update = AutoUpdate::Install,
+            (31, 0) => self.update_interval = UpdateInterval::Daily,
+            (31, 1) => self.update_interval = UpdateInterval::Weekly,
             _ => return,
         }
         self.save_state();
@@ -864,6 +873,16 @@ impl AppState {
             27 => usize::from(!self.tooltips.counts),
             28 => usize::from(!self.tooltips.settings),
             29 => usize::from(!self.tooltips.links),
+            // Updates
+            30 => match self.auto_update {
+                AutoUpdate::Off => 0,
+                AutoUpdate::Notify => 1,
+                AutoUpdate::Install => 2,
+            },
+            31 => match self.update_interval {
+                UpdateInterval::Daily => 0,
+                UpdateInterval::Weekly => 1,
+            },
             _ => 0,
         }
     }
@@ -885,6 +904,8 @@ impl AppState {
             21 => &["normal", "soft"],
             22 => &["blue", "subtle"],
             23 => &["inverted", "subtle"],
+            30 => &["off", "notify", "install"],
+            31 => &["daily", "weekly"],
             _ => &["on", "off"],
         }
     }
@@ -898,7 +919,8 @@ impl AppState {
             // titled(9). Lists: grouping on(10). Sync: auto-pull-on-launch(14). Theming: icons unicode(17),
             // theme auto(19), background normal(20), contrast normal(21), selection blue(22). Tooltips
             // (24–29) all on.
-            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 => 0,
+            // Updates: auto-update off(30), update-check daily(31) — both default to option 0.
+            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 => 0,
             // Index-1 defaults: changed-row effect flash(3), pane splitter on-hover(6), repo-page-tabs
             // auto(7), auto-pull-limit 100(15), button-hover subtle(23), and every remaining boolean off.
             _ => 1,
@@ -909,7 +931,9 @@ impl AppState {
     /// Empty when everything is already at defaults.
     pub fn settings_reset_plan(&self) -> Vec<String> {
         (0..Self::SETTINGS_ROWS)
-            .filter(|&row| row != 23) // "All tooltips" is derived from the per-area rows below it.
+            // "All tooltips" is derived from the per-area rows below it — by label, not a hardcoded
+            // index that drifts when sections are reordered.
+            .filter(|&row| row != crate::app::settings_row("All tooltips"))
             .filter_map(|row| {
                 let current = self.settings_active_option(row);
                 let default = Self::settings_default_option(row);
@@ -1188,6 +1212,24 @@ impl AppState {
             ScrollKind::PrModal => {
                 if let Some(modal) = self.pr_modal.as_mut() {
                     modal.scroll = value;
+                }
+                false
+            }
+            ScrollKind::Keybindings => {
+                // The editor's view follows the selection (ensure-visible). To keep a wheel/drag from
+                // being snapped back, move the selection into the dragged viewport too.
+                let layout = crate::keybindings::flat_layout();
+                let viewport = (self.keybindings_inner.height.max(1)) as usize;
+                let value = value.min(layout.len().saturating_sub(viewport));
+                self.keybindings_scroll = value;
+                let sel_flat = layout.iter().position(|row| *row == Some(self.keybindings_selected));
+                if let Some(sel_flat) = sel_flat {
+                    if sel_flat < value || sel_flat >= value + viewport {
+                        let end = (value + viewport).min(layout.len());
+                        if let Some(idx) = layout[value..end].iter().flatten().next() {
+                            self.keybindings_selected = *idx;
+                        }
+                    }
                 }
                 false
             }

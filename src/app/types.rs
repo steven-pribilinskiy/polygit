@@ -1649,6 +1649,55 @@ impl BranchCheck {
     }
 }
 
+/// Self-update policy for published GitHub releases — distinct from the local-dev `make build`
+/// reload flow (which watches the on-disk binary). `Notify` toasts when a newer release exists;
+/// `Install` downloads + stages it over the binary, then the same new-build notice prompts a reload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoUpdate {
+    #[default]
+    Off,
+    Notify,
+    Install,
+}
+
+impl AutoUpdate {
+    pub fn cycle(self) -> Self {
+        match self {
+            AutoUpdate::Off => AutoUpdate::Notify,
+            AutoUpdate::Notify => AutoUpdate::Install,
+            AutoUpdate::Install => AutoUpdate::Off,
+        }
+    }
+}
+
+/// How often the self-update check polls GitHub for a newer release (gated on `AutoUpdate != Off`).
+/// A check also runs once at launch when the last check is older than the interval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateInterval {
+    #[default]
+    Daily,
+    Weekly,
+}
+
+impl UpdateInterval {
+    /// The interval in seconds.
+    pub fn secs(self) -> i64 {
+        match self {
+            UpdateInterval::Daily => 24 * 60 * 60,
+            UpdateInterval::Weekly => 7 * 24 * 60 * 60,
+        }
+    }
+
+    pub fn cycle(self) -> Self {
+        match self {
+            UpdateInterval::Daily => UpdateInterval::Weekly,
+            UpdateInterval::Weekly => UpdateInterval::Daily,
+        }
+    }
+}
+
 /// A repo-page tab. Branches/Worktrees/Stashes map to a `PageRowKind`; Commits is a read-only
 /// list rendered separately (it doesn't flow through the row machinery).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1715,6 +1764,7 @@ pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Sync", 3),
     ("Theming", 7),
     ("Tooltips", 6),
+    ("Updates", 2),
 ];
 
 /// Static descriptive data for one settings row: its label, its one-line tooltip, and any
@@ -1733,7 +1783,7 @@ pub struct SettingInfo {
 
 /// Every settings row in global (alphabetical-section) order — see `SETTINGS_TABS`. The ONLY place
 /// row labels + tips live; everything else derives from this or is asserted against it.
-pub const SETTINGS: [SettingInfo; 30] = [
+pub const SETTINGS: [SettingInfo; 32] = [
     // Agent
     SettingInfo { label: "AI agent", tip: "Which AI agent `c` launches for the selected repo, run in its directory", option_tips: &[] },
     SettingInfo { label: "Skip permissions", tip: "Launch the agent with its skip-permissions flag (e.g. claude's --dangerously-skip-permissions)", option_tips: &[] },
@@ -1779,6 +1829,13 @@ pub const SETTINGS: [SettingInfo; 30] = [
     SettingInfo { label: "Group counts", tip: "Tooltips for a group / folder header's right-corner count (its breakdown)", option_tips: &[] },
     SettingInfo { label: "Settings rows", tip: "Tooltips for the settings rows (what each setting does)", option_tips: &[] },
     SettingInfo { label: "Help links", tip: "Tooltips for the help / About links (the link's URL, browser-style)", option_tips: &[] },
+    // Updates
+    SettingInfo { label: "Auto-update", tip: "Check GitHub for a newer published release and act on it. This is SEPARATE from the local-dev flow, where `make build` installs over the binary on your PATH and the `↺ new build installed` notice (Ctrl+R) reloads into it.", option_tips: &[
+        "Never check GitHub for releases (local `make build` reloads still work)",
+        "Toast when a newer release exists; install it from Build info (p) when you want",
+        "Download + stage the newer release over the binary, then the `↺ new build installed` notice prompts a reload (Ctrl+R) — your session is never interrupted",
+    ] },
+    SettingInfo { label: "Update check", tip: "How often the auto-update check polls GitHub (also once at launch when due). Ignored while Auto-update is off.", option_tips: &[] },
 ];
 
 /// Every settings row's label in global row order — DERIVED from `SETTINGS`, so the label list the
@@ -1792,6 +1849,14 @@ pub const SETTINGS_LABELS: [&str; SETTINGS.len()] = {
     }
     out
 };
+
+/// The global settings-row index for a label (its position in `SETTINGS` / `SETTINGS_LABELS`).
+/// Use this instead of hardcoded row numbers anywhere outside `set_setting_option` — a row insert /
+/// section rename then can't silently point logic at the wrong setting (the exact bug where the
+/// emoji "Hide zeros" disable started disabling Theme instead). Unknown labels return `usize::MAX`.
+pub fn settings_row(label: &str) -> usize {
+    SETTINGS_LABELS.iter().position(|&existing| existing == label).unwrap_or(usize::MAX)
+}
 
 /// Background tone for the active palette, independent of `Contrast`. `Soft` uses a gentler
 /// surface; `Terminal` paints no base background, letting the terminal's own background show.
@@ -2086,6 +2151,7 @@ pub enum ScrollKind {
     Changelog,
     BuildInfo,
     PrModal,
+    Keybindings,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.

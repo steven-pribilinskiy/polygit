@@ -90,6 +90,11 @@ pub struct AppState {
     /// The exact rect the repo rows render into (inner, below the 2-row header) — used for
     /// click→row mapping so it's correct regardless of border/padding/header offsets.
     pub list_rows_area: Rect,
+    /// Last frame's `list_rows_area`, preserved across the per-frame geometry reset. The hover-only
+    /// affordances (`⋮` kebab, hover ★) derive the hovered row from this — they need the geometry
+    /// from the frame the list last rendered, which the reset (for stale-click safety) would
+    /// otherwise wipe to empty before `render_list` reads it.
+    pub list_rows_area_prev: Rect,
     /// The pinned list footer's rect (the Result / Errors summary below the scrolling rows) — for
     /// click→Result/Errors-row mapping. Empty when there's no footer.
     pub list_footer_area: Rect,
@@ -216,6 +221,36 @@ pub struct AppState {
     pub keyboard_key_click: Vec<(u16, u16, u16, &'static str)>,
     /// The "keyboard" button region on the Hotkeys help tab: (row, col_start, col_end).
     pub help_keyboard_click: Option<(u16, u16, u16)>,
+    /// The "remap" button region on the Hotkeys help tab — opens the keybindings editor.
+    pub help_remap_click: Option<(u16, u16, u16)>,
+
+    // ── Keybindings editor modal (remap shortcuts) ──────────────────────────────────────────────
+    /// The keybindings editor is open.
+    pub show_keybindings: bool,
+    /// Selected action (index into `keybindings::action_defs()`).
+    pub keybindings_selected: usize,
+    /// Vertical scroll (flattened-row units: group headers + action rows).
+    pub keybindings_scroll: usize,
+    /// When Some, the editor is in capture mode — the next keypress binds to this action.
+    pub keybindings_capture: Option<crate::keybindings::KeyAction>,
+    /// A pending bind blocked by a conflict: (action, chord, the action already using it).
+    pub keybindings_conflict:
+        Option<(crate::keybindings::KeyAction, crate::keybindings::KeyChord, crate::keybindings::KeyAction)>,
+    /// Reset-all confirmation is showing (footer flips to "reset all? y/n").
+    pub keybindings_reset_confirm: bool,
+    /// Transient inline status line (e.g. "bound ctrl+f", "cleared").
+    pub keybindings_status: Option<String>,
+    /// The editor modal's outer rect + scroll viewport (set each render).
+    pub keybindings_area: Rect,
+    pub keybindings_inner: Rect,
+    /// Close-button region: (row, col_start, col_end).
+    pub keybindings_close_click: Option<(u16, u16, u16)>,
+    /// Clickable action rows: (row, col_start, col_end, action_index).
+    pub keybindings_row_click: Vec<(u16, u16, u16, usize)>,
+    /// Clickable `[set]` chips: (row, col_start, col_end, action_index).
+    pub keybindings_set_click: Vec<(u16, u16, u16, usize)>,
+    /// Clickable `[x]` clear chips: (row, col_start, col_end, action_index).
+    pub keybindings_clear_click: Vec<(u16, u16, u16, usize)>,
     /// When Some, the dedicated repo page is open for this absolute repo index.
     pub repo_page: Option<usize>,
     /// The repo page's scrolling content area (for hover row hit-testing). Set each render.
@@ -266,6 +301,8 @@ pub struct AppState {
     pub favorites_first: bool,
     /// A pending leader chord (e.g. `t` awaiting a column key).
     pub pending_leader: Option<Leader>,
+    /// User-remappable keyboard shortcuts (loaded from `~/.config/polygit/keybindings.json`).
+    pub keybindings: crate::keybindings::Keybindings,
     /// Whether the background "fetch details for all repos" pass has been spawned.
     pub details_pass_spawned: bool,
     /// Clickable command regions in the status bar (rebuilt each render).
@@ -487,6 +524,16 @@ pub struct AppState {
     pub base_cell_click: Vec<(u16, u16, u16, usize)>,
     /// Persisted base-branch overrides, keyed `"{repo_abs_path}\u{1f}{branch}"` → base ref.
     pub base_overrides: HashMap<String, String>,
+    // Self-update from GitHub releases (distinct from the local-dev new-build notice below):
+    /// Update policy (off / notify / install) for published releases.
+    pub auto_update: AutoUpdate,
+    /// How often the self-update check polls GitHub.
+    pub update_interval: UpdateInterval,
+    /// Unix seconds of the last GitHub release check (persisted, so the cadence spans launches).
+    pub last_update_check: i64,
+    /// The newest published release seen by the check, when it's newer than the running build:
+    /// `(version, date)`. Drives the notify toast / the "vX.Y.Z available" Build-info line.
+    pub latest_release: Option<(String, String)>,
     // New-build notice (a newer binary landed at this executable's path while running):
     pub update_available: bool,
     pub update_dismissed: bool,
@@ -778,6 +825,7 @@ impl AppState {
             main_area: Rect::default(),
             list_area: Rect::default(),
             list_rows_area: Rect::default(),
+            list_rows_area_prev: Rect::default(),
             list_footer_area: Rect::default(),
             pr_cell_click: Vec::new(),
             fav_cell_click: Vec::new(),
@@ -840,6 +888,20 @@ impl AppState {
             keyboard_close_click: None,
             keyboard_key_click: Vec::new(),
             help_keyboard_click: None,
+            help_remap_click: None,
+            show_keybindings: false,
+            keybindings_selected: 0,
+            keybindings_scroll: 0,
+            keybindings_capture: None,
+            keybindings_conflict: None,
+            keybindings_reset_confirm: false,
+            keybindings_status: None,
+            keybindings_area: Rect::default(),
+            keybindings_inner: Rect::default(),
+            keybindings_close_click: None,
+            keybindings_row_click: Vec::new(),
+            keybindings_set_click: Vec::new(),
+            keybindings_clear_click: Vec::new(),
             repo_page: None,
             repo_page_inner: Rect::default(),
             repo_page_selected: 0,
@@ -862,6 +924,7 @@ impl AppState {
             favorites: persisted.favorites.into_iter().collect(),
             favorites_first: persisted.favorites_first,
             pending_leader: None,
+            keybindings: crate::keybindings::Keybindings::load(),
             details_pass_spawned: false,
             clickable: Vec::new(),
             hint_click: Vec::new(),
@@ -977,6 +1040,10 @@ impl AppState {
             discovery_no_worktrees: false,
             base_cell_click: Vec::new(),
             base_overrides: persisted.base_overrides,
+            auto_update: persisted.auto_update,
+            update_interval: persisted.update_interval,
+            last_update_check: persisted.last_update_check,
+            latest_release: None,
             update_available: false,
             update_dismissed: false,
             update_reload_click: None,

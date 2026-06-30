@@ -828,7 +828,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 30;
+    pub const SETTINGS_ROWS: usize = 32;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -1102,6 +1102,9 @@ impl AppState {
             27 => self.tooltips.counts = !self.tooltips.counts,
             28 => self.tooltips.settings = !self.tooltips.settings,
             29 => self.tooltips.links = !self.tooltips.links,
+            // Updates
+            30 => self.auto_update = self.auto_update.cycle(),
+            31 => self.update_interval = self.update_interval.cycle(),
             _ => {}
         }
         self.save_state();

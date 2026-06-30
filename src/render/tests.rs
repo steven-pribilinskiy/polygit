@@ -1,5 +1,102 @@
     use super::*;
 
+    /// The Design-tab theming radios must stay keyed to their real settings rows, and the settings
+    /// modal's per-row flags (the Theme autodetect underline, the emoji "Hide zeros" disable) must
+    /// be matched by LABEL — not a hardcoded index. Regression: when settings sections were sorted
+    /// alphabetically / a row was inserted, the magic indices drifted so the emoji "Hide zeros"
+    /// disable landed on Theme (greying it out) and the Design tab's Theme chip wrote Background.
+    #[test]
+    fn settings_rows_are_resolved_by_label_not_drifting_indices() {
+        use crate::app::{settings_row, SETTINGS_LABELS};
+        // Every label the render + Design tab key on must resolve to a real, distinct row.
+        for label in ["Hide zeros", "Theme", "Background", "Contrast", "List selection"] {
+            let idx = settings_row(label);
+            assert_ne!(idx, usize::MAX, "settings row {label:?} must exist");
+            assert_eq!(SETTINGS_LABELS[idx], label, "{label:?} index round-trips");
+        }
+        assert_ne!(settings_row("Hide zeros"), settings_row("Theme"));
+        assert_eq!(settings_row("does not exist"), usize::MAX);
+
+        // The Design tab pulls its radios by label; each shows its own field's values and routes a
+        // click (via settings_row(label)) to that same field.
+        let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+            "demo",
+            std::path::PathBuf::from("/tmp/demo"),
+        )))];
+        let mut app = AppState::new(repos, 4, true);
+        for (key, display) in
+            [("Theme", "Theme"), ("Background", "Background"), ("Contrast", "Contrast"), ("List selection", "Selection")]
+        {
+            let (label, options) = design_radio_data(&app, key);
+            assert_eq!(label, display, "design radio for {key:?} displays {display:?}");
+            assert!(!options.is_empty());
+        }
+        // Theme is the only radio with the auto-detect underline; it points at dark or light.
+        app.theme = crate::app::Theme::Auto;
+        assert!(theme_autodetect_underline(&app).is_some());
+        app.theme = crate::app::Theme::Dark;
+        assert!(theme_autodetect_underline(&app).is_none());
+    }
+
+    /// The user-reported bug, end to end: in EMOJI mode the settings "Theme" row must stay
+    /// interactive (clickable option chips) while "Hide zeros" is the disabled/inert one — a
+    /// disabled row registers no click regions. Renders the real settings modal and inspects them.
+    #[test]
+    fn emoji_mode_disables_hide_zeros_not_theme() {
+        use crate::app::{settings_row, IconStyle, SettingsLayout};
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+            "demo",
+            std::path::PathBuf::from("/tmp/demo"),
+        )))];
+        let mut app = AppState::new(repos, 4, true);
+        app.icon_style = IconStyle::Emoji; // emoji always hides zeros → Hide zeros is inert
+        app.show_settings = true;
+        app.settings_layout = SettingsLayout::Flat;
+        // Select Theme so it (and the adjacent Hide zeros) scroll into view.
+        app.settings_selected = settings_row("Theme");
+        app.settings_ensure_visible = true;
+
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|frame| crate::render::render(frame, &mut app, 0)).unwrap();
+
+        let theme_row = settings_row("Theme");
+        let hide_zeros_row = settings_row("Hide zeros");
+        let has_clicks = |row: usize| app.settings_click.iter().any(|&(.., r, _)| r == row);
+        assert!(has_clicks(theme_row), "Theme must be interactive (have click regions) in emoji mode");
+        assert!(!has_clicks(hide_zeros_row), "Hide zeros must be disabled (no click regions) in emoji mode");
+    }
+
+    #[test]
+    fn kebab_glyph_appears_on_hovered_repo_row() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+            "demo",
+            std::path::PathBuf::from("/tmp/demo"),
+        )))];
+        let mut app = AppState::new(repos, 4, true);
+        app.grouping_enabled = false;
+        app.tree_enabled = false;
+        app.hover_effects = true;
+        let mut term = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        // First render captures list_rows_area; then hover the first repo row and re-render.
+        term.draw(|frame| crate::render::render(frame, &mut app, 0)).unwrap();
+        let geom = app.list_rows_area;
+        // Hover the first repo row. The hovered-row derivation reads LAST frame's geometry
+        // (`list_rows_area_prev`), which the per-frame reset must preserve — regression: the reset
+        // wiped it to empty, so the kebab/hover-★ never resolved a row.
+        app.hover = Some((geom.x + 2, geom.y));
+        term.draw(|frame| crate::render::render(frame, &mut app, 0)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let found = (0..20u16)
+            .flat_map(|y| (0..100u16).map(move |x| (x, y)))
+            .any(|(x, y)| buf[(x, y)].symbol() == "\u{22ee}");
+        assert!(found, "kebab ⋮ must render on the hovered repo row");
+    }
+
     #[test]
     fn count_cell_text_is_tri_state() {
         assert_eq!(count_cell_text("⎇", None), ("…".to_string(), true));

@@ -184,6 +184,15 @@ pub struct PersistedState {
     /// — detection always finds all states, this only gates display.
     #[serde(default)]
     pub show_merged_prs: bool,
+    /// Self-update policy for published GitHub releases (off / notify / install). Default off.
+    #[serde(default)]
+    pub auto_update: crate::app::AutoUpdate,
+    /// How often the self-update check polls GitHub (daily / weekly). Default daily.
+    #[serde(default)]
+    pub update_interval: crate::app::UpdateInterval,
+    /// Unix seconds of the last release check, so the cadence is honored across launches.
+    #[serde(default)]
+    pub last_update_check: i64,
 }
 
 impl PersistedState {

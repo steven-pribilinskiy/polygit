@@ -149,7 +149,8 @@ polygit --no-worktrees [DIR]
 | click `built … ago` | Open **Build info** (binary age/size, build duration, settings preview) — and `p pin version` to pin a release |
 | `p` (in Build info) | Open the **version picker**: pin/switch to any published release (downloads + installs it, then reloads). Defaults to picker-capable versions (v2.72.0+); `a` shows older builds (with a copyable reinstall command); `Enter`/`p` pins the selected one |
 | `m` (Changelog / What's New / picker) | Maximize ⇄ restore the modal (also the `[m maximize]`/`[m restore]` title-bar button) |
-| `,` | Open the settings modal (panel padding, grouping, tree view, icon style, theme, background, contrast, list selection, button hover) |
+| `,` | Open the settings modal (panel padding, grouping, tree view, icon style, theme, background, contrast, list selection, button hover, **auto-update**) |
+| `Ctrl+K` | Open the **keybindings editor** — remap any shortcut (see [Remapping shortcuts](#remapping-shortcuts)). Also the `[^K remap]` button on the help **Hotkeys** tab |
 | `?` | Open the help modal (docs/GitHub/notes links, all keys, flags & env) |
 | `/` | Filter repos by name |
 | `Esc` | Clear filter (or quit when no filter) |
@@ -159,6 +160,21 @@ polygit --no-worktrees [DIR]
 **Retry vs refetch:** retry only re-runs repos that need it (failed/skipped); refetch re-runs any repo even if it was already up to date. In the status bar, `r`/`R` dim when no repo has an issue, and `e`/`E` dim when there's nothing eligible (the selected repo is still in progress).
 
 The repo list, the log/diff preview, the help modal, and the repo page all show a scrollbar when their content overflows. **Clickable commands:** the action hints in the status bar (and the `t` column menu) are mouse-clickable — clicking one runs the same command as the key.
+
+### Remapping shortcuts
+
+Every shortcut above (plus the repo-page keys) is **remappable**. Press **`Ctrl+K`** (or the **`[^K remap]`** button on the help **Hotkeys** tab) to open the **Keybindings editor**: actions grouped by area, each showing its current key(s).
+
+- **`↑↓`/`j`/`k`** move · **`Enter`** (or click `[set]`) rebinds the selected action — **press the new key** · **`c`** (or click `[x]`) clears it · **`d`** resets that action to its default · **`R`** resets everything (with a `y`/`n` confirm) · **`Esc`** closes.
+- Rebinding to a key another action already uses prompts to **reassign** (move the key to the new action) or cancel.
+- Overrides persist to **`~/.config/polygit/keybindings.json`** — a plain, hand-editable `{ "<action>": ["<key>", …] }` map. Only changed actions are written, so default keys added in later versions still reach older config files. Keys are written like `ctrl+f`, `G`, `shift+enter`, `space`, `/`. Example — move the fuzzy finder to `Ctrl+F`:
+
+  ```json
+  { "open_finder": ["ctrl+f"] }
+  ```
+
+- Resolution is **context-aware**: the same letter can do different things on the repo list vs the repo page without colliding. Unbinding a key (clearing it) genuinely frees it — it no longer triggers the old action.
+- **`Esc`**, **`q`**, **`Ctrl+C`**, and the new-build **`Ctrl+R`** / **`Ctrl+X`** stay fixed (not remappable), so you can always escape and quit.
 
 ### Repo page (`Enter` / double-click)
 
@@ -278,6 +294,15 @@ Everything actionable is clickable like a web page:
 While running, polygit watches its own binary on disk. When a newer build is installed (e.g. `make install`'s atomic rename), a persistent notice appears in the top-right (inset with the panel-padding setting, with a glint sweeping its border): `↺ new build installed · [^R reload] [^X]`. It rides on top of every screen — the repo list, the repo page, and any open modal — so it's never hidden. **`Ctrl-R`** (or clicking `[^R reload]`) restores the terminal and `exec`s the new binary with the same arguments — the fresh process re-scans and re-pulls (instant when everything is already up to date). **`Ctrl-X`** (or clicking `[^X]`) dismisses the notice; it re-arms if the binary changes again. Because the notice floats over every view, both keys work from anywhere (including inside a modal).
 
 Clicking the **`built … ago`** tag in the status bar opens a **Build info** modal: the running version, when it was built **and how long the build took**, the **binary size** + watched path, the **settings file location** + how many files live in the config dir, whether a newer build is waiting, and a **collapsible tree view of `state.json`** — a format-agnostic structural-data viewer (not JSON-specific). Objects and arrays start **collapsed**, each showing its child count in a faint `{N}` / `[N]`; `j`/`k` move, `←`/`→` collapse/expand, `Space`/`Enter` fold the selected node, `-` / `+` fold/unfold all (also the clickable `[- fold all]` / `[+ unfold all]` buttons on the card header), and clicking a node folds it. The plain mouse wheel scrolls the tree (selection untouched, web-app style) and `Alt`+wheel moves the selection — same model as the main list. `r` (a clickable hint in the bottom border, alongside `esc close`) exec-restarts into the latest build; `esc`, the `[x]`, or a click **outside** closes it (a click inside is inert).
+
+### Auto-update
+
+Separately from the local new-build watcher above (which reloads into a binary you installed yourself, e.g. via `make build`), polygit can keep itself current from **published GitHub releases**. Set it in **Settings → Updates**:
+
+- **Auto-update**: `off` (never check) · `notify` (toast when a newer release exists, and show an `↑ vX.Y.Z available` line in Build info — install it with `p`) · `install` (download + stage the newer release over the binary automatically, then the same `↺ new build installed` notice prompts a `Ctrl-R` reload — your session is never interrupted).
+- **Update check**: how often the check polls GitHub — `daily` or `weekly`. It also runs once at launch when the last check is older than the interval, and the last-check time persists, so it never hammers the API.
+
+Self-install covers Linux and macOS (the same platforms the version picker supports); on native Windows the check is inert.
 
 ### Changelog & What's New
 
