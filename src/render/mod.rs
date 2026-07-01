@@ -551,6 +551,18 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         // file rows) — never the list/info/result panes behind it.
         if let Some((row, start, end)) = explorer.close_click.filter(|&(r, s, e)| contains(r, s, e)) {
             button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) = explorer.pin_click.filter(|&(r, s, e)| contains(r, s, e)) {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, col)) = explorer.resize_click.filter(|&(r, c)| contains(r, c, c + 1)) {
+            button_hits.push(row_rect(row, col, col + 1));
+        } else if explorer.mode == crate::explorer::SurfaceMode::Floating
+            && contains(
+                explorer.titlebar_drag_area.y,
+                explorer.titlebar_drag_area.x,
+                explorer.titlebar_drag_area.x + explorer.titlebar_drag_area.width,
+            )
+        {
+            hits.push(explorer.titlebar_drag_area);
         } else if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
             for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
                 button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));

@@ -1403,6 +1403,11 @@ async fn run_event_loop(
     let mut dragging_dock = false;
     let mut dragging_preview_split = false;
     let mut dragging_explorer_split = false;
+    // Floating explorer window: `Some(grab_dx, grab_dy)` while dragging its title bar to move it
+    // (offset from the window's top-left to the mouse, so the grab point stays put); resizing needs
+    // no extra state since it just tracks the mouse directly.
+    let mut dragging_explorer_window_move: Option<(i32, i32)> = None;
+    let mut dragging_explorer_window_resize = false;
     // Tracks the list selection between frames: when it changes (keyboard / Alt+wheel nav, filter
     // preview, …) the view scrolls just enough to keep it visible. The plain wheel changes only
     // `list_scroll`, not the selection, so it never triggers this — the view scrolls freely.
@@ -1873,6 +1878,59 @@ async fn run_event_loop(
                     MouseEventKind::Up(MouseButton::Left) if dragging_preview_split => {
                         dragging_preview_split = false;
                         app.save_state();
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                // The floating explorer window's pin button, resize grip, and title-bar drag are
+                // handled here — before the generic scrollbar grab below — so they always win even
+                // when the resize-grip corner happens to overlap a scrollbar hit-region left over
+                // from a previous frame.
+                let floating_explorer = app.explorer.as_ref().filter(|explorer| explorer.mode == explorer::SurfaceMode::Floating);
+                let explorer_pin_click = floating_explorer.and_then(|explorer| explorer.pin_click);
+                let explorer_resize_click = floating_explorer.and_then(|explorer| explorer.resize_click);
+                let explorer_titlebar_area = floating_explorer.map(|explorer| explorer.titlebar_drag_area);
+                let on_explorer_resize = explorer_resize_click.is_some_and(|(row, col)| mouse.row == row && mouse.column == col);
+                let on_explorer_titlebar = explorer_titlebar_area.is_some_and(|rect| point_in(rect, mouse.column, mouse.row));
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) if region_hit(explorer_pin_click, mouse.column, mouse.row) => {
+                        app.toggle_explorer_pin();
+                        continue;
+                    }
+                    MouseEventKind::Down(MouseButton::Left) if on_explorer_resize => {
+                        dragging_explorer_window_resize = true;
+                        continue;
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) if dragging_explorer_window_resize => {
+                        let bounds = app.dock_full_area;
+                        if let Some(explorer) = app.explorer.as_mut() { explorer.resize_floating_to(mouse.column, mouse.row, bounds); }
+                        continue;
+                    }
+                    MouseEventKind::Up(MouseButton::Left) if dragging_explorer_window_resize => {
+                        dragging_explorer_window_resize = false;
+                        continue;
+                    }
+                    MouseEventKind::Down(MouseButton::Left) if on_explorer_titlebar => {
+                        if let Some(explorer) = app.explorer.as_ref() {
+                            dragging_explorer_window_move = Some((
+                                explorer.area.x as i32 - mouse.column as i32,
+                                explorer.area.y as i32 - mouse.row as i32,
+                            ));
+                        }
+                        continue;
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) if dragging_explorer_window_move.is_some() => {
+                        if let Some((grab_dx, grab_dy)) = dragging_explorer_window_move {
+                            let bounds = app.dock_full_area;
+                            if let Some(explorer) = app.explorer.as_mut() {
+                                explorer.move_floating_to(mouse.column as i32 + grab_dx, mouse.row as i32 + grab_dy, bounds);
+                            }
+                        }
+                        continue;
+                    }
+                    MouseEventKind::Up(MouseButton::Left) if dragging_explorer_window_move.is_some() => {
+                        dragging_explorer_window_move = None;
                         continue;
                     }
                     _ => {}
@@ -3496,6 +3554,41 @@ async fn run_event_loop(
                         .unwrap_or(false);
                     let page = app.explorer.as_ref().map(|e| e.preview_area.height.max(1) as isize).unwrap_or(10);
                     let anchor = app.explorer.as_ref().map(|e| (e.area.y + 1, e.area.x + 30)).unwrap_or((1, 30));
+                    let floating = app.explorer.as_ref().is_some_and(|e| e.mode == explorer::SurfaceMode::Floating);
+                    // Floating window: Alt+arrows move it; Alt+Shift+arrows resize it (mouse
+                    // drag on the title bar / resize grip is the primary way).
+                    if floating && key.modifiers.contains(KeyModifiers::ALT) {
+                        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                        let bounds = app.dock_full_area;
+                        let step = 2;
+                        match key.code {
+                            KeyCode::Left => {
+                                if let Some(explorer) = app.explorer.as_mut() {
+                                    if shift { explorer.resize_floating_step(-step, 0, bounds); } else { explorer.nudge_floating(-step, 0, bounds); }
+                                }
+                                continue;
+                            }
+                            KeyCode::Right => {
+                                if let Some(explorer) = app.explorer.as_mut() {
+                                    if shift { explorer.resize_floating_step(step, 0, bounds); } else { explorer.nudge_floating(step, 0, bounds); }
+                                }
+                                continue;
+                            }
+                            KeyCode::Up => {
+                                if let Some(explorer) = app.explorer.as_mut() {
+                                    if shift { explorer.resize_floating_step(0, -1, bounds); } else { explorer.nudge_floating(0, -1, bounds); }
+                                }
+                                continue;
+                            }
+                            KeyCode::Down => {
+                                if let Some(explorer) = app.explorer.as_mut() {
+                                    if shift { explorer.resize_floating_step(0, 1, bounds); } else { explorer.nudge_floating(0, 1, bounds); }
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_explorer(),
                         KeyCode::Tab | KeyCode::BackTab => {
@@ -3527,6 +3620,8 @@ async fn run_event_loop(
                         KeyCode::Char('-') => app.explorer_expand_level(false),
                         // Show / hide .gitignored entries (hidden by default).
                         KeyCode::Char('i') => app.toggle_explorer_gitignored(),
+                        // Pin (dock as a panel) ⇄ float (a draggable/resizable window).
+                        KeyCode::Char('p') => app.toggle_explorer_pin(),
                         // Open help over the explorer (its Hotkeys tab shows the explorer's keys).
                         KeyCode::Char('?') => app.show_help = true,
                         // Down / up — drive the preview when it's focused, else the list.

@@ -604,6 +604,28 @@ pub(crate) fn modal_window_buttons(
     (line, Some((modal.y, close_start, col_end)), Some((modal.y, max_start, max_end)))
 }
 
+/// A modal top-border control cluster: `[p float] [x]` (or `[p pin]` once floating), toggling a
+/// surface between a docked `Panel` and a draggable/resizable `Floating` window. Same shape as
+/// `modal_window_buttons` — swap in whichever cluster a modal needs.
+pub(crate) fn modal_pin_button(modal: Rect, floating: bool) -> (Line<'static>, BtnRegion, BtnRegion) {
+    let close = "[x]";
+    let pin_btn = if floating { "[p pin]" } else { "[p float]" };
+    let close_w = close.len() as u16;
+    let pin_w = pin_btn.len() as u16;
+    let dim = Style::default().fg(Color::DarkGray);
+    let line = Line::from(vec![
+        Span::styled(pin_btn, dim),
+        Span::raw(" "),
+        Span::styled(close, dim.add_modifier(Modifier::BOLD)),
+    ])
+    .right_aligned();
+    let col_end = modal.x + modal.width.saturating_sub(1);
+    let close_start = col_end.saturating_sub(close_w);
+    let pin_end = close_start.saturating_sub(1);
+    let pin_start = pin_end.saturating_sub(pin_w);
+    (line, Some((modal.y, close_start, col_end)), Some((modal.y, pin_start, pin_end)))
+}
+
 /// A centered rect of the given size within `area`.
 pub(crate) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);

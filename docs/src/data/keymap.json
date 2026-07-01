@@ -514,7 +514,7 @@
           "E"
         ],
         "action": "Open the file explorer for the selected repo",
-        "note": "two-pane file browser (list + syntax-highlighted preview, powered by two-face) rooted at the repo. Also the `Explore files…` kebab item. Inside: ↑↓/jk move · ←/h up a dir · ⏎/→ open dir or focus preview · tab swap panes · / fuzzy-find · t columns dropdown · s sort dropdown (or click a column header — ▲/▼) · d toggle relative/absolute dates · [ ] resize · ←/→ scroll the preview horizontally when focused · esc/q close. Folders show recursive sizes; size is colored by magnitude.",
+        "note": "two-pane file browser (list + syntax-highlighted preview, powered by two-face) rooted at the repo. Also the `Explore files…` kebab item. Inside: ↑↓/jk move · ←/h up a dir · ⏎/→ open dir or focus preview · tab swap panes · / fuzzy-find · t columns dropdown · s sort dropdown (or click a column header — ▲/▼) · d toggle relative/absolute dates · [ ] resize · ←/→ scroll the preview horizontally when focused · p pin ⇄ float (drag the title bar / ◢ grip, or Alt+arrows) · esc/q close. Folders show recursive sizes; size is colored by magnitude.",
         "keywords": [
           "explorer",
           "files",
@@ -1430,6 +1430,15 @@
           "]"
         ],
         "action": "Resize the divider (or drag it)",
+        "group": "Other"
+      },
+      {
+        "keys": [
+          "p"
+        ],
+        "action": "Pin (dock as a panel) ⇄ float (a draggable/resizable window)",
+        "note": "also the `[p float]`/`[p pin]` title-bar button. While floating: drag the title bar to move, drag the bottom-right ◢ grip to resize, or Alt+arrows to nudge / Alt+Shift+arrows to resize by keyboard. Persisted",
+        "keywords": ["pin", "float", "floating", "window", "dock", "drag", "resize"],
         "group": "Other"
       },
       {

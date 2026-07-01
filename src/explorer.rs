@@ -86,6 +86,17 @@ pub enum DateFormat {
     Stamp,
 }
 
+/// Where a modal surface renders: docked as a centered panel (the default), or as a free-floating,
+/// draggable/resizable window. Persisted per-surface (`p` toggles it; the title-bar pin button
+/// mirrors the key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceMode {
+    #[default]
+    Panel,
+    Floating,
+}
+
 /// Persisted explorer preferences (columns, sort, date format) — seeded into each opened explorer.
 /// Manual `Default` so `sort_ascending` is true (name-ascending), which serde's `bool` default isn't.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -97,6 +108,7 @@ pub struct ExplorerPrefs {
     pub date_format: DateFormat,
     pub tree_mode: bool,
     pub show_gitignored: bool,
+    pub mode: SurfaceMode,
 }
 
 impl Default for ExplorerPrefs {
@@ -108,6 +120,7 @@ impl Default for ExplorerPrefs {
             date_format: DateFormat::Relative,
             tree_mode: false,
             show_gitignored: false,
+            mode: SurfaceMode::Panel,
         }
     }
 }
@@ -178,6 +191,12 @@ pub struct Explorer {
     pub finder: Option<Finder>,
     /// Recursive directory sizes, computed on a background thread (path → bytes). `None` = pending.
     pub dir_sizes: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Option<u64>>>>,
+    /// Panel (docked, centered) or Floating (draggable/resizable window). Persisted via
+    /// `ExplorerPrefs::mode`.
+    pub mode: SurfaceMode,
+    /// The floating window's geometry. Session-only (like `split`) — seeded to a default size the
+    /// first time `mode` becomes `Floating`, then clamped to the terminal bounds every render.
+    pub floating_rect: Rect,
 
     // ── geometry captured each render for hit-testing ──
     pub area: Rect,
@@ -186,6 +205,13 @@ pub struct Explorer {
     pub divider_col: u16,
     pub rows_click: Vec<(u16, u16, u16, usize)>,
     pub close_click: Option<(u16, u16, u16)>,
+    /// The pin/float toggle button's click region (title-bar, next to the close button).
+    pub pin_click: Option<(u16, u16, u16)>,
+    /// The floating window's bottom-right resize-grip cell.
+    pub resize_click: Option<(u16, u16)>,
+    /// The floating window's title-bar row (excluding the button cluster) — dragging it moves
+    /// the window.
+    pub titlebar_drag_area: Rect,
     /// Sortable column header click regions: `(row, start, end, sort_key)`.
     pub header_click: Vec<(u16, u16, u16, SortKey)>,
 }
@@ -237,12 +263,17 @@ impl Explorer {
             focus: ExplorerFocus::List,
             finder: None,
             dir_sizes: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            mode: prefs.mode,
+            floating_rect: Rect::default(),
             area: Rect::default(),
             list_area: Rect::default(),
             preview_area: Rect::default(),
             divider_col: 0,
             rows_click: Vec::new(),
             close_click: None,
+            pin_click: None,
+            resize_click: None,
+            titlebar_drag_area: Rect::default(),
             header_click: Vec::new(),
         };
         explorer.reload();
@@ -738,6 +769,80 @@ impl Explorer {
     /// Adjust the divider by `delta` (the `[`/`]` keys).
     pub fn adjust_split(&mut self, delta: f64) {
         self.split = (self.split + delta).clamp(Self::MIN_SPLIT, Self::MAX_SPLIT);
+    }
+
+    pub const MIN_FLOAT_WIDTH: u16 = 40;
+    pub const MIN_FLOAT_HEIGHT: u16 = 12;
+
+    /// Toggle Panel ⇄ Floating (the `p` key / title-bar pin button). The next render seeds a
+    /// default floating geometry via `clamp_floating` if none is set yet; the caller is
+    /// responsible for persisting the new `mode` into `ExplorerPrefs`.
+    pub fn toggle_pin(&mut self) {
+        self.mode = match self.mode {
+            SurfaceMode::Panel => SurfaceMode::Floating,
+            SurfaceMode::Floating => SurfaceMode::Panel,
+        };
+    }
+
+    /// Seed a sensible default floating geometry (70% of the terminal, centered) if none is set yet.
+    fn ensure_floating_rect(&mut self, bounds: Rect) {
+        if self.floating_rect.width == 0 || self.floating_rect.height == 0 {
+            let width = (bounds.width * 7 / 10).max(Self::MIN_FLOAT_WIDTH).min(bounds.width);
+            let height = (bounds.height * 7 / 10).max(Self::MIN_FLOAT_HEIGHT).min(bounds.height);
+            self.floating_rect = Rect {
+                x: bounds.x + (bounds.width.saturating_sub(width)) / 2,
+                y: bounds.y + (bounds.height.saturating_sub(height)) / 2,
+                width,
+                height,
+            };
+        }
+    }
+
+    /// Clamp the floating window back into `bounds` — called every render so a terminal resize (or
+    /// a drag that overshot) never leaves the window off-screen or bigger than the terminal.
+    pub fn clamp_floating(&mut self, bounds: Rect) {
+        self.ensure_floating_rect(bounds);
+        let rect = &mut self.floating_rect;
+        rect.width = rect.width.min(bounds.width).max(Self::MIN_FLOAT_WIDTH.min(bounds.width));
+        rect.height = rect.height.min(bounds.height).max(Self::MIN_FLOAT_HEIGHT.min(bounds.height));
+        let max_x = bounds.x + bounds.width.saturating_sub(rect.width);
+        let max_y = bounds.y + bounds.height.saturating_sub(rect.height);
+        rect.x = rect.x.clamp(bounds.x, max_x);
+        rect.y = rect.y.clamp(bounds.y, max_y);
+    }
+
+    /// Move the floating window so its top-left lands at `(x, y)`, clamped into `bounds`.
+    pub fn move_floating_to(&mut self, x: i32, y: i32, bounds: Rect) {
+        let max_x = (bounds.x as i32 + bounds.width as i32 - self.floating_rect.width as i32).max(bounds.x as i32);
+        let max_y = (bounds.y as i32 + bounds.height as i32 - self.floating_rect.height as i32).max(bounds.y as i32);
+        self.floating_rect.x = x.clamp(bounds.x as i32, max_x) as u16;
+        self.floating_rect.y = y.clamp(bounds.y as i32, max_y) as u16;
+    }
+
+    /// Nudge the floating window by `(dx, dy)` cells (keyboard move: `Alt`+arrows).
+    pub fn nudge_floating(&mut self, dx: i32, dy: i32, bounds: Rect) {
+        self.move_floating_to(self.floating_rect.x as i32 + dx, self.floating_rect.y as i32 + dy, bounds);
+    }
+
+    /// Resize the floating window so its bottom-right corner tracks `(col, row)`, clamped into
+    /// `bounds` and never smaller than the minimum size.
+    pub fn resize_floating_to(&mut self, col: u16, row: u16, bounds: Rect) {
+        let width = col.saturating_sub(self.floating_rect.x).saturating_add(1).max(Self::MIN_FLOAT_WIDTH);
+        let height = row.saturating_sub(self.floating_rect.y).saturating_add(1).max(Self::MIN_FLOAT_HEIGHT);
+        let max_width = bounds.x + bounds.width - self.floating_rect.x;
+        let max_height = bounds.y + bounds.height - self.floating_rect.y;
+        self.floating_rect.width = width.min(max_width);
+        self.floating_rect.height = height.min(max_height);
+    }
+
+    /// Resize the floating window by `(dw, dh)` cells (keyboard resize: `Alt+Shift`+arrows).
+    pub fn resize_floating_step(&mut self, dw: i32, dh: i32, bounds: Rect) {
+        let new_width = (self.floating_rect.width as i32 + dw).max(Self::MIN_FLOAT_WIDTH as i32) as u16;
+        let new_height = (self.floating_rect.height as i32 + dh).max(Self::MIN_FLOAT_HEIGHT as i32) as u16;
+        let max_width = bounds.x + bounds.width - self.floating_rect.x;
+        let max_height = bounds.y + bounds.height - self.floating_rect.y;
+        self.floating_rect.width = new_width.min(max_width);
+        self.floating_rect.height = new_height.min(max_height);
     }
 
     pub fn scroll_preview(&mut self, delta: isize) {

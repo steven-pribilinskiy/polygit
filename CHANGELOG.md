@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.9.0 — 2026-07-13
+Explorer: pin ⇄ float (draggable, resizable floating window)
+- The explorer can now **float** as a draggable, resizable window instead of the docked centered
+  panel — press **`p`** (or click **`[p float]`**/**`[p pin]`** in the title bar) to toggle.
+- **Drag the title bar** to move the floating window, **drag the bottom-right `◢` grip** to resize
+  it (or `Alt`+arrows to nudge, `Alt+Shift`+arrows to resize by keyboard).
+- The mode persists across explorer re-opens and app restarts.
+
 ## v3.8.0 — 2026-07-09
 Feature: configurable max parallel pulls (Settings → Workers), applied live
 - A new **Workers** settings section: a **Parallel pulls** button group (Exact count vs Percentage

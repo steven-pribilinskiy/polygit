@@ -3194,9 +3194,13 @@ fn pad_to(text: &str, width: usize) -> String {
 /// written back onto `app.explorer` for the input handlers (capture-then-hit-test).
 pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect) {
     use crate::explorer::{DateFormat, ExplorerColumn, ExplorerFocus, SizeTier, SortKey};
+    use crate::explorer::SurfaceMode;
     let dark = app.dark_active();
     if let Some(explorer) = app.explorer.as_mut() {
         explorer.ensure_preview();
+        if explorer.mode == SurfaceMode::Floating {
+            explorer.clamp_floating(area);
+        }
     }
     if app.explorer.is_none() {
         return;
@@ -3221,7 +3225,7 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         created: String,
         kind: String,
     }
-    let (rows, selected, list_scroll, split, columns, sort, ascending, date_format, focus, title, finder, preview, preview_hscroll, tree_mode, show_gitignored) = {
+    let (rows, selected, list_scroll, split, columns, sort, ascending, date_format, focus, title, finder, preview, preview_hscroll, tree_mode, show_gitignored, mode, floating_rect) = {
         let explorer = app.explorer.as_ref().unwrap();
         let rows: Vec<RowCell> = explorer
             .entries
@@ -3269,11 +3273,27 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
             explorer.preview_hscroll,
             explorer.tree_mode,
             explorer.show_gitignored,
+            explorer.mode,
+            explorer.floating_rect,
         )
     };
 
-    let modal = centered_rect((area.width * 9 / 10).max(40), (area.height * 9 / 10).max(12), area);
-    let (close_line, close_click) = modal_close_button(modal);
+    let floating = mode == SurfaceMode::Floating;
+    let modal = if floating {
+        floating_rect
+    } else {
+        centered_rect((area.width * 9 / 10).max(40), (area.height * 9 / 10).max(12), area)
+    };
+    let (close_line, close_click, pin_click) = modal_pin_button(modal, floating);
+    // The resize grip is the modal's bottom-right corner cell — only draggable while floating.
+    let resize_click = floating.then(|| (modal.y + modal.height.saturating_sub(1), modal.x + modal.width.saturating_sub(1)));
+    // The title-bar row (top border, left of the button cluster) — dragging it moves the window.
+    let titlebar_drag_area = if floating {
+        let buttons_start = pin_click.map(|(_, start, _)| start).unwrap_or(modal.x + modal.width);
+        Rect { x: modal.x + 1, y: modal.y, width: buttons_start.saturating_sub(modal.x + 1), height: 1 }
+    } else {
+        Rect::default()
+    };
     let dates_shown = columns.modified || columns.created;
     let selected_is_dir = rows.get(selected).map(|row| row.is_dir).unwrap_or(false);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
@@ -3304,6 +3324,8 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
     footer.push(footer_sep());
     footer.extend(footer_chip("i", if show_gitignored { " hide ign" } else { " show ign" }, HintKey::Char('i')));
     footer.push(footer_sep());
+    footer.extend(footer_chip("p", if floating { " pin" } else { " float" }, HintKey::Char('p')));
+    footer.push(footer_sep());
     footer.extend(footer_chip("esc", " close", HintKey::Esc));
     let title_label = if tree_mode {
         format!(" Explore (tree) — {title} ")
@@ -3322,6 +3344,15 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
     cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
     frame.render_widget(&block, modal);
+    if let Some((row, col)) = resize_click {
+        let hovered = app.hover == Some((col, row));
+        let style = if hovered {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        frame.buffer_mut().set_string(col, row, "◢", style);
+    }
 
     // Split inner into list | divider | preview.
     let list_w = ((inner.width as f64 * split) as u16).clamp(12, inner.width.saturating_sub(8));
@@ -3552,6 +3583,12 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         explorer.divider_col = divider_col;
         explorer.rows_click = row_clicks;
         explorer.close_click = close_click;
+        explorer.pin_click = pin_click;
+        explorer.resize_click = resize_click;
+        explorer.titlebar_drag_area = titlebar_drag_area;
         explorer.header_click = header_click;
+        if floating {
+            explorer.floating_rect = modal;
+        }
     }
 }

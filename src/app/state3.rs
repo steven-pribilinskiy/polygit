@@ -1608,6 +1608,16 @@ impl AppState {
         }
     }
 
+    /// Toggle the explorer between a docked panel and a free-floating, draggable/resizable window
+    /// (the `p` key / title-bar pin button); persists.
+    pub fn toggle_explorer_pin(&mut self) {
+        if let Some(explorer) = self.explorer.as_mut() {
+            explorer.toggle_pin();
+            self.explorer_prefs.mode = explorer.mode;
+            self.save_state();
+        }
+    }
+
     /// Toggle the explorer between the recursive tree view and the flat folder view; persists.
     pub fn toggle_explorer_tree_mode(&mut self) {
         if let Some(explorer) = self.explorer.as_mut() {
