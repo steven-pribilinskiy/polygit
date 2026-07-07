@@ -3,6 +3,14 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.5.3 — 2026-07-07
+Styled `--help` with a sectioned command list
+- `polygit --help` (and `-h` / `help`) now prints a compact, grouped command overview —
+  Reports / Workspaces / Maintenance — with each command's aliases shown dimmed right after
+  its name (`list, ls`) and descriptions aligned in a column.
+- Colors only when stdout is a TTY, so `polygit --help | …` stays plain. Per-command help
+  (`polygit <command> --help`) is unchanged.
+
 ## v3.5.2 — 2026-07-07
 `sizes`: ~2x faster via a multi-threaded walk
 - The size of each repo is now computed with a work-stealing parallel directory walker (the

@@ -912,6 +912,14 @@ async fn run_self_update() -> Result<i32> {
 }
 
 async fn run() -> Result<i32> {
+    // Custom top-level help (sectioned, aliases dimmed). Only the bare `--help`/`-h`/`help` forms;
+    // `polygit <command> --help` still falls through to clap's per-command help.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(argv.as_slice(), [only] if matches!(only.as_str(), "-h" | "--help" | "help")) {
+        commands::print_help();
+        return Ok(0);
+    }
+
     let cli = Cli::parse();
 
     let max_jobs = cli

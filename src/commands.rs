@@ -25,6 +25,9 @@ const CYAN: &str = "\x1b[36m";
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
 const DIM: &str = "\x1b[2m";
+const BOLD: &str = "\x1b[1m";
+const ITALIC: &str = "\x1b[3m";
+const BOLD_CYAN: &str = "\x1b[1;36m";
 const RESET: &str = "\x1b[0m";
 
 /// Discovery args shared by the report subcommands (mirrors the top-level scan args, which
@@ -88,6 +91,89 @@ fn paint(text: &str, code: &str, color: bool) -> String {
 /// Repo-name column width. Formatting width counts chars, so measure chars (not bytes).
 fn name_pad(repos: &[Repo]) -> usize {
     repos.iter().map(|repo| repo.name.chars().count()).max().unwrap_or(0)
+}
+
+/// One command in the help screen: `(primary, comma-separated aliases, description)`.
+type HelpRow = (&'static str, &'static str, &'static str);
+
+/// The command list shown by `polygit --help`, grouped into sections. Kept in sync with the
+/// `Commands` enum in `main.rs`.
+const HELP_SECTIONS: &[(&str, &[HelpRow])] = &[
+    ("Reports", &[
+        ("list", "ls", "List every repo with its current branch"),
+        ("status", "", "Show uncommitted changes for each dirty repo"),
+        ("dirty", "", "Print the names of repos with uncommitted changes"),
+        ("branches", "", "Branch + ahead/behind vs upstream, per repo"),
+        ("sizes", "", "Disk usage per repo, largest first"),
+    ]),
+    ("Workspaces", &[
+        ("ws", "workspace, workspaces", "Manage & open saved workspaces (ws ls to list)"),
+    ]),
+    ("Maintenance", &[
+        ("update", "upgrade", "Self-update to the latest release"),
+    ]),
+];
+
+/// Visible width of a `primary, alias1, alias2` label (ANSI codes excluded — they're added later).
+fn help_label_width(primary: &str, aliases: &str) -> usize {
+    if aliases.is_empty() {
+        primary.chars().count()
+    } else {
+        primary.chars().count() + 2 + aliases.chars().count()
+    }
+}
+
+/// Print the top-level `--help`: a compact, sectioned command list with each primary name in cyan
+/// and its aliases dimmed after it, descriptions aligned in a column. Colors only on a stdout TTY.
+pub fn print_help() {
+    let color = stdout_color();
+    // Align descriptions to the widest label, capped so one long alias list can't push the whole
+    // column far right; anything wider than the cap just gets a single space.
+    let column = HELP_SECTIONS
+        .iter()
+        .flat_map(|(_, rows)| rows.iter())
+        .map(|(primary, aliases, _)| help_label_width(primary, aliases))
+        .max()
+        .unwrap_or(0)
+        .min(26);
+
+    println!();
+    println!(
+        "  {} {} {}",
+        paint("polygit", BOLD_CYAN, color),
+        paint("—", DIM, color),
+        paint("discover, status & pull many git repos", ITALIC, color),
+    );
+    println!();
+    println!(
+        "  {} polygit {}          scan & pull every repo (cwd if omitted)",
+        paint("Usage:", BOLD, color),
+        paint("[DIR...]", ITALIC, color),
+    );
+    println!("          polygit {} [args]", paint("<command>", ITALIC, color));
+
+    for (title, rows) in HELP_SECTIONS {
+        println!();
+        println!("  {}", paint(title, BOLD, color));
+        for (primary, aliases, desc) in *rows {
+            let label = if aliases.is_empty() {
+                paint(primary, CYAN, color)
+            } else {
+                format!("{}{}", paint(primary, CYAN, color), paint(&format!(", {aliases}"), DIM, color))
+            };
+            let gap = column.saturating_sub(help_label_width(primary, aliases)).max(1);
+            println!("  {label}{}{}", " ".repeat(gap), paint(desc, DIM, color));
+        }
+    }
+
+    println!();
+    println!(
+        "  {} polygit {} --help {}",
+        paint("Run", BOLD, color),
+        paint("<command>", ITALIC, color),
+        paint("for details on any command.", DIM, color),
+    );
+    println!();
 }
 
 /// Render ahead/behind vs upstream: green `✓` when in sync, `↑N`/`↓N` for the nonzero
@@ -308,6 +394,19 @@ mod tests {
     fn paint_wraps_only_when_colored() {
         assert_eq!(paint("x", CYAN, true), "\x1b[36mx\x1b[0m");
         assert_eq!(paint("x", CYAN, false), "x");
+    }
+
+    #[test]
+    fn help_label_width_counts_primary_and_aliases() {
+        assert_eq!(help_label_width("status", ""), 6);
+        assert_eq!(help_label_width("list", "ls"), 8); // "list, ls"
+        assert_eq!(help_label_width("ws", "workspace, workspaces"), 25);
+    }
+
+    #[test]
+    fn help_sections_are_populated() {
+        assert!(!HELP_SECTIONS.is_empty());
+        assert!(HELP_SECTIONS.iter().all(|(_, rows)| !rows.is_empty()));
     }
 
     #[test]
