@@ -4,7 +4,7 @@
 //! Colors are emitted only when stdout is a TTY, so piped output stays clean.
 
 use std::collections::HashSet;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -12,6 +12,9 @@ use futures::stream::{self, StreamExt};
 
 /// Concurrent per-repo git calls; deliberately modest so a big scan stays polite.
 const REPORT_JOBS: usize = 8;
+
+/// Width (in cells) of the `sizes` progress bar shown on a stderr TTY.
+const PROGRESS_WIDTH: usize = 20;
 
 const CYAN: &str = "\x1b[36m";
 const GREEN: &str = "\x1b[32m";
@@ -104,6 +107,14 @@ fn format_track(ahead: Option<u32>, behind: Option<u32>, color: bool) -> String 
 /// Largest first; ties break alphabetically so output is deterministic.
 fn sort_sizes(rows: &mut [(String, u64)]) {
     rows.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+}
+
+/// A fixed-width progress bar like `[████░░░░] 12/34 repos`. `total == 0` renders full
+/// (nothing to do), avoiding a divide-by-zero.
+fn progress_bar(done: usize, total: usize, width: usize) -> String {
+    let filled = if total == 0 { width } else { (done * width / total).min(width) };
+    let bar: String = "█".repeat(filled) + &"░".repeat(width - filled);
+    format!("[{bar}] {done}/{total} repos")
 }
 
 /// `polygit list` — every repo with its current branch.
@@ -226,7 +237,18 @@ pub async fn run_sizes(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
         return Ok(0);
     }
     let color = stdout_color();
-    let mut rows: Vec<(String, u64)> = stream::iter(repos)
+    let total_repos = repos.len();
+    // Sizing walks every repo in full (slow on huge trees), so show live progress on a stderr
+    // TTY — stdout stays clean for pipes. Results are sorted afterward, so order-of-completion
+    // (buffer_unordered) is fine and lets the bar advance as each repo finishes.
+    let show_progress = io::stderr().is_terminal();
+    let mut rows: Vec<(String, u64)> = Vec::with_capacity(total_repos);
+    let mut sized = 0usize;
+    if show_progress {
+        eprint!("{}", paint(&progress_bar(0, total_repos, PROGRESS_WIDTH), DIM, true));
+        let _ = io::stderr().flush();
+    }
+    let mut sizing = stream::iter(repos)
         .map(|repo| async move {
             let path = repo.path.clone();
             let bytes = tokio::task::spawn_blocking(move || crate::explorer::dir_size_bounded(&path))
@@ -234,9 +256,19 @@ pub async fn run_sizes(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
                 .unwrap_or(0);
             (repo.name, bytes)
         })
-        .buffered(REPORT_JOBS)
-        .collect()
-        .await;
+        .buffer_unordered(REPORT_JOBS);
+    while let Some(row) = sizing.next().await {
+        rows.push(row);
+        sized += 1;
+        if show_progress {
+            eprint!("\r\x1b[2K{}", paint(&progress_bar(sized, total_repos, PROGRESS_WIDTH), DIM, true));
+            let _ = io::stderr().flush();
+        }
+    }
+    if show_progress {
+        eprint!("\r\x1b[2K");
+        let _ = io::stderr().flush();
+    }
     sort_sizes(&mut rows);
     let total: u64 = rows.iter().map(|(_, bytes)| bytes).sum();
     for (name, bytes) in &rows {
@@ -271,6 +303,15 @@ mod tests {
     fn paint_wraps_only_when_colored() {
         assert_eq!(paint("x", CYAN, true), "\x1b[36mx\x1b[0m");
         assert_eq!(paint("x", CYAN, false), "x");
+    }
+
+    #[test]
+    fn progress_bar_fills_proportionally() {
+        assert_eq!(progress_bar(0, 4, 4), "[░░░░] 0/4 repos");
+        assert_eq!(progress_bar(2, 4, 4), "[██░░] 2/4 repos");
+        assert_eq!(progress_bar(4, 4, 4), "[████] 4/4 repos");
+        // Guard: no repos renders full rather than dividing by zero.
+        assert_eq!(progress_bar(0, 0, 4), "[████] 0/0 repos");
     }
 
     #[test]

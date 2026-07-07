@@ -3,6 +3,13 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.5.1 — 2026-07-07
+`sizes`: live progress bar
+- `sizes` walks every repo in full, so on a big tree it could sit silent for a while. It now
+  shows a progress bar (`[████░░░░] 12/34 repos`) that advances as each repo finishes.
+- The bar is on **stderr** and only when stderr is a TTY, so piped/redirected stdout is
+  unchanged; it clears itself before the results print.
+
 ## v3.5.0 — 2026-07-07
 Feature: read-only report subcommands over the same multi-repo scan
 - Five headless commands that survey your repos without pulling: `list` (each repo + branch;
