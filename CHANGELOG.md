@@ -3,6 +3,17 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.5.2 — 2026-07-07
+`sizes`: ~2x faster via a multi-threaded walk
+- The size of each repo is now computed with a work-stealing parallel directory walker (the
+  `ignore` crate) instead of a single-threaded traversal. A `sizes` run is bottlenecked on the
+  one biggest repo, and walking that repo across all cores is ~4x faster; the full run is ~2x
+  faster (benchmarked with hyperfine).
+- Because the walk is now internally parallel, the report runs only a few repos at once (more
+  would just oversubscribe the cores).
+- The walker also has no entry cap, so totals are now exact (the old bounded walk could
+  undercount very large trees).
+
 ## v3.5.1 — 2026-07-07
 `sizes`: live progress bar
 - `sizes` walks every repo in full, so on a big tree it could sit silent for a while. It now

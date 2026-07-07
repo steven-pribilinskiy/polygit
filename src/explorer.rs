@@ -1037,6 +1037,37 @@ pub fn dir_size_bounded(path: &Path) -> u64 {
     total
 }
 
+/// Recursive directory size in bytes via the `ignore` crate's multi-threaded walker — counts
+/// everything (hidden, `.git`, gitignored) and never follows symlinks. Much faster than
+/// `dir_size_bounded` on large trees (the walk is the bottleneck, and it parallelizes across all
+/// cores), so it's used by the `sizes` report where accuracy and speed both matter; unlike the
+/// bounded walker it has no entry cap, so the total is exact.
+pub fn dir_size_parallel(path: &Path) -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    let threads = std::thread::available_parallelism().map(|count| count.get()).unwrap_or(4);
+    let total = Arc::new(AtomicU64::new(0));
+    ignore::WalkBuilder::new(path)
+        .standard_filters(false) // count everything: hidden, .git, gitignored
+        .follow_links(false)
+        .threads(threads)
+        .build_parallel()
+        .run(|| {
+            let total = Arc::clone(&total);
+            Box::new(move |result| {
+                if let Ok(entry) = result {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_file() {
+                            total.fetch_add(meta.len(), Ordering::Relaxed);
+                        }
+                    }
+                }
+                ignore::WalkState::Continue
+            })
+        });
+    total.load(Ordering::Relaxed)
+}
+
 /// Human-readable byte size (e.g. `1.2 KB`). Shared with the columns renderer.
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

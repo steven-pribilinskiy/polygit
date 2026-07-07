@@ -13,6 +13,11 @@ use futures::stream::{self, StreamExt};
 /// Concurrent per-repo git calls; deliberately modest so a big scan stays polite.
 const REPORT_JOBS: usize = 8;
 
+/// Concurrent repos for `sizes`. Each size walk is itself multi-threaded (saturates the cores),
+/// so a handful in flight is optimal — more just oversubscribes. Benchmarked ~2x faster than the
+/// old single-threaded walk on a tree with one dominant repo.
+const SIZE_JOBS: usize = 3;
+
 /// Width (in cells) of the `sizes` progress bar shown on a stderr TTY.
 const PROGRESS_WIDTH: usize = 20;
 
@@ -251,12 +256,12 @@ pub async fn run_sizes(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
     let mut sizing = stream::iter(repos)
         .map(|repo| async move {
             let path = repo.path.clone();
-            let bytes = tokio::task::spawn_blocking(move || crate::explorer::dir_size_bounded(&path))
+            let bytes = tokio::task::spawn_blocking(move || crate::explorer::dir_size_parallel(&path))
                 .await
                 .unwrap_or(0);
             (repo.name, bytes)
         })
-        .buffer_unordered(REPORT_JOBS);
+        .buffer_unordered(SIZE_JOBS);
     while let Some(row) = sizing.next().await {
         rows.push(row);
         sized += 1;
