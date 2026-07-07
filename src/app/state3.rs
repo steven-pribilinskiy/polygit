@@ -1372,7 +1372,7 @@ impl AppState {
             if dirty == 0 { "clean".to_string() } else { format!("{dirty} uncommitted change(s)") }
         ));
         prompt.push_str(&format!("- Stashes: {stashes}\n"));
-        prompt.push_str(&format!("- Local branches (excl. main/dev): {branches}\n"));
+        prompt.push_str(&format!("- Local branches beyond the mainline (excl. main/master/dev/…): {branches}\n"));
         prompt.push_str(&format!("- Worktrees: {worktrees}\n"));
         if let Some(pr) = pr {
             prompt.push_str(&format!("- Open PR for this branch: {pr}\n"));

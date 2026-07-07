@@ -1705,7 +1705,7 @@ async fn run_event_loop(
                     Duration::from_secs(AppState::branch_check_interval_secs(app.repos.len()));
                 if last_branch_check.elapsed() >= interval {
                     last_branch_check = Instant::now();
-                    tokio::spawn(run_all_details(app.repos.clone(), app.max_jobs));
+                    tokio::spawn(run_all_details(app.repos.clone(), app.max_jobs, true));
                 }
             }
             app.divider_dragging = dragging_divider;
@@ -5143,7 +5143,7 @@ async fn run_event_loop(
                         let repos = app.repos.clone();
                         let max_jobs = app.max_jobs;
                         drop(app);
-                        tokio::spawn(run_all_details(repos, max_jobs));
+                        tokio::spawn(run_all_details(repos, max_jobs, true));
                     }
 
                     _ => {}
@@ -5188,7 +5188,7 @@ async fn run_event_loop(
                 let repos = app.repos.clone();
                 let max_jobs = app.max_jobs;
                 drop(app);
-                tokio::spawn(run_all_details(repos, max_jobs));
+                tokio::spawn(run_all_details(repos, max_jobs, false));
             }
         }
 

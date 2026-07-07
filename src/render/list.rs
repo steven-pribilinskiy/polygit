@@ -956,7 +956,7 @@ pub(crate) fn column_header_tooltip(sort: SortColumn) -> &'static str {
         SortColumn::Dirty => "Δ — uncommitted (dirty) working-tree changes",
         SortColumn::LastCommit => "Age of the last commit on the current branch",
         SortColumn::Worktrees => "wt — linked git worktrees on this repo",
-        SortColumn::Branches => "br — local branches",
+        SortColumn::Branches => "br — local branches beyond the mainline (excl. main/master/dev/…)",
         SortColumn::Stashes => "st — stash entries",
         SortColumn::PulledCommits => "pull — commits pulled in this session",
         SortColumn::PulledFiles => "chg — files changed by this session's pull",

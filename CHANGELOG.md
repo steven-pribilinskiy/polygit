@@ -3,6 +3,18 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.5.4 — 2026-07-08
+Fix: branch/detail counts were frozen after first load; `br` over-counted master repos
+- The `U` "refresh all local facts" key and the periodic auto branch-check silently did
+  nothing for already-loaded repos — both went through `run_all_details`, which skipped any
+  repo that already had details. So the `br` (and ahead/behind, dirty, stash) counts froze at
+  whatever they were when first computed at startup, and only `u` (single repo) or a re-pull
+  updated them. `run_all_details` now takes a `force` flag: `U` + the auto-check recompute
+  every repo; the one-time background column backfill still only fills repos with no details.
+- The `br` feature-branch count excluded only `main`/`dev`, so a repo whose default branch is
+  `master` (or `develop`/`staging`/`stage`) counted its own default as one "extra" branch. It
+  now excludes all conventional integration branches, so a mainline-only repo reads `0`.
+
 ## v3.5.3 — 2026-07-07
 Styled `--help` with a sectioned command list
 - `polygit --help` (and `-h` / `help`) now prints a compact, grouped command overview —

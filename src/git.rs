@@ -10,9 +10,6 @@ use crate::app::{
     StashInfo, WorktreeInfo,
 };
 
-/// Branches excluded from the feature-branch count.
-const EXCLUDED_BRANCHES: [&str; 2] = ["main", "dev"];
-
 /// Result of parsing git pull output to determine status.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PullOutcome {
@@ -663,10 +660,13 @@ pub async fn get_repo_details(dir: &Path) -> RepoDetails {
         .await
     {
         if output.status.success() {
+            // Count only NON-mainline local branches (the repo's "extra"/feature branches). Exclude
+            // conventional integration branches (main/master/develop/dev/staging/stage) so a repo
+            // whose default is `master` doesn't read as 1 "extra branch" with zero real work on it.
             details.branch_count = String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .map(str::trim)
-                .filter(|name| !name.is_empty() && !EXCLUDED_BRANCHES.contains(name))
+                .filter(|name| !name.is_empty() && !is_conventional_base(name))
                 .count() as u32;
         }
     }

@@ -1370,15 +1370,19 @@ fn compute_flash(
     }
 }
 
-/// Fetch info-panel details for all repos that don't have them yet (background column fill).
-pub async fn run_all_details(repos: Vec<SharedRepoState>, max_jobs: usize) {
+/// Fetch info-panel details (branch count, ahead/behind, dirty, stashes) for many repos, bounded by
+/// `max_jobs`. `force` decides recompute vs backfill: the one-time background column fill passes
+/// `false` (only repos with no details yet — cheap, no churn); the `U` key and the periodic auto
+/// branch-check pass `true` to RECOMPUTE every repo, so their counts actually refresh (a `false`
+/// there would no-op on already-loaded repos, freezing every count at its first value).
+pub async fn run_all_details(repos: Vec<SharedRepoState>, max_jobs: usize, force: bool) {
     let semaphore = Arc::new(Semaphore::new(max_jobs.max(1)));
     let mut handles = Vec::new();
     for repo in repos {
         let semaphore = Arc::clone(&semaphore);
         handles.push(tokio::spawn(async move {
             let _permit = semaphore.acquire_owned().await.ok();
-            if repo.lock().unwrap().details.is_some() {
+            if !force && repo.lock().unwrap().details.is_some() {
                 return;
             }
             let path = { repo.lock().unwrap().path.clone() };
