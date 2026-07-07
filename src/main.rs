@@ -1,6 +1,7 @@
 mod app;
 mod cache;
 mod changelog;
+mod commands;
 mod diffview;
 mod explorer;
 mod git;
@@ -120,6 +121,32 @@ struct Cli {
 /// Top-level subcommands. New commands slot in here; each gets its own `--help`/`help`.
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// List every repo with its current branch
+    #[command(visible_alias = "ls")]
+    List {
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+    },
+    /// Show uncommitted changes (`git status --short`) for each dirty repo
+    Status {
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+    },
+    /// Print the names of repos with uncommitted changes
+    Dirty {
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+    },
+    /// Show each repo's branch and how far it is ahead/behind its upstream
+    Branches {
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+    },
+    /// Show disk usage per repo, largest first
+    Sizes {
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+    },
     /// Manage saved workspaces — opens an interactive picker; `ws ls` lists them.
     #[command(visible_aliases = ["workspace", "workspaces"])]
     Ws {
@@ -898,11 +925,14 @@ async fn run() -> Result<i32> {
     let profiling = profile::profile_enabled(cli.profile);
 
     // Subcommands.
-    if let Some(Commands::Update) = &cli.command {
-        return run_self_update().await;
-    }
-    if let Some(Commands::Ws { action }) = &cli.command {
-        match action {
+    match &cli.command {
+        Some(Commands::List { scan }) => return run_report(scan, commands::run_list).await,
+        Some(Commands::Status { scan }) => return run_report(scan, commands::run_status).await,
+        Some(Commands::Dirty { scan }) => return run_report(scan, commands::run_dirty).await,
+        Some(Commands::Branches { scan }) => return run_report(scan, commands::run_branches).await,
+        Some(Commands::Sizes { scan }) => return run_report(scan, commands::run_sizes).await,
+        Some(Commands::Update) => return run_self_update().await,
+        Some(Commands::Ws { action }) => match action {
             Some(WsAction::Ls) => return list_workspaces(),
             None => {
                 // The picker is interactive — fall back to a printed list without a TTY.
@@ -926,7 +956,8 @@ async fn run() -> Result<i32> {
                     None => Ok(0),
                 };
             }
-        }
+        },
+        None => {}
     }
 
     // Default run: the CLI dirs (or the cwd), or a named workspace via `-w`.
@@ -956,6 +987,16 @@ async fn run() -> Result<i32> {
         cli.profile_out,
     )
     .await
+}
+
+/// Resolve the scan roots for a headless report subcommand and run its handler.
+async fn run_report<Run, Fut>(scan: &commands::ScanArgs, run: Run) -> Result<i32>
+where
+    Run: FnOnce(Vec<PathBuf>, usize) -> Fut,
+    Fut: std::future::Future<Output = Result<i32>>,
+{
+    let (roots, _) = resolve_roots(&scan.dirs, scan.workspace.as_deref())?;
+    run(roots, scan.max_depth()).await
 }
 
 /// Resolve the launch roots and the active workspace name (canonicalized + deduped, order

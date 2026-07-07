@@ -3,6 +3,18 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.5.0 — 2026-07-07
+Feature: read-only report subcommands over the same multi-repo scan
+- Five headless commands that survey your repos without pulling: `list` (each repo + branch;
+  alias `ls`), `status` (`git status --short` per dirty repo, else `All repos clean.`), `dirty`
+  (just the dirty repo names, grep-style), `branches` (branch + `↑N ↓N` ahead/behind vs upstream,
+  `✓` in sync, `no upstream` when untracked), and `sizes` (disk usage per repo, largest first).
+- Each takes the same scan args as the pull mode — `[DIR...]`, `-w <workspace>`, `--depth`,
+  `--no-recursive` — placed **after** the subcommand (`polygit list -w work`). Repo discovery,
+  naming, and dedup reuse the existing recursive walker.
+- Colors are gated on **stdout** being a TTY (the TUI gates on stderr), so piped output is plain
+  and script-friendly. Per-repo git calls run at bounded, order-preserving concurrency.
+
 ## v3.4.2 — 2026-07-07
 Fix: diff views broken when git has an external diff driver (difftastic/delta)
 - If your git config sets `diff.external` (or `GIT_EXTERNAL_DIFF`), every `git diff` polygit ran was

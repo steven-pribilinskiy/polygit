@@ -158,6 +158,20 @@ pub async fn dirty_count(dir: &Path) -> u32 {
     }
 }
 
+/// `git status --short` output for a repo; empty when clean (or on error). `color` asks git
+/// to keep its status colors for TTY output.
+pub async fn status_short(dir: &Path, color: bool) -> String {
+    let mut args = vec!["-C", dir.to_str().unwrap_or(".")];
+    if color {
+        args.extend(["-c", "color.status=always"]);
+    }
+    args.extend(["status", "--short"]);
+    match Command::new("git").args(&args).output().await {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim_end().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 /// Get `git diff --stat --color=always HEAD@{1} HEAD` output.
 pub async fn diff_stat(dir: &Path) -> Result<String> {
     let output = Command::new("git")
@@ -578,6 +592,23 @@ pub fn parse_ahead_behind(text: &str) -> (Option<u32>, Option<u32>) {
     (behind, ahead)
 }
 
+/// `(ahead, behind)` of HEAD vs its upstream, via `rev-list --left-right --count @{u}...HEAD`.
+/// `(None, None)` when there is no upstream (the command exits nonzero).
+pub async fn head_ahead_behind(dir: &Path) -> (Option<u32>, Option<u32>) {
+    let Ok(output) = Command::new("git")
+        .args(["-C", dir.to_str().unwrap_or("."), "rev-list", "--left-right", "--count", "@{u}...HEAD"])
+        .output()
+        .await
+    else {
+        return (None, None);
+    };
+    if !output.status.success() {
+        return (None, None);
+    }
+    let (behind, ahead) = parse_ahead_behind(&String::from_utf8_lossy(&output.stdout));
+    (ahead, behind)
+}
+
 /// Fetch the lazy info-panel details for one repo: last commit, ahead/behind vs
 /// upstream, dirty file count, and stash count. Best-effort — failures leave defaults.
 pub async fn get_repo_details(dir: &Path) -> RepoDetails {
@@ -600,18 +631,9 @@ pub async fn get_repo_details(dir: &Path) -> RepoDetails {
         }
     }
 
-    if let Ok(output) = Command::new("git")
-        .args(["-C", dir_str, "rev-list", "--left-right", "--count", "@{u}...HEAD"])
-        .output()
-        .await
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            let (behind, ahead) = parse_ahead_behind(&text);
-            details.behind = behind;
-            details.ahead = ahead;
-        }
-    }
+    let (ahead, behind) = head_ahead_behind(dir).await;
+    details.ahead = ahead;
+    details.behind = behind;
 
     if let Ok(output) = Command::new("git")
         .args(["-C", dir_str, "status", "--porcelain"])

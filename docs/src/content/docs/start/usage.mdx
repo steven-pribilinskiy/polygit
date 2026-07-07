@@ -59,6 +59,23 @@ byte-compatible with the original bash reference, so it drops cleanly into scrip
 polygit --no-tui ~/projects
 ```
 
+## Report subcommands
+
+Five read-only reports run the same scan (recursive discovery, workspaces, `--depth` /
+`--no-recursive`) without pulling anything — they print to stdout and exit, with colors
+only when stdout is a TTY:
+
+```bash
+polygit list                   # every repo + current branch (alias: ls)
+polygit status                 # git status --short for each dirty repo
+polygit dirty                  # just the names of dirty repos
+polygit branches               # branch + ahead/behind vs upstream (↑N ↓N / ✓ / no upstream)
+polygit sizes                  # disk usage per repo, largest first
+```
+
+Scan args go **after** the subcommand: `polygit branches -w work`, `polygit sizes ~/oss --depth 2`.
+See the [CLI reference](../../reference/cli/) for the full table.
+
 ## Concurrency
 
 Pulls run in parallel up to a limit (default: number of CPUs).

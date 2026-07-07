@@ -17,6 +17,31 @@ The scan is recursive by default — it crawls the tree in parallel, pruning hid
 `node_modules`/`vendor`/`target`/`dist`/… and `*.worktrees`, and never descending into a
 found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level scan.
 
+## Subcommands
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `list` | `ls` | List every repo with its current branch. |
+| `status` | | Show uncommitted changes (`git status --short`) for each dirty repo; `All repos clean.` when none. |
+| `dirty` | | Print just the names of repos with uncommitted changes (grep-style filter). |
+| `branches` | | Show each repo's branch and ahead/behind vs its upstream (`↑N ↓N`, `✓` in sync, `no upstream`). |
+| `sizes` | | Show disk usage per repo, largest first, plus a total. |
+| `ws` | `workspace`, `workspaces` | Interactive workspace picker; `ws ls` lists saved workspaces. |
+| `update` | `upgrade` | Self-update to the latest published release. |
+
+The five report commands are headless: they print to stdout and exit (colors only when
+stdout is a TTY, so piped output stays plain). Each accepts its own scan args — `[DIR...]`,
+`-w <name>`, `--depth <N>`, `--no-recursive` — which must come **after** the subcommand
+(`polygit list -w work`, not `polygit -w work list`).
+
+```bash
+polygit list ~/projects              # every repo + current branch
+polygit status                       # what's uncommitted, per repo
+polygit dirty | head                 # pipe-friendly dirty-repo names
+polygit branches -w work             # ahead/behind across a saved workspace
+polygit sizes --no-recursive         # disk usage, immediate subdirs only
+```
+
 ## Flags
 
 | Flag | Env | Default | Description |

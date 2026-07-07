@@ -87,6 +87,13 @@ polygit -w work                # reopen it
 polygit ws                     # interactive picker
 polygit ws ls                  # list saved workspaces
 
+# Read-only reports over the same scan (each accepts [DIR...], -w, --depth, --no-recursive)
+polygit list                   # every repo + current branch (alias: ls)
+polygit status                 # git status --short for each dirty repo
+polygit dirty                  # just the names of dirty repos
+polygit branches               # branch + ahead/behind vs upstream (↑N ↓N / ✓ / no upstream)
+polygit sizes                  # disk usage per repo, largest first
+
 # Self-update to the latest published release (alias: upgrade)
 polygit update
 

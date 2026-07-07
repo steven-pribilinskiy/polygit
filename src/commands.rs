@@ -1,0 +1,297 @@
+//! Headless report subcommands: `list`, `status`, `dirty`, `branches`, `sizes`.
+//!
+//! Each prints a one-shot overview of the repos under the scan roots and exits — no TUI.
+//! Colors are emitted only when stdout is a TTY, so piped output stays clean.
+
+use std::collections::HashSet;
+use std::io::{self, IsTerminal};
+use std::path::PathBuf;
+
+use anyhow::Result;
+use futures::stream::{self, StreamExt};
+
+/// Concurrent per-repo git calls; deliberately modest so a big scan stays polite.
+const REPORT_JOBS: usize = 8;
+
+const CYAN: &str = "\x1b[36m";
+const GREEN: &str = "\x1b[32m";
+const RED: &str = "\x1b[31m";
+const DIM: &str = "\x1b[2m";
+const RESET: &str = "\x1b[0m";
+
+/// Discovery args shared by the report subcommands (mirrors the top-level scan args, which
+/// `args_conflicts_with_subcommands` makes unavailable to subcommands).
+#[derive(clap::Args, Debug)]
+pub struct ScanArgs {
+    /// Directories to scan — each may itself be a single repo. With none, scans the
+    /// current directory. (Use `-w <name>` to use a saved workspace instead.)
+    pub dirs: Vec<PathBuf>,
+
+    /// Use a saved workspace's folders as the scan roots.
+    #[arg(short = 'w', long, value_name = "NAME")]
+    pub workspace: Option<String>,
+
+    /// Max directory depth to scan for repos (1 = immediate subdirs only)
+    #[arg(long, value_name = "N", default_value = "16")]
+    pub depth: usize,
+
+    /// Scan only the immediate subdirectories (same as --depth 1)
+    #[arg(long)]
+    pub no_recursive: bool,
+}
+
+impl ScanArgs {
+    /// Effective scan depth: `--no-recursive` forces 1; `--depth 0` is floored to 1.
+    pub fn max_depth(&self) -> usize {
+        if self.no_recursive { 1 } else { self.depth.max(1) }
+    }
+}
+
+struct Repo {
+    name: String,
+    path: PathBuf,
+}
+
+/// Discover every repo under the roots (deduped across overlapping roots), named relative
+/// to the root each was found under, sorted by name.
+async fn discover(roots: &[PathBuf], max_depth: usize) -> Result<Vec<Repo>> {
+    let mut repos: Vec<Repo> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    for root in roots {
+        for path in crate::git::discover_repos_recursive(root, max_depth).await? {
+            if seen.insert(path.clone()) {
+                repos.push(Repo { name: crate::git::relative_path(root, &path), path });
+            }
+        }
+    }
+    repos.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(repos)
+}
+
+fn stdout_color() -> bool {
+    io::stdout().is_terminal()
+}
+
+/// Wrap `text` in an ANSI color code when `color` is on; pass through untouched otherwise.
+fn paint(text: &str, code: &str, color: bool) -> String {
+    if color { format!("{code}{text}{RESET}") } else { text.to_string() }
+}
+
+/// Repo-name column width. Formatting width counts chars, so measure chars (not bytes).
+fn name_pad(repos: &[Repo]) -> usize {
+    repos.iter().map(|repo| repo.name.chars().count()).max().unwrap_or(0)
+}
+
+/// Render ahead/behind vs upstream: green `✓` when in sync, `↑N`/`↓N` for the nonzero
+/// directions, or a dim `no upstream` when the branch tracks nothing.
+fn format_track(ahead: Option<u32>, behind: Option<u32>, color: bool) -> String {
+    match (ahead, behind) {
+        (Some(0), Some(0)) => paint("✓", GREEN, color),
+        (Some(ahead), Some(behind)) => {
+            let mut parts = Vec::new();
+            if ahead > 0 {
+                parts.push(paint(&format!("↑{ahead}"), GREEN, color));
+            }
+            if behind > 0 {
+                parts.push(paint(&format!("↓{behind}"), RED, color));
+            }
+            parts.join(" ")
+        }
+        _ => paint("no upstream", DIM, color),
+    }
+}
+
+/// Largest first; ties break alphabetically so output is deterministic.
+fn sort_sizes(rows: &mut [(String, u64)]) {
+    rows.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+}
+
+/// `polygit list` — every repo with its current branch.
+pub async fn run_list(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
+    let repos = discover(&roots, max_depth).await?;
+    if repos.is_empty() {
+        println!("No git repositories found.");
+        return Ok(0);
+    }
+    let color = stdout_color();
+    let pad = name_pad(&repos);
+    let rows: Vec<(String, String)> = stream::iter(repos)
+        .map(|repo| async move {
+            let branch = crate::git::get_branch(&repo.path).await.unwrap_or_else(|_| "?".into());
+            (repo.name, branch)
+        })
+        .buffered(REPORT_JOBS)
+        .collect()
+        .await;
+    for (name, branch) in rows {
+        println!("{}  {branch}", paint(&format!("{name:<pad$}"), CYAN, color));
+    }
+    Ok(0)
+}
+
+/// `polygit status` — `git status --short` for each dirty repo.
+pub async fn run_status(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
+    let repos = discover(&roots, max_depth).await?;
+    if repos.is_empty() {
+        println!("No git repositories found.");
+        return Ok(0);
+    }
+    let color = stdout_color();
+    let rows: Vec<(String, String)> = stream::iter(repos)
+        .map(|repo| async move {
+            let status = crate::git::status_short(&repo.path, color).await;
+            (repo.name, status)
+        })
+        .buffered(REPORT_JOBS)
+        .collect()
+        .await;
+    let mut any_dirty = false;
+    for (name, status) in rows {
+        if status.is_empty() {
+            continue;
+        }
+        if any_dirty {
+            println!();
+        }
+        any_dirty = true;
+        println!("{}", paint(&name, CYAN, color));
+        for line in status.lines() {
+            println!("  {line}");
+        }
+    }
+    if !any_dirty {
+        println!("All repos clean.");
+    }
+    Ok(0)
+}
+
+/// `polygit dirty` — names of repos with uncommitted changes (a grep-style filter:
+/// silent when nothing is dirty, always exit 0).
+pub async fn run_dirty(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
+    let repos = discover(&roots, max_depth).await?;
+    let color = stdout_color();
+    let rows: Vec<(String, bool)> = stream::iter(repos)
+        .map(|repo| async move {
+            let dirty = crate::git::is_dirty(&repo.path).await.unwrap_or(false);
+            (repo.name, dirty)
+        })
+        .buffered(REPORT_JOBS)
+        .collect()
+        .await;
+    for (name, dirty) in rows {
+        if dirty {
+            println!("{}", paint(&name, CYAN, color));
+        }
+    }
+    Ok(0)
+}
+
+/// `polygit branches` — branch plus ahead/behind vs upstream per repo.
+pub async fn run_branches(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
+    let repos = discover(&roots, max_depth).await?;
+    if repos.is_empty() {
+        println!("No git repositories found.");
+        return Ok(0);
+    }
+    let color = stdout_color();
+    let pad = name_pad(&repos);
+    let rows: Vec<_> = stream::iter(repos)
+        .map(|repo| async move {
+            let (branch, track) = tokio::join!(
+                crate::git::get_branch(&repo.path),
+                crate::git::head_ahead_behind(&repo.path),
+            );
+            (repo.name, branch.unwrap_or_else(|_| "?".into()), track)
+        })
+        .buffered(REPORT_JOBS)
+        .collect()
+        .await;
+    let branch_pad =
+        rows.iter().map(|(_, branch, _)| branch.chars().count()).max().unwrap_or(0);
+    for (name, branch, (ahead, behind)) in rows {
+        println!(
+            "{}  {branch:<branch_pad$}  {}",
+            paint(&format!("{name:<pad$}"), CYAN, color),
+            format_track(ahead, behind, color),
+        );
+    }
+    Ok(0)
+}
+
+/// `polygit sizes` — disk usage per repo, largest first, plus a total.
+pub async fn run_sizes(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
+    let repos = discover(&roots, max_depth).await?;
+    if repos.is_empty() {
+        println!("No git repositories found.");
+        return Ok(0);
+    }
+    let color = stdout_color();
+    let mut rows: Vec<(String, u64)> = stream::iter(repos)
+        .map(|repo| async move {
+            let path = repo.path.clone();
+            let bytes = tokio::task::spawn_blocking(move || crate::explorer::dir_size_bounded(&path))
+                .await
+                .unwrap_or(0);
+            (repo.name, bytes)
+        })
+        .buffered(REPORT_JOBS)
+        .collect()
+        .await;
+    sort_sizes(&mut rows);
+    let total: u64 = rows.iter().map(|(_, bytes)| bytes).sum();
+    for (name, bytes) in &rows {
+        println!("{:>9}  {}", crate::explorer::human_size(*bytes), paint(name, CYAN, color));
+    }
+    println!("{:>9}  {}", crate::explorer::human_size(total), paint("total", DIM, color));
+    Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_track_all_states() {
+        assert_eq!(format_track(None, None, false), "no upstream");
+        assert_eq!(format_track(Some(1), None, false), "no upstream");
+        assert_eq!(format_track(Some(0), Some(0), false), "✓");
+        assert_eq!(format_track(Some(3), Some(0), false), "↑3");
+        assert_eq!(format_track(Some(0), Some(2), false), "↓2");
+        assert_eq!(format_track(Some(1), Some(4), false), "↑1 ↓4");
+    }
+
+    #[test]
+    fn format_track_colored() {
+        assert_eq!(format_track(Some(0), Some(0), true), "\x1b[32m✓\x1b[0m");
+        assert_eq!(format_track(None, None, true), "\x1b[2mno upstream\x1b[0m");
+        assert_eq!(format_track(Some(2), Some(1), true), "\x1b[32m↑2\x1b[0m \x1b[31m↓1\x1b[0m");
+    }
+
+    #[test]
+    fn paint_wraps_only_when_colored() {
+        assert_eq!(paint("x", CYAN, true), "\x1b[36mx\x1b[0m");
+        assert_eq!(paint("x", CYAN, false), "x");
+    }
+
+    #[test]
+    fn sort_sizes_largest_first_ties_alphabetical() {
+        let mut rows = vec![
+            ("beta".to_string(), 10),
+            ("alpha".to_string(), 10),
+            ("gamma".to_string(), 99),
+        ];
+        sort_sizes(&mut rows);
+        let names: Vec<&str> = rows.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["gamma", "alpha", "beta"]);
+    }
+
+    #[test]
+    fn scan_args_depth_floors_and_no_recursive_wins() {
+        let base = ScanArgs { dirs: vec![], workspace: None, depth: 16, no_recursive: false };
+        assert_eq!(base.max_depth(), 16);
+        let flat = ScanArgs { no_recursive: true, ..base };
+        assert_eq!(flat.max_depth(), 1);
+        let floored = ScanArgs { depth: 0, no_recursive: false, dirs: vec![], workspace: None };
+        assert_eq!(floored.max_depth(), 1);
+    }
+}

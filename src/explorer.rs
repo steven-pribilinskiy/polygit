@@ -1009,7 +1009,7 @@ pub fn fuzzy_score(query: &str, candidate: &str) -> Option<i64> {
 
 /// Recursive directory size in bytes, bounded so a huge tree (node_modules) can't hang the worker:
 /// stops after `MAX_ENTRIES` files and does not follow symlinks.
-fn dir_size_bounded(path: &Path) -> u64 {
+pub fn dir_size_bounded(path: &Path) -> u64 {
     const MAX_ENTRIES: usize = 200_000;
     let mut total: u64 = 0;
     let mut seen = 0usize;
