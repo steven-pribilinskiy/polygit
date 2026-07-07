@@ -656,10 +656,12 @@ pub async fn get_repo_details(dir: &Path) -> RepoDetails {
 /// otherwise the most recent pull's diff (`HEAD@{1}..HEAD`). Returns its lines.
 pub async fn get_diff(dir: &Path, dirty: bool) -> Vec<String> {
     let dir_str = dir.to_str().unwrap_or(".");
+    // `--no-ext-diff`: render git's own unified diff, not the user's `diff.external` tool (difftastic
+    // etc.) — its bespoke output isn't a unified diff our `diffview` parser/raw view can handle.
     let args: Vec<&str> = if dirty {
-        vec!["-C", dir_str, "diff", "--color=always"]
+        vec!["-C", dir_str, "diff", "--no-ext-diff", "--color=always"]
     } else {
-        vec!["-C", dir_str, "diff", "--color=always", "HEAD@{1}", "HEAD"]
+        vec!["-C", dir_str, "diff", "--no-ext-diff", "--color=always", "HEAD@{1}", "HEAD"]
     };
     let output = match Command::new("git").args(&args).output().await {
         Ok(output) => output,
@@ -679,7 +681,20 @@ pub async fn get_diff(dir: &Path, dirty: bool) -> Vec<String> {
 /// Run a git command and return its stdout as diff lines, with friendly placeholders for
 /// empty output or failure.
 async fn run_diff(args: &[&str]) -> Vec<String> {
-    let output = match Command::new("git").args(args).output().await {
+    // polygit parses/renders git's OWN unified diff — never a user-configured external diff driver
+    // (`diff.external` / `GIT_EXTERNAL_DIFF`, e.g. difftastic), which emits a bespoke format our
+    // `diffview` parser can't read (and can die with "external diff died"). `--no-ext-diff` forces
+    // git's built-in diff; inject it right after the `diff` subcommand for every patch call.
+    let mut full: Vec<&str> = Vec::with_capacity(args.len() + 1);
+    let mut injected = false;
+    for arg in args {
+        full.push(arg);
+        if !injected && *arg == "diff" {
+            full.push("--no-ext-diff");
+            injected = true;
+        }
+    }
+    let output = match Command::new("git").args(&full).output().await {
         Ok(output) => output,
         Err(_) => return vec!["(diff unavailable)".to_string()],
     };
@@ -1464,7 +1479,7 @@ pub async fn file_diff_vs(dir: &Path, base: Option<&str>, path: &str, untracked:
         let abs_str = abs.to_str().unwrap_or(path);
         // --no-index exits 1 when files differ (always, here), so don't treat that as failure.
         let output = match Command::new("git")
-            .args(["-C", dir_str, "diff", "--no-index", "--color=always", "/dev/null", abs_str])
+            .args(["-C", dir_str, "diff", "--no-ext-diff", "--no-index", "--color=always", "/dev/null", abs_str])
             .output()
             .await
         {

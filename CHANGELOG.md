@@ -3,6 +3,15 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.4.2 — 2026-07-07
+Fix: diff views broken when git has an external diff driver (difftastic/delta)
+- If your git config sets `diff.external` (or `GIT_EXTERNAL_DIFF`), every `git diff` polygit ran was
+  intercepted by that tool, so the **raw/unified/split** pull-diff views showed the external tool's
+  bespoke format (line-numbered `--- <lang>` output) instead of a real diff — the unified/split
+  parsers couldn't read it, and git could even abort with `external diff died`.
+- polygit now passes `--no-ext-diff` on every diff it renders (result pane, diff modal, stash/commit/
+  branch/untracked file diffs), so it always uses git's own unified diff regardless of your config.
+
 ## v3.4.1 — 2026-07-01
 Explorer: horizontal mouse-wheel scroll
 - The preview now scrolls **horizontally** with a horizontal wheel / trackpad (`ScrollLeft`/`ScrollRight`)
