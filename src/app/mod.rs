@@ -56,8 +56,14 @@ pub struct AppState {
     pub finished_elapsed: Option<Duration>,
     /// All pulls are done?
     pub all_done: bool,
-    /// Number of jobs configured.
+    /// The resolved max parallel pulls (worker count) — mirrors `throttle.desired()`, derived from
+    /// the mode + value below against the CPU core count.
     pub max_jobs: usize,
+    /// Max-parallel-pulls config: exact count vs percentage-of-cores, and the value for each mode
+    /// (kept separately so switching modes is lossless). Persisted; edited from Settings.
+    pub max_pull_mode: crate::app::MaxPullMode,
+    pub max_pull_exact: u32,
+    pub max_pull_percent: u32,
     /// Left-pane width as a fraction of the main area (clamped MIN_SPLIT..MAX_SPLIT).
     pub split_ratio: f64,
     /// Whether the result/log panel (the bottom half of the preview) is shown. Off → the info panel
@@ -777,10 +783,24 @@ impl PrModalState {
 }
 
 impl AppState {
-    pub fn new(repos: Vec<SharedRepoState>, max_jobs: usize, auto_dark: bool) -> Self {
+    /// `jobs_override` is `-j` / `PULL_JOBS` when set — it wins over the persisted setting and is
+    /// reflected in the UI as an exact pick.
+    pub fn new(repos: Vec<SharedRepoState>, jobs_override: Option<usize>, auto_dark: bool) -> Self {
         // Restore persisted UI preferences (columns, info state, splitter), falling back to
         // defaults for anything missing or invalid.
         let persisted = crate::persist::load();
+        // Resolve the max-parallel-pulls cap: an explicit `-j` wins (shown as an Exact pick), else
+        // the persisted mode + value, resolved against the CPU core count.
+        let cores = num_cpus::get().max(1);
+        let (max_pull_mode, max_pull_exact, max_pull_percent) = match jobs_override {
+            Some(jobs) => (crate::app::MaxPullMode::Exact, jobs as u32, persisted.sync.max_pull_percent),
+            None => (
+                persisted.sync.max_pull_mode,
+                persisted.sync.max_pull_exact,
+                persisted.sync.max_pull_percent,
+            ),
+        };
+        let max_jobs = crate::app::resolve_max_pull(max_pull_mode, max_pull_exact, max_pull_percent, cores);
         // "What's New" pops when this build is newer than the version last run (skipped on first
         // run, when there's nothing to compare against).
         let prev_seen_version = persisted.session.last_seen_version.clone();
@@ -822,6 +842,9 @@ impl AppState {
             finished_elapsed: None,
             all_done: false,
             max_jobs,
+            max_pull_mode,
+            max_pull_exact,
+            max_pull_percent,
             split_ratio,
             show_result_panel: persisted.layout.show_result_panel,
             preview_split_ratio,

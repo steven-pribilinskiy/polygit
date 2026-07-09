@@ -23,7 +23,7 @@
             "demo",
             std::path::PathBuf::from("/tmp/demo"),
         )))];
-        let mut app = AppState::new(repos, 4, true);
+        let mut app = AppState::new(repos, Some(4), true);
         for (key, display) in
             [("Theme", "Theme"), ("Background", "Background"), ("Contrast", "Contrast"), ("List selection", "Selection")]
         {
@@ -51,7 +51,7 @@
             "demo",
             std::path::PathBuf::from("/tmp/demo"),
         )))];
-        let mut app = AppState::new(repos, 4, true);
+        let mut app = AppState::new(repos, Some(4), true);
         app.icon_style = IconStyle::Emoji; // emoji always hides zeros → Hide zeros is inert
         app.show_settings = true;
         app.settings_layout = SettingsLayout::Flat;
@@ -77,7 +77,7 @@
             "demo",
             std::path::PathBuf::from("/tmp/demo"),
         )))];
-        let mut app = AppState::new(repos, 4, true);
+        let mut app = AppState::new(repos, Some(4), true);
         // Render the bare list deterministically: close any auto-popped What's New modal (a version
         // bump would otherwise overlay the list and hide the kebab), no grouping/tree, hover on.
         app.close_all_modals();
@@ -255,7 +255,7 @@
             "demo",
             std::path::PathBuf::from("/tmp/demo"),
         )))];
-        let mut app = AppState::new(repos, 4, true);
+        let mut app = AppState::new(repos, Some(4), true);
         let title = "fix(widget): skeleton rows while the next page loads during infinite scroll so \
                      the table never shows a bare spinner anywhere"
             .to_string();

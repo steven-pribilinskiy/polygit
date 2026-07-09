@@ -1005,6 +1005,8 @@ pub enum DropdownKind {
     StashColumns,
     ExplorerColumns,
     ExplorerSort,
+    /// The Settings "Parallel value" picker — the exact-count ladder or the percentage steps.
+    ParallelValue,
 }
 
 impl DropdownKind {
@@ -1791,6 +1793,7 @@ pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Theming", 7),
     ("Tooltips", 6),
     ("Updates", 2),
+    ("Workers", 2),
 ];
 
 /// Static descriptive data for one settings row: its label, its one-line tooltip, and any
@@ -1809,7 +1812,7 @@ pub struct SettingInfo {
 
 /// Every settings row in global (alphabetical-section) order — see `SETTINGS_TABS`. The ONLY place
 /// row labels + tips live; everything else derives from this or is asserted against it.
-pub const SETTINGS: [SettingInfo; 32] = [
+pub const SETTINGS: [SettingInfo; 34] = [
     // Agent
     SettingInfo { label: "AI agent", tip: "Which AI agent `c` launches for the selected repo, run in its directory", option_tips: &[] },
     SettingInfo { label: "Skip permissions", tip: "Launch the agent with its skip-permissions flag (e.g. claude's --dangerously-skip-permissions)", option_tips: &[] },
@@ -1862,6 +1865,12 @@ pub const SETTINGS: [SettingInfo; 32] = [
         "Download + stage the newer release over the binary, then the `↺ new build installed` notice prompts a reload (Ctrl+R) — your session is never interrupted",
     ] },
     SettingInfo { label: "Update check", tip: "How often the auto-update check polls GitHub (also once at launch when due). Ignored while Auto-update is off.", option_tips: &[] },
+    // Workers (sorts last → appended here without shifting any existing row index)
+    SettingInfo { label: "Parallel pulls", tip: "Cap concurrent git pulls by an exact worker count or a percentage of your CPU cores. Applies live — in-flight pulls ramp within a second. (`-j` / PULL_JOBS overrides at launch.)", option_tips: &[
+        "An exact worker count (pick it below)",
+        "A percentage of your CPU cores (pick it below)",
+    ] },
+    SettingInfo { label: "Parallel value", tip: "The concurrency value for the mode above — an exact count, or a percentage of cores — picked from a dropdown of sensible steps for your machine.", option_tips: &[] },
 ];
 
 /// Every settings row's label in global row order — DERIVED from `SETTINGS`, so the label list the
@@ -2540,6 +2549,54 @@ impl CellFlash {
     }
 }
 
+/// How the max-parallel-pulls cap is expressed: an absolute count, or a percentage of the CPU
+/// core count. Persisted; the value dropdown + resolution both key off it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MaxPullMode {
+    /// A percentage of the machine's CPU cores (the default — 100% = all cores).
+    #[default]
+    Percent,
+    /// An exact worker count.
+    Exact,
+}
+
+/// Resolve the configured max-parallel-pulls cap to an absolute worker count for `cores` CPUs.
+/// Exact mode uses `exact` (0 ⇒ all cores); Percent uses `⌈cores × percent⌉` (0 ⇒ 100%). Min 1.
+pub fn resolve_max_pull(mode: MaxPullMode, exact: u32, percent: u32, cores: usize) -> usize {
+    let cores = cores.max(1);
+    match mode {
+        MaxPullMode::Exact => {
+            let exact = exact as usize;
+            if exact == 0 { cores } else { exact.max(1) }
+        }
+        MaxPullMode::Percent => {
+            let percent = if percent == 0 { 100 } else { percent } as usize;
+            (cores * percent).div_ceil(100).max(1)
+        }
+    }
+}
+
+/// The "nice" ladder of exact worker counts to offer for `cores` CPUs: fine steps at the low end
+/// growing to a max stride of 8 (`1, 2, 4, 6, 8, 12, 16, 24, 32, 40, 48, 56, 64, …`), capped at
+/// the core count and always ending exactly on it. e.g. 64 cores → `…, 32, 40, 48, 56, 64`.
+pub fn core_value_steps(cores: usize) -> Vec<usize> {
+    let cores = cores.max(1);
+    const ANCHORS: [usize; 9] = [1, 2, 4, 6, 8, 12, 16, 24, 32];
+    let mut values: Vec<usize> = ANCHORS.into_iter().filter(|&value| value <= cores).collect();
+    let mut value = values.last().copied().unwrap_or(0);
+    while value + 8 <= cores {
+        value += 8;
+        values.push(value);
+    }
+    if values.last() != Some(&cores) {
+        values.push(cores);
+    }
+    values
+}
+
+/// The percentage steps offered in Percent mode.
+pub const MAX_PULL_PERCENTS: [u32; 4] = [25, 50, 75, 100];
+
 /// The suggested shell command for a gone-upstream (merged + deleted) branch: switch to `base`
 /// and pull, plus a safe `git branch -d <delete_branch>` when the branch is fully merged (so the
 /// dead local branch is cleaned up). Shown/copied across the info panel, result panel, repo page,
@@ -2684,7 +2741,12 @@ pub type SharedRepoState = Arc<Mutex<RepoState>>;
 /// full cap once things are quiet again. No `AppState` lock is ever held across its `.await`s.
 pub struct ThrottleControl {
     pub semaphore: Arc<tokio::sync::Semaphore>,
+    /// The semaphore's total permit pool — sized to the ceiling the user can pick live (their CPU
+    /// core count), so a resize never has to grow it; the governor parks the surplus as ballast.
     configured: usize,
+    /// The user-chosen running cap (≤ `configured`). Throttle reduces `effective` below this and
+    /// recovers back up to it; a live resize sets it.
+    desired: std::sync::atomic::AtomicUsize,
     effective: std::sync::atomic::AtomicUsize,
     last_throttle: Mutex<Option<Instant>>,
     last_reduction: Mutex<Option<Instant>>,
@@ -2700,19 +2762,42 @@ impl ThrottleControl {
 
     pub fn new(max_jobs: usize) -> Arc<Self> {
         use std::sync::atomic::AtomicUsize;
-        let cap = max_jobs.max(1);
+        let desired = max_jobs.max(1);
+        // Size the pool to the ceiling the user can pick live (their core count) so a later resize
+        // UP never has to grow the semaphore; the governor holds the surplus (pool - desired) as
+        // ballast, which already enforces `desired` as the running cap.
+        let pool = desired.max(num_cpus::get()).max(1);
         Arc::new(Self {
-            semaphore: Arc::new(tokio::sync::Semaphore::new(cap)),
-            configured: cap,
-            effective: AtomicUsize::new(cap),
+            semaphore: Arc::new(tokio::sync::Semaphore::new(pool)),
+            configured: pool,
+            desired: AtomicUsize::new(desired),
+            effective: AtomicUsize::new(desired),
             last_throttle: Mutex::new(None),
             last_reduction: Mutex::new(None),
             pending_retries: Mutex::new(Vec::new()),
         })
     }
 
+    /// The semaphore's total permit pool (the live-resize ceiling). The governor's ballast target
+    /// is `configured - effective`.
     pub fn configured(&self) -> usize {
         self.configured
+    }
+
+    /// The user-chosen running cap (before any throttle reduction).
+    pub fn desired(&self) -> usize {
+        self.desired.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Live-resize the running concurrency cap (clamped to the pool ceiling). The governor
+    /// re-derives its ballast (`pool - effective`) on its next ~500ms tick, so in-flight pulls ramp
+    /// up (permits released) or down (permits parked) without a restart. Also clears any throttle
+    /// reduction — an explicit user choice overrides the auto-backoff.
+    pub fn resize(&self, new_cap: usize) {
+        use std::sync::atomic::Ordering;
+        let new_cap = new_cap.clamp(1, self.configured);
+        self.desired.store(new_cap, Ordering::Relaxed);
+        self.effective.store(new_cap, Ordering::Relaxed);
     }
 
     pub fn effective(&self) -> usize {
@@ -2720,7 +2805,7 @@ impl ThrottleControl {
     }
 
     pub fn reduced(&self) -> bool {
-        self.effective() < self.configured
+        self.effective() < self.desired()
     }
 
     /// Whether a throttle was observed within the last minute (drives the warning banner).
@@ -2758,7 +2843,7 @@ impl ThrottleControl {
             .unwrap()
             .is_none_or(|at| at.elapsed() >= Self::RECOVER_AFTER);
         if quiet && self.reduced() {
-            self.effective.store(self.configured, std::sync::atomic::Ordering::Relaxed);
+            self.effective.store(self.desired(), std::sync::atomic::Ordering::Relaxed);
             true
         } else {
             false

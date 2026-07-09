@@ -46,7 +46,7 @@ polygit sizes --no-recursive         # disk usage, immediate subdirs only
 
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
-| `-j`, `--jobs <N>` | `PULL_JOBS` | `nproc` | Maximum concurrent pulls. Reduced automatically when a remote throttles, restored when it's quiet. |
+| `-j`, `--jobs <N>` | `PULL_JOBS` | `nproc` | Maximum concurrent pulls. Overrides the persisted **Settings → Workers → Parallel pulls** cap at launch (shown there as an exact pick). Reduced automatically when a remote throttles, restored when it's quiet; changeable live in Settings. |
 | `--depth <N>` | | `16` | Maximum directory depth to scan (`1` = immediate subdirs only). |
 | `--no-recursive` | | off | Scan only the immediate subdirectories (same as `--depth 1`). |
 | `--timeout <SECS>` | `PULL_TIMEOUT` | `10` | Per-pull timeout in seconds. |

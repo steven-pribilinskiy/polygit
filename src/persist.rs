@@ -169,11 +169,24 @@ pub struct SyncPrefs {
     pub auto_pull_max_repos: u32,
     /// Allow the launch auto-pull while the directory-tree view is active.
     pub auto_pull_in_tree: bool,
+    /// Max parallel pulls: whether the cap is an exact count or a percentage of CPU cores.
+    pub max_pull_mode: crate::app::MaxPullMode,
+    /// The exact worker count (Exact mode). `0` ⇒ all cores.
+    pub max_pull_exact: u32,
+    /// The percentage of cores (Percent mode). `0` ⇒ 100%.
+    pub max_pull_percent: u32,
 }
 
 impl Default for SyncPrefs {
     fn default() -> Self {
-        SyncPrefs { auto_pull_on_launch: true, auto_pull_max_repos: 100, auto_pull_in_tree: false }
+        SyncPrefs {
+            auto_pull_on_launch: true,
+            auto_pull_max_repos: 100,
+            auto_pull_in_tree: false,
+            max_pull_mode: crate::app::MaxPullMode::Percent,
+            max_pull_exact: 0,
+            max_pull_percent: 100,
+        }
     }
 }
 
@@ -482,6 +495,8 @@ impl From<LegacyFlatState> for PersistedState {
                 auto_pull_on_launch: legacy.auto_pull_on_launch,
                 auto_pull_max_repos: legacy.auto_pull_max_repos,
                 auto_pull_in_tree: legacy.auto_pull_in_tree,
+                // A pre-v3 flat file predates the parallel-pulls setting → defaults.
+                ..SyncPrefs::default()
             },
             theming: ThemingPrefs {
                 icon_style: legacy.icon_style,

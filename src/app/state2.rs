@@ -828,7 +828,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 32;
+    pub const SETTINGS_ROWS: usize = 34;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -1041,6 +1041,105 @@ impl AppState {
         self.settings_tab = Self::settings_tab_of_row(self.settings_selected);
     }
 
+    /// Recompute the resolved worker cap from the current mode + value and apply it **live** —
+    /// mirror into `max_jobs` and resize the throttle gate (in-flight pulls ramp within ~500ms).
+    /// Persists.
+    pub fn apply_max_pull(&mut self) {
+        let cores = num_cpus::get().max(1);
+        let jobs = crate::app::resolve_max_pull(
+            self.max_pull_mode,
+            self.max_pull_exact,
+            self.max_pull_percent,
+            cores,
+        );
+        self.max_jobs = jobs;
+        self.throttle.resize(jobs);
+        self.save_state();
+    }
+
+    /// Set the max-parallel-pulls mode (Exact / Percent) and apply.
+    pub fn set_max_pull_mode(&mut self, mode: crate::app::MaxPullMode) {
+        self.max_pull_mode = mode;
+        self.apply_max_pull();
+    }
+
+    /// Cycle the mode (Exact ↔ Percent) — the settings row's enter/space/label action.
+    pub fn toggle_max_pull_mode(&mut self) {
+        let next = match self.max_pull_mode {
+            crate::app::MaxPullMode::Percent => crate::app::MaxPullMode::Exact,
+            crate::app::MaxPullMode::Exact => crate::app::MaxPullMode::Percent,
+        };
+        self.set_max_pull_mode(next);
+    }
+
+    /// Set the value for the CURRENT mode (an exact count in Exact mode, a percentage in Percent
+    /// mode) and apply.
+    pub fn set_max_pull_value(&mut self, value: u32) {
+        match self.max_pull_mode {
+            crate::app::MaxPullMode::Exact => self.max_pull_exact = value,
+            crate::app::MaxPullMode::Percent => self.max_pull_percent = value,
+        }
+        self.apply_max_pull();
+    }
+
+    /// The value-dropdown choices for the current mode: `(persisted_value, label, is_selected)`.
+    /// Exact → the core-step ladder (`1,2,4,…,cores`); Percent → 25/50/75/100 (each labeled with
+    /// the resolved worker count).
+    pub fn max_pull_value_choices(&self) -> Vec<(u32, String, bool)> {
+        let cores = num_cpus::get().max(1);
+        match self.max_pull_mode {
+            crate::app::MaxPullMode::Exact => {
+                let current = if self.max_pull_exact == 0 {
+                    cores as u32
+                } else {
+                    self.max_pull_exact
+                };
+                crate::app::core_value_steps(cores)
+                    .into_iter()
+                    .map(|value| (value as u32, value.to_string(), value as u32 == current))
+                    .collect()
+            }
+            crate::app::MaxPullMode::Percent => {
+                let current = if self.max_pull_percent == 0 { 100 } else { self.max_pull_percent };
+                crate::app::MAX_PULL_PERCENTS
+                    .into_iter()
+                    .map(|pct| {
+                        let jobs = crate::app::resolve_max_pull(
+                            crate::app::MaxPullMode::Percent,
+                            0,
+                            pct,
+                            cores,
+                        );
+                        (pct, format!("{pct}% ({jobs})"), pct == current)
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    /// Open the parallel-value dropdown anchored under the value row's chip (the keyboard path).
+    /// Uses the value chip's click region captured in the last render; no-op if it isn't on screen.
+    pub fn open_parallel_value_dropdown(&mut self) {
+        let value_row = crate::app::settings_row("Parallel value");
+        let anchor = self.settings_click.iter().find_map(|&(row, _, end, row_idx, option)| {
+            (row_idx == value_row && option == Some(0)).then_some((row, end))
+        });
+        if let Some((row, end)) = anchor {
+            self.open_dropdown(crate::app::DropdownKind::ParallelValue, end, row);
+        }
+    }
+
+    /// The short current-value label for the settings row's value chip (e.g. "8" or "50% (16)").
+    pub fn max_pull_value_label(&self) -> String {
+        match self.max_pull_mode {
+            crate::app::MaxPullMode::Exact => self.max_jobs.to_string(),
+            crate::app::MaxPullMode::Percent => {
+                let pct = if self.max_pull_percent == 0 { 100 } else { self.max_pull_percent };
+                format!("{pct}% ({})", self.max_jobs)
+            }
+        }
+    }
+
     /// Toggle/cycle the currently-selected settings row one step forward, persisting immediately.
     /// Row indices are the global order in `SETTINGS` / `SETTINGS_LABELS` (alphabetical sections).
     pub fn toggle_selected_setting(&mut self) {
@@ -1105,6 +1204,9 @@ impl AppState {
             // Updates
             30 => self.auto_update = self.auto_update.cycle(),
             31 => self.update_interval = self.update_interval.cycle(),
+            // Workers — mode row cycles Exact↔Percent; value row opens its dropdown.
+            32 => self.toggle_max_pull_mode(),
+            33 => self.open_parallel_value_dropdown(),
             _ => {}
         }
         self.save_state();

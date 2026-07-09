@@ -953,10 +953,10 @@ async fn run() -> Result<i32> {
 
     let cli = Cli::parse();
 
-    let max_jobs = cli
-        .jobs
-        .filter(|&jobs| jobs > 0)
-        .unwrap_or_else(num_cpus::get);
+    // `-j` / `PULL_JOBS` when given (>0); the TUI resolves the actual cap from this + the persisted
+    // setting, the plain/report paths fall back to all cores.
+    let jobs_override = cli.jobs.filter(|&jobs| jobs > 0);
+    let max_jobs = jobs_override.unwrap_or_else(num_cpus::get);
     // Recursive scanning is the default; `--no-recursive` (or `--depth 1`) restores the legacy
     // single-level scan. `--depth 0` is meaningless, so floor it at 1.
     let max_depth = if cli.no_recursive { 1 } else { cli.depth.max(1) };
@@ -983,7 +983,7 @@ async fn run() -> Result<i32> {
                         run_tui(
                             roots,
                             Some(name),
-                            max_jobs,
+                            jobs_override,
                             max_depth,
                             cli.timeout,
                             cli.no_worktrees,
@@ -1018,7 +1018,7 @@ async fn run() -> Result<i32> {
     run_tui(
         roots,
         active_workspace,
-        max_jobs,
+        jobs_override,
         max_depth,
         cli.timeout,
         cli.no_worktrees,
@@ -1209,7 +1209,7 @@ fn render_workspace_picker(
 async fn run_tui(
     roots: Vec<PathBuf>,
     active_workspace: Option<String>,
-    max_jobs: usize,
+    jobs_override: Option<usize>,
     max_depth: usize,
     timeout_secs: u64,
     no_worktrees: bool,
@@ -1223,7 +1223,9 @@ async fn run_tui(
     // the alternate screen (the OSC query reads its reply from the tty itself).
     let auto_dark = theme::detect_dark_background();
 
-    let app_state = Arc::new(Mutex::new(AppState::new(Vec::new(), max_jobs, auto_dark)));
+    let app_state = Arc::new(Mutex::new(AppState::new(Vec::new(), jobs_override, auto_dark)));
+    // The setting (or `-j`) resolved to this many workers; the rest of setup uses the resolved value.
+    let max_jobs = app_state.lock().unwrap().max_jobs;
     // Persist the current version now so the "What's New" modal (raised when this build is newer
     // than the last-seen one) doesn't re-pop on the next launch even if nothing else is saved.
     app_state.lock().unwrap().save_state();
@@ -2421,7 +2423,17 @@ async fn run_event_loop(
                             app.settings_on_header = None;
                             app.settings_selected = row_idx;
                             app.settings_tab = AppState::settings_tab_of_row(row_idx);
+                            let value_row = app::settings_row("Parallel value");
                             match option {
+                                // The "Parallel value" chip is a dropdown trigger, not a radio —
+                                // open the value dropdown anchored under the clicked chip.
+                                Some(_) if row_idx == value_row => {
+                                    app.open_dropdown(
+                                        app::DropdownKind::ParallelValue,
+                                        mouse.column + 1,
+                                        mouse.row,
+                                    );
+                                }
                                 // Clicking any radio chip just sets that value (clicking the
                                 // already-active chip is a no-op — it never cycles).
                                 Some(option_idx) => app.set_setting_option(row_idx, option_idx),

@@ -166,6 +166,14 @@ impl AppState {
                     enabled: true,
                 })
                 .collect(),
+            DropdownKind::ParallelValue => self
+                .max_pull_value_choices()
+                .into_iter()
+                .map(|(_value, label, selected)| {
+                    let mnemonic = label.chars().next().unwrap_or(' ');
+                    DropdownItem { label, on: selected, mnemonic, enabled: true }
+                })
+                .collect(),
         }
     }
 
@@ -232,6 +240,7 @@ impl AppState {
             DropdownKind::StashColumns => STASH_COLS.len(),
             DropdownKind::ExplorerColumns => crate::explorer::ExplorerColumn::ALL.len(),
             DropdownKind::ExplorerSort => crate::explorer::SortKey::ALL.len(),
+            DropdownKind::ParallelValue => self.max_pull_value_choices().len(),
         })
     }
 
@@ -410,6 +419,12 @@ impl AppState {
             DropdownKind::ExplorerSort => {
                 if let Some((key, ..)) = crate::explorer::SortKey::ALL.get(index) {
                     self.set_explorer_sort(*key);
+                }
+                true
+            }
+            DropdownKind::ParallelValue => {
+                if let Some(&(value, ..)) = self.max_pull_value_choices().get(index) {
+                    self.set_max_pull_value(value);
                 }
                 true
             }

@@ -192,6 +192,34 @@
     }
 
     #[test]
+    fn core_value_steps_ladder() {
+        use crate::app::core_value_steps;
+        assert_eq!(core_value_steps(1), vec![1]);
+        assert_eq!(core_value_steps(6), vec![1, 2, 4, 6]);
+        assert_eq!(core_value_steps(12), vec![1, 2, 4, 6, 8, 12]);
+        // Steps grow but cap at 8; always ends exactly on the core count.
+        assert_eq!(core_value_steps(32), vec![1, 2, 4, 6, 8, 12, 16, 24, 32]);
+        assert_eq!(core_value_steps(64), vec![1, 2, 4, 6, 8, 12, 16, 24, 32, 40, 48, 56, 64]);
+        // A non-anchor core count still ends on itself.
+        assert_eq!(core_value_steps(10), vec![1, 2, 4, 6, 8, 10]);
+    }
+
+    #[test]
+    fn resolve_max_pull_modes() {
+        use crate::app::{resolve_max_pull, MaxPullMode::*};
+        // Percent 100 of 32 → 32; the default (0 ⇒ 100%).
+        assert_eq!(resolve_max_pull(Percent, 0, 100, 32), 32);
+        assert_eq!(resolve_max_pull(Percent, 0, 0, 32), 32);
+        // Ceil: 25% of 32 = 8, 75% of 10 = 8 (⌈7.5⌉).
+        assert_eq!(resolve_max_pull(Percent, 0, 25, 32), 8);
+        assert_eq!(resolve_max_pull(Percent, 0, 75, 10), 8);
+        // Exact: the count wins; 0 ⇒ all cores; never below 1.
+        assert_eq!(resolve_max_pull(Exact, 6, 100, 32), 6);
+        assert_eq!(resolve_max_pull(Exact, 0, 100, 32), 32);
+        assert_eq!(resolve_max_pull(Percent, 0, 1, 1), 1);
+    }
+
+    #[test]
     fn repo_details_serde_defaults_new_fields() {
         // A pre-existing status-cache entry (no `upstream_gone`/`switch_targets`) still loads.
         let old = r#"{"ahead":0,"behind":3,"dirty_count":0,"stash_count":0,"branch_count":0,
@@ -583,7 +611,7 @@
                 Arc::new(Mutex::new(repo))
             })
             .collect();
-        normalized(AppState::new(repos, 4, true))
+        normalized(AppState::new(repos, Some(4), true))
     }
 
     #[test]
@@ -697,7 +725,7 @@
             .iter()
             .map(|name| Arc::new(Mutex::new(RepoState::new(*name, PathBuf::from(format!("/tmp/{name}"))))))
             .collect();
-        normalized(AppState::new(repos, 4, true))
+        normalized(AppState::new(repos, Some(4), true))
     }
 
     #[test]
@@ -1255,7 +1283,7 @@
                 Arc::new(Mutex::new(repo))
             })
             .collect();
-        let mut state = normalized(AppState::new(repos, 4, true));
+        let mut state = normalized(AppState::new(repos, Some(4), true));
         state.tree_enabled = true;
         state.rebuild_tree();
         state

@@ -3,6 +3,16 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.8.0 — 2026-07-09
+Feature: configurable max parallel pulls (Settings → Workers), applied live
+- A new **Workers** settings section: a **Parallel pulls** button group (Exact count vs Percentage
+  of CPU cores) and a **Parallel value** dropdown of sensible steps for your machine — the exact
+  ladder `1, 2, 4, 6, 8, 12, 16, 24, 32, …` (stride grows, capped at 8, ending on your core count),
+  or `25 / 50 / 75 / 100 %` (each showing the resolved worker count)
+- Changes apply **live** — the shared concurrency gate resizes and in-flight pulls ramp up/down
+  within ~500ms, no restart. `-j` / `PULL_JOBS` still overrides at launch (shown as an Exact pick)
+- The setting is persisted; default is 100 % of cores (unchanged behavior)
+
 ## v3.7.0 — 2026-07-09
 Feature: the switch suggestion also deletes the merged branch, with dynamic verbiage
 - When the gone branch is **fully merged** into the base you're switching to, the suggestion

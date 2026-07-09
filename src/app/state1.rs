@@ -389,6 +389,9 @@ impl AppState {
                 auto_pull_on_launch: self.auto_pull_on_launch,
                 auto_pull_max_repos: self.auto_pull_max_repos,
                 auto_pull_in_tree: self.auto_pull_in_tree,
+                max_pull_mode: self.max_pull_mode,
+                max_pull_exact: self.max_pull_exact,
+                max_pull_percent: self.max_pull_percent,
             },
             theming: p::ThemingPrefs {
                 icon_style: self.icon_style,
@@ -797,6 +800,11 @@ impl AppState {
             (30, 2) => self.auto_update = AutoUpdate::Install,
             (31, 0) => self.update_interval = UpdateInterval::Daily,
             (31, 1) => self.update_interval = UpdateInterval::Weekly,
+            // Workers
+            (32, 0) => self.set_max_pull_mode(crate::app::MaxPullMode::Exact),
+            (32, 1) => self.set_max_pull_mode(crate::app::MaxPullMode::Percent),
+            // The value is picked from a dropdown, not a radio — a no-op here keeps the round-trip.
+            (33, _) => {}
             _ => return,
         }
         self.save_state();
@@ -910,6 +918,12 @@ impl AppState {
                 UpdateInterval::Daily => 0,
                 UpdateInterval::Weekly => 1,
             },
+            // Workers — row 32 mode (exact/percent); row 33 is the dropdown value (single chip).
+            32 => match self.max_pull_mode {
+                crate::app::MaxPullMode::Exact => 0,
+                crate::app::MaxPullMode::Percent => 1,
+            },
+            33 => 0,
             _ => 0,
         }
     }
@@ -933,6 +947,10 @@ impl AppState {
             23 => &["inverted", "subtle"],
             30 => &["off", "notify", "install"],
             31 => &["daily", "weekly"],
+            32 => &["exact", "percent"],
+            // The value row is a dropdown, not radio chips; this static placeholder just satisfies
+            // the "one option, round-trips" invariant — the real chip label is built at render time.
+            33 => &["value"],
             _ => &["on", "off"],
         }
     }
@@ -948,9 +966,10 @@ impl AppState {
             // (24–29) all on.
             // Updates: update-check daily(31) defaults to option 0; auto-update(30) defaults to
             // option 1 (notify) — handled by the `_ => 1` arm below.
-            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 | 31 => 0,
+            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 | 31 | 33 => 0,
             // Index-1 defaults: changed-row effect flash(3), pane splitter on-hover(6), repo-page-tabs
-            // auto(7), auto-pull-limit 100(15), button-hover subtle(23), and every remaining boolean off.
+            // auto(7), auto-pull-limit 100(15), button-hover subtle(23), parallel-pulls mode percent(32),
+            // and every remaining boolean off.
             _ => 1,
         }
     }
@@ -1012,6 +1031,11 @@ impl AppState {
         self.claude_agent = ClaudeAgent::default();
         self.claude_skip_permissions = false;
         self.show_merged_prs = false;
+        // Max parallel pulls → default (Percent 100% = all cores); apply it live.
+        self.max_pull_mode = crate::app::MaxPullMode::Percent;
+        self.max_pull_exact = 0;
+        self.max_pull_percent = 100;
+        self.apply_max_pull();
         self.recompute_group_assignments();
         self.rebuild_tree();
         self.save_state();

@@ -14,7 +14,11 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
     // columns dropdown uses `[x] `/`[ ] `.
     let is_radio = matches!(
         dropdown.kind,
-        DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ListFilter | DropdownKind::ExplorerSort
+        DropdownKind::ListSort
+            | DropdownKind::PageSort
+            | DropdownKind::ListFilter
+            | DropdownKind::ExplorerSort
+            | DropdownKind::ParallelValue
     );
     let title = match dropdown.kind {
         DropdownKind::ListColumns
@@ -23,6 +27,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         | DropdownKind::ExplorerColumns => " columns ",
         DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ExplorerSort => " sort ",
         DropdownKind::ListFilter => " filter ",
+        DropdownKind::ParallelValue => " parallel pulls ",
     };
     // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for a radio (`● `)
     // and 4 for columns (`[x] `), plus the mnemonic key and a space.
@@ -83,10 +88,17 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         };
         let selected = dropdown.selected == Some(index);
         let row = body.y + index as u16;
+        // Numeric value dropdowns show no mnemonic key — it would just repeat the number.
+        let show_key = !matches!(dropdown.kind, DropdownKind::ParallelValue);
         // The selected row is one solid highlight (the mnemonic reads black-on-cyan, not cyan).
         let line = if selected {
             let highlight = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
-            Line::from(Span::styled(format!("{marker}{} {}", item.mnemonic, item.label), highlight))
+            let text = if show_key {
+                format!("{marker}{} {}", item.mnemonic, item.label)
+            } else {
+                format!("{marker}{}", item.label)
+            };
+            Line::from(Span::styled(text, highlight))
         } else {
             // Unavailable columns render dim + inert; otherwise on=green, off=gray, key=cyan bold.
             let base = if !item.enabled {
@@ -101,11 +113,15 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            Line::from(vec![
-                Span::styled(marker.to_string(), base),
-                Span::styled(item.mnemonic.to_string(), key_style),
-                Span::styled(format!(" {}", item.label), base),
-            ])
+            if show_key {
+                Line::from(vec![
+                    Span::styled(marker.to_string(), base),
+                    Span::styled(item.mnemonic.to_string(), key_style),
+                    Span::styled(format!(" {}", item.label), base),
+                ])
+            } else {
+                Line::from(Span::styled(format!("{marker}{}", item.label), base))
+            }
         };
         // Only selectable rows are clickable + hoverable; a dim/inert row registers no region.
         if item.enabled {
@@ -1672,6 +1688,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     // 24 headers · 25 counts · 26 settings · 27 links (Tooltips), 28 AI-agent · 29 skip-permissions
     // (Agent), 30 merged-PRs (Pull requests).
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
+    // The parallel-value chip is a dropdown trigger showing the current value + `▾`; its label is
+    // dynamic, so build it into a local the sections vec can borrow for the frame.
+    let parallel_value_chip = format!("{} ▾", app.max_pull_value_label());
     let mut sections: Vec<(&str, Vec<SettingsRow>)> = vec![
         (
             "Lists",
@@ -1873,6 +1892,20 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                         ("weekly", app.update_interval == crate::app::UpdateInterval::Weekly),
                     ],
                 ),
+            ],
+        ),
+        (
+            "Workers",
+            vec![
+                (
+                    "Parallel pulls",
+                    vec![
+                        ("exact", app.max_pull_mode == crate::app::MaxPullMode::Exact),
+                        ("percent", app.max_pull_mode == crate::app::MaxPullMode::Percent),
+                    ],
+                ),
+                // A single dropdown-trigger chip (marked active) showing the current value + `▾`.
+                ("Parallel value", vec![(parallel_value_chip.as_str(), true)]),
             ],
         ),
     ];
@@ -2469,9 +2502,9 @@ pub(crate) fn render_throttle_banner(frame: &mut Frame, app: &AppState, area: Re
     }
     let glyph = app.icons().throttled;
     let eff = app.throttle.effective();
-    let configured = app.throttle.configured();
+    let desired = app.throttle.desired();
     let message = if app.throttle.reduced() {
-        format!(" {glyph} remote throttling — concurrency {eff}↓{configured} · retrying {throttled} ")
+        format!(" {glyph} remote throttling — concurrency {eff}↓{desired} · retrying {throttled} ")
     } else {
         format!(" {glyph} remote throttling detected · {throttled} repo(s) backing off ")
     };
