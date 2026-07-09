@@ -111,6 +111,65 @@
     }
 
     #[test]
+    fn switch_targets_gated_on_gone_and_merges_pr_base() {
+        let mut repo = RepoState::new("alpha", std::path::PathBuf::from("/tmp/alpha"));
+        repo.branch = Some("feature".to_string());
+
+        // No details → not gone → no suggestion.
+        assert!(!repo.is_upstream_gone());
+        assert!(repo.switch_targets().is_empty());
+
+        // Details present but NOT gone → still empty even with candidates recorded.
+        repo.details = Some(RepoDetails {
+            upstream_gone: false,
+            switch_targets: vec!["main".to_string()],
+            ..Default::default()
+        });
+        assert!(!repo.is_upstream_gone());
+        assert!(repo.switch_targets().is_empty());
+
+        // Gone with detected candidates (fork-parent then default).
+        repo.details = Some(RepoDetails {
+            upstream_gone: true,
+            switch_targets: vec!["dev".to_string(), "main".to_string()],
+            ..Default::default()
+        });
+        assert!(repo.is_upstream_gone());
+        assert_eq!(repo.switch_targets(), vec!["dev".to_string(), "main".to_string()]);
+
+        // A MERGED PR's base leads (most authoritative) and dedupes against the detected set.
+        repo.pr = Some(PrInfo {
+            number: 7,
+            title: "x".into(),
+            url: "u".into(),
+            state: PrState::Merged,
+            base_ref: "main".into(),
+        });
+        assert_eq!(repo.switch_targets(), vec!["main".to_string(), "dev".to_string()]);
+
+        // An OPEN PR base is ignored — only a merged PR indicates the deleted-branch case.
+        repo.pr = Some(PrInfo {
+            number: 7,
+            title: "x".into(),
+            url: "u".into(),
+            state: PrState::Open,
+            base_ref: "release".into(),
+        });
+        assert_eq!(repo.switch_targets(), vec!["dev".to_string(), "main".to_string()]);
+    }
+
+    #[test]
+    fn repo_details_serde_defaults_new_fields() {
+        // A pre-existing status-cache entry (no `upstream_gone`/`switch_targets`) still loads.
+        let old = r#"{"ahead":0,"behind":3,"dirty_count":0,"stash_count":0,"branch_count":0,
+            "commit_hash":"","commit_subject":"","commit_author":"","commit_rel_date":"",
+            "commit_timestamp":0}"#;
+        let details: RepoDetails = serde_json::from_str(old).unwrap();
+        assert!(!details.upstream_gone);
+        assert!(details.switch_targets.is_empty());
+    }
+
+    #[test]
     fn status_token_filter_matches_status_and_attributes() {
         let mut repo = RepoState::new("alpha", std::path::PathBuf::from("/tmp/alpha"));
         repo.status = RepoStatus::Failed;
@@ -123,13 +182,7 @@
             ahead: Some(0),
             behind: Some(3),
             dirty_count: 2,
-            stash_count: 0,
-            branch_count: 0,
-            commit_hash: String::new(),
-            commit_subject: String::new(),
-            commit_author: String::new(),
-            commit_rel_date: String::new(),
-            commit_timestamp: 0,
+            ..Default::default()
         });
         assert!(AppState::status_token_matches(&repo, "dirty"));
         assert!(!AppState::status_token_matches(&repo, "clean"));

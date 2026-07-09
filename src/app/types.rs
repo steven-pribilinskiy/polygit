@@ -111,6 +111,12 @@ pub struct RepoDetails {
     pub commit_rel_date: String,
     /// Committer Unix timestamp of HEAD (for last-commit sorting); 0 when unknown.
     pub commit_timestamp: i64,
+    /// The current branch's remote tracking ref is `gone` — it was merged and the remote branch
+    /// deleted. Drives the "switch to base & pull" suggestion.
+    pub upstream_gone: bool,
+    /// Deduped, priority-ordered branches to suggest switching to (fork-parent then repo default,
+    /// current branch excluded). Empty unless `upstream_gone`.
+    pub switch_targets: Vec<String>,
 }
 
 /// Lifecycle state of a detected PR. Mirrors `gh`'s `state` field. `Open` is the serde default so
@@ -869,16 +875,22 @@ pub enum KebabAction {
     OpenRemote,
     /// Open the file explorer rooted at the repo's directory.
     Explore,
+    /// Switch to the base branch carried in `KebabItem.data` and pull (merged/gone-upstream repos).
+    SwitchBase,
+    /// Copy the suggested `git switch <base> && git pull` command (carried in `KebabItem.data`).
+    CopySwitchCommand,
 }
 
-/// One row in the kebab menu: its label, the action it fires, whether it's enabled, and an optional
-/// trailing key hint (so the menu doubles as a discoverability cheat-sheet for the row's hotkeys).
+/// One row in the kebab menu: its label, the action it fires, whether it's enabled, an optional
+/// trailing key hint (so the menu doubles as a discoverability cheat-sheet for the row's hotkeys),
+/// and an optional data payload (the base branch / command string for data-carrying actions).
 #[derive(Debug, Clone)]
 pub struct KebabItem {
     pub label: String,
     pub action: KebabAction,
     pub enabled: bool,
     pub hint: Option<String>,
+    pub data: Option<String>,
 }
 
 /// The open kebab (`⋮`) menu for a repo row: which repo, the built items, and the highlighted index.
@@ -1902,6 +1914,9 @@ pub enum InfoAction {
     CopyText(String),
     /// Expand/collapse a truncated field, keyed by its label (e.g. "Path").
     ToggleExpand(String),
+    /// Switch the selected repo to the carried base branch and pull (the merged/gone-upstream
+    /// "switch & pull" suggestion).
+    RunSwitch(String),
 }
 
 /// The semantic glyphs the UI renders, swappable between Unicode and emoji via `IconStyle`.
@@ -2254,6 +2269,9 @@ pub enum Command {
     /// Collapse-or-jump-to-parent / expand the selected header (the clickable `←` / `→` fold hints).
     NavLeft,
     NavRight,
+    /// Switch the selected repo to its top suggested base branch and pull (the merged/gone-upstream
+    /// `⎇ switch & pull` chip; same as `S`). The base is recomputed from the repo at dispatch.
+    SwitchToBase,
     Quit,
 }
 
@@ -2312,6 +2330,10 @@ impl Command {
             Command::NavUp => "Move the selection up",
             Command::NavLeft => "Collapse the selected folder/group (or jump to its parent)",
             Command::NavRight => "Expand the selected folder/group",
+            Command::SwitchToBase => {
+                "Switch the selected repo to its suggested base branch and pull (its upstream is \
+                 gone — the branch was merged and deleted)"
+            }
             Command::Quit => "Quit polygit",
         }
     }
@@ -2513,6 +2535,12 @@ impl CellFlash {
     }
 }
 
+/// The suggested shell command for a gone-upstream (merged + deleted) branch: switch to `base`
+/// and pull. Shown/copied across the info panel, result panel, repo page, and kebab.
+pub fn switch_command(base: &str) -> String {
+    format!("git switch {base} && git pull")
+}
+
 impl RepoState {
     pub fn new(name: impl Into<String>, path: PathBuf) -> Self {
         let name = name.into();
@@ -2551,6 +2579,35 @@ impl RepoState {
             flash_until: None,
             base_overrides: HashMap::new(),
         }
+    }
+
+    /// Whether the current branch's upstream is `gone` (the branch was merged and its remote
+    /// deleted) — the trigger for the "switch to base & pull" suggestion.
+    pub fn is_upstream_gone(&self) -> bool {
+        self.details.as_ref().is_some_and(|details| details.upstream_gone)
+    }
+
+    /// The deduped, priority-ordered branches to suggest switching to. Empty unless the upstream
+    /// is gone. A merged PR's target branch (the exact merge destination) is the most
+    /// authoritative, so it's prepended ahead of the locally-detected candidates.
+    pub fn switch_targets(&self) -> Vec<String> {
+        let Some(details) = self.details.as_ref() else {
+            return Vec::new();
+        };
+        if !details.upstream_gone {
+            return Vec::new();
+        }
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(pr) = self
+            .pr
+            .as_ref()
+            .filter(|pr| pr.state == PrState::Merged && !pr.base_ref.is_empty())
+        {
+            candidates.push(pr.base_ref.clone());
+        }
+        candidates.extend(details.switch_targets.iter().cloned());
+        let current = self.branch.clone().unwrap_or_default();
+        crate::git::dedupe_switch_targets(&candidates, &current)
     }
 
     /// Whether the refetch flash should be visible *this instant*. Pulses on/off every 250ms

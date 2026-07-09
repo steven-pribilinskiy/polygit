@@ -55,7 +55,7 @@ use worker::{
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
     run_all_prs, run_open_pr_web, run_pr_diff, run_pr_view, run_pull_request, run_remove_worktree,
-    run_repo_details, run_repo_diff, run_repo_page,
+    run_repo_details, run_repo_diff, run_repo_page, run_switch_and_pull,
 };
 
 /// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
@@ -604,10 +604,24 @@ fn kebab_activate(
     if !item.enabled {
         return None;
     }
+    let data = item.data.clone();
     match item.action {
         app::KebabAction::ToggleFavorite => {
             app.toggle_favorite(idx);
             app.open_kebab(idx); // rebuild so the ★/☆ label updates
+        }
+        app::KebabAction::SwitchBase => {
+            if let Some(base) = data {
+                app.pending_switch.push((idx, base));
+            }
+            app.close_kebab();
+        }
+        app::KebabAction::CopySwitchCommand => {
+            if let Some(command) = data {
+                app.show_copy_toast(&command);
+                app.close_kebab();
+                copy_to_clipboard(&command);
+            }
         }
         app::KebabAction::Checkout => {
             app.close_kebab();
@@ -619,8 +633,15 @@ fn kebab_activate(
             app.save_state();
             app.open_kebab(idx); // rebuild so the checkbox label updates
             if let Some(menu) = app.kebab.as_mut() {
-                // Keep the highlight on the checkbox row (Favorite=0, Checkout=1, Copy=2, checkbox=3).
-                menu.selected = 3;
+                // Keep the highlight on the checkbox row — found by action, not a magic index (the
+                // gone-upstream switch items prepend rows and would shift a hardcoded position).
+                if let Some(pos) = menu
+                    .items
+                    .iter()
+                    .position(|item| item.action == app::KebabAction::ToggleSessionPrefix)
+                {
+                    menu.selected = pos;
+                }
             }
         }
         app::KebabAction::CopyCleanupPrompt => {
@@ -807,6 +828,16 @@ fn dispatch_command(
         }
         Cmd::NavRight => {
             app.nav_right();
+        }
+        Cmd::SwitchToBase => {
+            // The `⎇ switch & pull` chip / `S` key: switch the selected repo to its top suggested
+            // base branch and pull. No-op when there's no gone-upstream suggestion.
+            if let Some(idx) = app.selected_repo_index() {
+                let top = app.repos[idx].lock().unwrap().switch_targets().into_iter().next();
+                if let Some(base) = top {
+                    app.pending_switch.push((idx, base));
+                }
+            }
         }
         Cmd::Quit => {
             return Some(if app.all_done {
@@ -1541,6 +1572,31 @@ async fn run_event_loop(
                 )
                 .await;
             });
+        }
+
+        // Drain queued "switch to base & pull" requests (from the `S` key / kebab / info / result
+        // chip): switch each repo to the chosen base and pull it via a background worker (like
+        // refetch — no screen suspend). The repo's log is cleared first so the output reads cleanly.
+        let switch_requests: Vec<(usize, String)> =
+            std::mem::take(&mut app_state.lock().unwrap().pending_switch);
+        for (idx, base) in switch_requests {
+            let (control, icon_style, timeout_secs) = {
+                let app = app_state.lock().unwrap();
+                {
+                    let mut state = app.repos[idx].lock().unwrap();
+                    state.log.clear();
+                    state.auto_scroll = true;
+                }
+                (app.throttle.clone(), app.icon_style, app.discovery_timeout_secs)
+            };
+            tokio::spawn(run_switch_and_pull(
+                Arc::clone(&app_state),
+                idx,
+                base,
+                control,
+                timeout_secs,
+                icon_style,
+            ));
         }
 
         // Render
@@ -3092,6 +3148,13 @@ async fn run_event_loop(
                                     app.show_copy_toast(&text);
                                     copy_to_clipboard(&text);
                                 }
+                                InfoAction::RunSwitch(base) => {
+                                    // The info panel is always about the selected repo — switch it
+                                    // to the clicked candidate and pull.
+                                    if let Some(idx) = app.selected_repo_index() {
+                                        app.pending_switch.push((idx, base));
+                                    }
+                                }
                                 InfoAction::ToggleExpand(field) => app.toggle_info_expanded(&field),
                             }
                         } else if let Some(repo_idx) = app
@@ -4557,6 +4620,19 @@ async fn run_event_loop(
                                 }
                             }
                         }
+                        // Switch a merged/gone-upstream branch to its suggested base and pull (S).
+                        KeyCode::Char('S') => {
+                            if let Some(idx) = app.repo_page {
+                                let top =
+                                    app.repos[idx].lock().unwrap().switch_targets().into_iter().next();
+                                match top {
+                                    Some(base) => app.pending_switch.push((idx, base)),
+                                    None => app.show_toast(
+                                        "nothing to switch to — the branch's upstream isn't gone",
+                                    ),
+                                }
+                            }
+                        }
                         // `1`/`2`/`3`/`4` jump to a pane (so the repo page isn't a focus trap). When a
                         // pane is maximized, this swaps which pane is maximized; otherwise it moves
                         // focus. Unavailable targets are a no-op. (Shared with the main-view handler.)
@@ -5081,6 +5157,17 @@ async fn run_event_loop(
                     (KeyCode::Char('l'), _) => {
                         if let Some(idx) = app.selected_repo_index() {
                             pending_lazygit = Some(app.repos[idx].lock().unwrap().path.clone());
+                        }
+                    }
+                    // Switch a merged/gone-upstream branch to its suggested base and pull (S).
+                    (KeyCode::Char('S'), _) => {
+                        if let Some(idx) = app.selected_repo_index() {
+                            let top =
+                                app.repos[idx].lock().unwrap().switch_targets().into_iter().next();
+                            match top {
+                                Some(base) => app.pending_switch.push((idx, base)),
+                                None => app.show_toast("nothing to switch to — the branch's upstream isn't gone"),
+                            }
                         }
                     }
 

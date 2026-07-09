@@ -1429,68 +1429,102 @@ impl AppState {
         let agent = self.claude_agent.binary();
         let checkbox = if self.kebab_session_prefix { "[x]" } else { "[ ]" };
         let favorited = self.favorites.contains(&favorite_key(&state.path));
-        vec![
+        let mut items = Vec::new();
+        // Merged/gone-upstream repos lead with the actionable suggestion: one run-item per
+        // deduped candidate branch (top-most first), then a copy-the-command item. `S` runs the
+        // top candidate, so hint it on the first row.
+        let switch_targets = state.switch_targets();
+        for (rank, base) in switch_targets.iter().enumerate() {
+            items.push(KebabItem {
+                label: format!("⎇ Switch to {base} & pull"),
+                action: KebabAction::SwitchBase,
+                enabled: true,
+                hint: if rank == 0 { Some("S".to_string()) } else { None },
+                data: Some(base.clone()),
+            });
+        }
+        if let Some(top) = switch_targets.first() {
+            items.push(KebabItem {
+                label: "⧉ Copy switch command".to_string(),
+                action: KebabAction::CopySwitchCommand,
+                enabled: true,
+                hint: None,
+                data: Some(crate::app::switch_command(top)),
+            });
+        }
+        items.extend([
             KebabItem {
                 label: if favorited { "★ Unfavorite".to_string() } else { "☆ Favorite".to_string() },
                 action: KebabAction::ToggleFavorite,
                 enabled: true,
                 hint: Some("b".to_string()),
+                data: None,
             },
             KebabItem {
                 label: "Checkout branch…".to_string(),
                 action: KebabAction::Checkout,
                 enabled: true,
                 hint: None,
+                data: None,
             },
             KebabItem {
                 label: "Copy cleanup prompt".to_string(),
                 action: KebabAction::CopyCleanupPrompt,
                 enabled: true,
                 hint: None,
+                data: None,
             },
             KebabItem {
                 label: format!("{checkbox} include `cd … && {agent} '…'`"),
                 action: KebabAction::ToggleSessionPrefix,
                 enabled: true,
                 hint: None,
+                data: None,
             },
             KebabItem {
                 label: format!("Run {agent}"),
                 action: KebabAction::Claude,
                 enabled: true,
                 hint: Some("c".to_string()),
+                data: None,
             },
             KebabItem {
                 label: "Explore files…".to_string(),
                 action: KebabAction::Explore,
                 enabled: true,
                 hint: Some("^E".to_string()),
+                data: None,
             },
             KebabItem {
                 label: "Open lazygit".to_string(),
                 action: KebabAction::Lazygit,
                 enabled: true,
                 hint: Some("l".to_string()),
+                data: None,
             },
             KebabItem {
                 label: "View diff".to_string(),
                 action: KebabAction::Diff,
                 enabled: dirty > 0,
                 hint: Some("d".to_string()),
+                data: None,
             },
             KebabItem {
                 label: "Refetch".to_string(),
                 action: KebabAction::Refetch,
                 enabled: true,
                 hint: Some("e".to_string()),
+                data: None,
             },
             KebabItem {
                 label: "Open remote".to_string(),
                 action: KebabAction::OpenRemote,
                 enabled: has_remote,
                 hint: Some("o".to_string()),
+                data: None,
             },
-        ]
+        ]);
+        items
     }
 
     /// Open the kebab menu for `repo_idx` (building its state-aware items). The menu anchors to the

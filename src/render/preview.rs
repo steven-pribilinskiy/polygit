@@ -244,7 +244,17 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         let chip = |label: &str, on: bool, command: Command| -> (String, Style, Option<Command>) {
             (label.to_string(), if on { active } else { hint }, Some(command))
         };
-        let footer: Vec<(String, Style, Option<Command>)> = vec![
+        let mut footer: Vec<(String, Style, Option<Command>)> = Vec::new();
+        // Merged/gone-upstream repos lead the footer with an actionable `⎇ switch … & pull` chip
+        // (same as `S`) — clicking runs the switch+pull for the selected repo's top candidate.
+        let gone_top: Option<String> = selected_repo
+            .and_then(|idx| app.repos[idx].lock().unwrap().switch_targets().into_iter().next());
+        if let Some(base) = &gone_top {
+            let attn = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+            footer.push((format!("⎇ switch to {base} & pull"), attn, Some(Command::SwitchToBase)));
+            footer.push(("   ".to_string(), hint, None));
+        }
+        footer.extend([
             ("d".to_string(), key, Some(Command::DiffView)),
             (" ".to_string(), hint, None),
             chip("log", rv == RightView::Log, Command::SetResultLog),
@@ -259,7 +269,7 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
             (" · ".to_string(), hint, None),
             chip("split", rv == RightView::Diff && st == DiffView::Split, Command::SetResultDiff(DiffView::Split)),
             (" ".to_string(), hint, None),
-        ];
+        ]);
         let footer_width: u16 =
             footer.iter().map(|(text, _, _)| UnicodeWidthStr::width(text.as_str()) as u16).sum();
         let footer_row = area.y + area.height.saturating_sub(1);
@@ -778,6 +788,36 @@ pub(crate) fn build_info_lines(
             }
         }
         None => lines.push(plain("Ahead/behind", "(loading…)".to_string())),
+    }
+
+    // ===== SUGGESTED: the branch was merged & its upstream deleted — offer the way back =====
+    // A deduped candidate list (top-most = the branch it was cut from / merged into). Clicking the
+    // command runs the switch+pull for this repo; the trailing `⧉` copies it. `S` runs the top one.
+    let switch_targets = state.switch_targets();
+    if !switch_targets.is_empty() {
+        section(&mut lines, "SUGGESTED");
+        lines.push(Line::from(Span::styled(
+            "upstream gone — branch was merged & deleted".to_string(),
+            dim,
+        )));
+        let run_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        for (rank, base) in switch_targets.iter().enumerate() {
+            let command = crate::app::switch_command(base);
+            let display = truncate_str(&command, copy_avail);
+            let line_idx = lines.len();
+            let cmd_w = UnicodeWidthStr::width(display.as_str()) as u16;
+            // The command text runs the switch+pull; the trailing `⧉` copies the full command.
+            clicks.push((line_idx, LABEL_W as u16, LABEL_W as u16 + cmd_w, InfoAction::RunSwitch(base.clone())));
+            let copy_start = LABEL_W as u16 + cmd_w + 1;
+            clicks.push((line_idx, copy_start, copy_start + copy_w, InfoAction::CopyText(command.clone())));
+            let name = if rank == 0 { "Switch" } else { "" };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{name:<13}"), label),
+                Span::styled(display, run_style),
+                Span::raw(" "),
+                Span::styled(copy_glyph.to_string(), copy_icon),
+            ]));
+        }
     }
 
     // ===== ACTIVITY: what changed (this session + history + working tree) =====

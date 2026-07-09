@@ -580,6 +580,20 @@ pub(crate) fn build_repo_page_info_lines(
                 (None, _) => "(none)".to_string(),
             };
             lines.push(pair("upstream", upstream_text));
+            // A merged/gone-upstream HEAD branch: suggest switching back to base & pulling. Prefer
+            // the merged PR's target, else the detected base, else the repo default. (`S` / the
+            // footer hint runs it; this line is the discoverable command.)
+            if row.is_head && row.upstream_gone {
+                let suggest_base = pr
+                    .filter(|open| open.state == crate::app::PrState::Merged && !open.base_ref.is_empty())
+                    .map(|open| open.base_ref.clone())
+                    .or_else(|| row.base.clone())
+                    .or_else(|| base_branch.map(str::to_string));
+                if let Some(base) = suggest_base {
+                    let bare = base.strip_prefix("origin/").unwrap_or(&base);
+                    lines.push(pair("suggest", crate::app::switch_command(bare)));
+                }
+            }
             // The open PR (resolved for the repo's current branch) shows on the HEAD row only.
             if row.is_head {
                 if let Some(pr) = pr {
@@ -672,6 +686,17 @@ pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, O
         footer_segments.push(sep());
         footer_segments.push(("d".to_string(), key, Some(HintKey::Char('d'))));
         footer_segments.push((format!(" {action}"), hint, Some(HintKey::Char('d'))));
+    }
+    // A merged/gone-upstream HEAD branch: offer `S switch & pull` (switch to the suggested base
+    // and pull). Clicking routes through the repo-page `S` key (PageSwitchToBase).
+    let head_gone = app
+        .repo_page
+        .and_then(|idx| app.repos.get(idx))
+        .is_some_and(|repo| repo.lock().unwrap().is_upstream_gone());
+    if head_gone {
+        footer_segments.push(sep());
+        footer_segments.push(("S".to_string(), key, Some(HintKey::Char('S'))));
+        footer_segments.push((" switch & pull".to_string(), hint, Some(HintKey::Char('S'))));
     }
     // `t cols` and `m maximize/restore` are intentionally NOT in the footer — they live on the
     // page's top border (`t cols ▾` / `m▢`), so repeating them here is redundant.

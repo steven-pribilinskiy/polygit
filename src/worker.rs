@@ -20,7 +20,7 @@ use crate::git::{
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
     pr_diff, pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
-    stash_file_list, stash_files, uncommitted_file_list, PullOutcome,
+    stash_file_list, stash_files, switch_branch, uncommitted_file_list, PullOutcome,
 };
 
 /// Pull a single repository, updating `repo_state` as progress arrives.
@@ -1232,6 +1232,57 @@ pub async fn run_pull_branch(app_state: Arc<Mutex<AppState>>, repo_idx: usize, r
     let mut repo = app.repos[repo_idx].lock().unwrap();
     repo.pull_loading = false;
     repo.page = None;
+}
+
+/// Switch a merged/gone-upstream repo to `base` and pull it. `git switch` refuses on a dirty tree
+/// (so no work is lost); on success the standard `pull_repo` runs the pull (streaming log, status,
+/// details refresh, throttle handling). The branch changed, so the cached page + details are
+/// invalidated afterwards — every surface then reflects the new branch and the "switch" suggestion
+/// self-clears (the new branch has a live upstream).
+pub async fn run_switch_and_pull(
+    app_state: Arc<Mutex<AppState>>,
+    repo_idx: usize,
+    base: String,
+    control: Arc<ThrottleControl>,
+    timeout_secs: u64,
+    icon_style: IconStyle,
+) {
+    let (repo, path, name) = {
+        let app = app_state.lock().unwrap();
+        let repo = Arc::clone(&app.repos[repo_idx]);
+        let (path, name) = {
+            let mut state = repo.lock().unwrap();
+            state.pull_loading = true;
+            (state.path.clone(), state.name.clone())
+        };
+        (repo, path, name)
+    };
+
+    if let Err(err) = switch_branch(&path, &base, false).await {
+        let mut app = app_state.lock().unwrap();
+        app.show_toast(format!("switch to {base} failed: {err}"));
+        app.repo_page_message = Some(format!("switch to {base} failed: {err}"));
+        let mut state = repo.lock().unwrap();
+        state.log.push(format!("switch to {base} failed: {err}"));
+        state.pull_loading = false;
+        return;
+    }
+
+    {
+        let mut app = app_state.lock().unwrap();
+        app.show_toast(format!("switched {name} to {base} — pulling…"));
+        app.repo_page_message = Some(format!("switched to {base} — pulling…"));
+    }
+
+    // Reuse the standard pull: streams to the log, sets the status, honors throttling.
+    let _ = pull_repo(Arc::clone(&repo), control, timeout_secs, icon_style).await;
+
+    // The branch changed, so force a full facts + page refresh (an AlreadyUpToDate pull wouldn't
+    // have marked details stale). This also clears the gone-upstream suggestion.
+    let mut state = repo.lock().unwrap();
+    state.details_stale = true;
+    state.page = None;
+    state.pull_loading = false;
 }
 
 /// Fast-forward every fast-forwardable local branch of the repo, set a summary banner,

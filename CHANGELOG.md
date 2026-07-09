@@ -3,6 +3,19 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.6.0 — 2026-07-09
+Feature: suggest "switch to base & pull" when a branch's upstream is gone (merged & deleted)
+- Detects the current branch's `gone` tracking ref and computes a deduped candidate list — the
+  branch it was cut from (fork parent), the repo's default branch (always included), refined with
+  the merged PR's target branch when known
+- Surfaces `git switch <base> && git pull` in four places: the **info panel** (a SUGGESTED section,
+  one clickable command per candidate + `⧉` copy), the **result/log panel** (a `⎇ switch to <base>
+  & pull` chip), the **repo page** (a `suggest` line + an `S switch & pull` footer hint), and the
+  **kebab** (a run-item per candidate + Copy switch command)
+- New `S` key (list + repo page, remappable) switches to the top candidate and pulls in the
+  background; clicking any run affordance does the same. The suggestion self-clears once the new
+  branch's live upstream is picked up
+
 ## v3.5.4 — 2026-07-08
 Fix: branch/detail counts were frozen after first load; `br` over-counted master repos
 - The `U` "refresh all local facts" key and the periodic auto branch-check silently did

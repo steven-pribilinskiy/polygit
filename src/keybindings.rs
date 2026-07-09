@@ -238,6 +238,7 @@ pub enum KeyAction {
     CopyRemote,
     Claude,
     Lazygit,
+    SwitchToBase,
     OpenPageOrToggle,
     Retry,
     RetryAll,
@@ -278,6 +279,7 @@ pub enum KeyAction {
     PageOpenBranchRemote,
     PagePullBranch,
     PagePullAll,
+    PageSwitchToBase,
 }
 
 /// A static descriptor for one action: how it's labeled in the editor, which handler it belongs to,
@@ -381,6 +383,7 @@ fn build_action_defs() -> Vec<ActionDef> {
         (CopyRemote,          "copy_remote",         "Copy the repo's remote URL",      "Clipboard & run", List, (C('Y'), false, false, false), &["Y"]),
         (Claude,              "claude",              "Launch the AI agent in the repo", "Clipboard & run", List, (C('c'), false, false, false), &["c"]),
         (Lazygit,             "lazygit",             "Open lazygit in the repo",        "Clipboard & run", List, (C('l'), false, false, false), &["l"]),
+        (SwitchToBase,        "switch_to_base",      "Switch a merged branch to base & pull", "Clipboard & run", List, (C('S'), false, false, false), &["S"]),
         (ClearLog,            "clear_log",           "Clear the repo's log buffer",     "Clipboard & run", List, (C('x'), false, false, false), &["x"]),
         (OpenPageOrToggle,    "open_page",           "Open the repo page / fold header","Navigate",        List, (Enter,  false, false, false), &["enter"]),
         // List — workspace
@@ -422,6 +425,7 @@ fn build_action_defs() -> Vec<ActionDef> {
         (PageOpenBranchRemote,"page_open_branch",    "Open the branch on the remote",   "Repo page · rows", RepoPage, (C('o'), false, false, false), &["o"]),
         (PagePullBranch,      "page_pull_branch",    "Fast-forward the selected branch","Repo page · rows", RepoPage, (C('p'), false, false, false), &["p"]),
         (PagePullAll,         "page_pull_all",       "Fast-forward every branch",       "Repo page · rows", RepoPage, (C('P'), false, false, false), &["P"]),
+        (PageSwitchToBase,    "page_switch_to_base", "Switch a merged branch to base & pull", "Repo page · rows", RepoPage, (C('S'), false, false, false), &["S"]),
     ]
 }
 

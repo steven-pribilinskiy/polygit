@@ -2633,7 +2633,9 @@ pub(crate) fn render_kebab(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let divider_after = |action: crate::app::KebabAction| {
         matches!(
             action,
-            crate::app::KebabAction::Checkout | crate::app::KebabAction::ToggleSessionPrefix
+            crate::app::KebabAction::Checkout
+                | crate::app::KebabAction::ToggleSessionPrefix
+                | crate::app::KebabAction::CopySwitchCommand
         )
     };
     let divider_count =

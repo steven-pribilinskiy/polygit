@@ -487,6 +487,21 @@
       },
       {
         "keys": [
+          "S"
+        ],
+        "action": "Switch a merged/gone-upstream branch to its suggested base and pull",
+        "note": "only when the current branch's upstream is gone (merged & deleted); switches to the top suggested base (fork-parent / merged-PR base / default), then pulls",
+        "keywords": [
+          "switch",
+          "merged",
+          "gone",
+          "upstream",
+          "base branch"
+        ],
+        "group": "Clipboard & run"
+      },
+      {
+        "keys": [
           "x"
         ],
         "action": "Clear this repo's log buffer",
@@ -905,6 +920,20 @@
         "keywords": [
           "pull all",
           "ff"
+        ],
+        "group": "Row actions"
+      },
+      {
+        "keys": [
+          "S"
+        ],
+        "action": "Switch a merged/gone-upstream branch to its suggested base and pull",
+        "note": "only when the HEAD branch's upstream is gone (merged & deleted)",
+        "keywords": [
+          "switch",
+          "merged",
+          "gone",
+          "base branch"
         ],
         "group": "Row actions"
       },

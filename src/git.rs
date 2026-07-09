@@ -655,19 +655,39 @@ pub async fn get_repo_details(dir: &Path) -> RepoDetails {
     }
 
     if let Ok(output) = Command::new("git")
-        .args(["-C", dir_str, "for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .args([
+            "-C",
+            dir_str,
+            "for-each-ref",
+            "--format=%(HEAD)%1f%(refname:short)%1f%(upstream:track,nobracket)",
+            "refs/heads",
+        ])
         .output()
         .await
     {
         if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
             // Count only NON-mainline local branches (the repo's "extra"/feature branches). Exclude
             // conventional integration branches (main/master/develop/dev/staging/stage) so a repo
             // whose default is `master` doesn't read as 1 "extra branch" with zero real work on it.
-            details.branch_count = String::from_utf8_lossy(&output.stdout)
+            details.branch_count = text
                 .lines()
+                .filter_map(|line| line.split('\u{1f}').nth(1))
                 .map(str::trim)
                 .filter(|name| !name.is_empty() && !is_conventional_base(name))
                 .count() as u32;
+            // The checked-out branch's upstream state: `gone` = the branch was merged and its
+            // remote deleted. Only then do we pay the base-resolution git calls to suggest a
+            // branch to switch back to (a small minority of repos in a scan).
+            if let Some((head_name, gone)) = parse_head_gone(&text) {
+                details.upstream_gone = gone;
+                if gone {
+                    let fork = detect_base_branch(dir, &head_name).await;
+                    let default = default_base_branch(dir).await;
+                    let candidates: Vec<String> = [fork, default].into_iter().flatten().collect();
+                    details.switch_targets = dedupe_switch_targets(&candidates, &head_name);
+                }
+            }
         }
     }
 
@@ -1573,6 +1593,42 @@ pub fn parse_track(upstream: &str, track: &str) -> (Option<u32>, Option<u32>) {
     (Some(ahead), Some(behind))
 }
 
+/// From the extended `%(HEAD)\x1f%(refname:short)\x1f%(upstream:track)` for-each-ref output,
+/// return the checked-out branch's `(name, upstream_gone)`. `None` when HEAD is detached (no
+/// `*`-marked line). `upstream_gone` = the tracking ref is `gone` (merged + remote-deleted).
+pub fn parse_head_gone(output: &str) -> Option<(String, bool)> {
+    for line in output.lines() {
+        let fields: Vec<&str> = line.split('\u{1f}').collect();
+        if fields.first().map(|marker| marker.trim()) == Some("*") {
+            let name = fields.get(1).map(|field| field.trim()).unwrap_or("");
+            if name.is_empty() {
+                return None;
+            }
+            let gone = fields.get(2).map(|field| field.trim()) == Some("gone");
+            return Some((name.to_string(), gone));
+        }
+    }
+    None
+}
+
+/// Build the deduped, ordered list of branches to suggest switching to. `candidates` come in
+/// priority order (fork-parent, then repo default); each is stripped of an `origin/` prefix,
+/// empties and the current branch (`exclude`) are dropped, and duplicates collapse while keeping
+/// the first (highest-priority) occurrence.
+pub fn dedupe_switch_targets(candidates: &[String], exclude: &str) -> Vec<String> {
+    let mut targets: Vec<String> = Vec::new();
+    for candidate in candidates {
+        let bare = candidate.strip_prefix("origin/").unwrap_or(candidate).trim();
+        if bare.is_empty() || bare == exclude {
+            continue;
+        }
+        if !targets.iter().any(|existing| existing == bare) {
+            targets.push(bare.to_string());
+        }
+    }
+    targets
+}
+
 /// Parse one US (0x1f)-separated `for-each-ref` line into a BranchInfo. Fields 6 (short sha)
 /// and 7 (author) are tolerated as absent for forward/backward compatibility.
 fn parse_branch_line(line: &str) -> Option<BranchInfo> {
@@ -1690,6 +1746,26 @@ pub async fn checkout_branch(dir: &Path, branch: &str, allow_dirty: bool) -> Res
     let dir_str = dir.to_str().unwrap_or(".");
     let output = Command::new("git")
         .args(["-C", dir_str, "checkout", branch])
+        .output()
+        .await
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Switch to `branch` via `git switch` (modern, single-purpose — can't clobber a file the way
+/// `git checkout <path>` can, and auto-creates a tracking branch from `origin/<branch>`). Refuses
+/// on a dirty tree unless `allow_dirty`. Used by the merged/gone-upstream "switch & pull" flow.
+pub async fn switch_branch(dir: &Path, branch: &str, allow_dirty: bool) -> Result<(), String> {
+    if !allow_dirty && is_dirty(dir).await.unwrap_or(false) {
+        return Err("working tree has uncommitted changes".to_string());
+    }
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git")
+        .args(["-C", dir_str, "switch", branch])
         .output()
         .await
         .map_err(|err| err.to_string())?;
@@ -1984,6 +2060,46 @@ pub async fn pull_all_branches(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_head_gone_marks_current_branch() {
+        // Real git emits `%(HEAD)` (`*`/space) as its own field: `<marker>\x1f<name>\x1f<track>`.
+        // HEAD (`*`) with a `gone` upstream → (name, true).
+        let output = " \u{1f}main\u{1f}\n*\u{1f}feature\u{1f}gone\n \u{1f}dev\u{1f}";
+        assert_eq!(parse_head_gone(output), Some(("feature".to_string(), true)));
+    }
+
+    #[test]
+    fn parse_head_gone_tracked_and_detached() {
+        // Tracked HEAD → gone=false.
+        let tracked = "*\u{1f}main\u{1f}ahead 1\n \u{1f}feature\u{1f}gone";
+        assert_eq!(parse_head_gone(tracked), Some(("main".to_string(), false)));
+        // No `*` line (detached HEAD) → None.
+        let detached = " \u{1f}main\u{1f}\n \u{1f}feature\u{1f}gone";
+        assert_eq!(parse_head_gone(detached), None);
+    }
+
+    #[test]
+    fn dedupe_switch_targets_strips_origin_excludes_current_and_dedupes() {
+        let candidates = vec![
+            "origin/dev".to_string(),
+            "dev".to_string(), // dup of the stripped origin/dev
+            "origin/main".to_string(),
+            "feature".to_string(), // the current branch — excluded
+            String::new(),         // empty — dropped
+        ];
+        assert_eq!(
+            dedupe_switch_targets(&candidates, "feature"),
+            vec!["dev".to_string(), "main".to_string()]
+        );
+    }
+
+    #[test]
+    fn dedupe_switch_targets_empty_in_empty_out() {
+        assert!(dedupe_switch_targets(&[], "feature").is_empty());
+        // Only the current branch → nothing to suggest.
+        assert!(dedupe_switch_targets(&["origin/feature".to_string()], "feature").is_empty());
+    }
 
     #[test]
     fn test_classify_already_up_to_date() {

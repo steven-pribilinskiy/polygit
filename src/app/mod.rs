@@ -428,6 +428,11 @@ pub struct AppState {
     /// The "wrap copied prompt in `cd <repo> && claude '…'`" checkbox state (persisted).
     pub kebab_session_prefix: bool,
 
+    /// Pending "switch to base & pull" requests `(repo_idx, base_branch)`, queued by the key /
+    /// kebab / info / result-chip handlers and drained at the top of the event loop (spawns the
+    /// switch+pull worker). Runtime-only; never persisted.
+    pub pending_switch: Vec<(usize, String)>,
+
     /// The file explorer (`Explore` kebab item / key) — `Some` while open, over the selected repo.
     pub explorer: Option<crate::explorer::Explorer>,
     /// Persisted explorer preferences (columns, sort, date format), seeding each opened explorer.
@@ -986,6 +991,7 @@ impl AppState {
             kebab_click: Vec::new(),
             kebab_close_click: None,
             kebab_open_click: Vec::new(),
+            pending_switch: Vec::new(),
             explorer: None,
             explorer_prefs: persisted.explorer,
             kebab_session_prefix: persisted.session.kebab_session_prefix,
