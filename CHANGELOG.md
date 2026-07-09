@@ -3,6 +3,15 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.6.1 — 2026-07-09
+Fix: the switch-to-base suggestion now fires for un-pruned gone branches
+- v3.6.0 only detected the gone upstream when the local tracking ref had been pruned
+  (`%(upstream:track)` == "gone"). The common real-world case is un-pruned: the pull fails with
+  "no such ref was fetched" (status reads `ref gone`) but `for-each-ref` still sees the stale
+  tracking ref, so the suggestion never appeared
+- The detail loader now trusts the pull's `ref gone` signal (and rechecks the PR — a merged PR
+  names the exact base), computing the switch targets even when the tracking ref isn't pruned
+
 ## v3.6.0 — 2026-07-09
 Feature: suggest "switch to base & pull" when a branch's upstream is gone (merged & deleted)
 - Detects the current branch's `gone` tracking ref and computes a deduped candidate list — the

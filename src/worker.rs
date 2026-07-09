@@ -15,7 +15,7 @@ use crate::git::{
     base_file_list, base_merge_base, branch_diff_stats, branch_file_diff, branch_file_list,
     checkout_branch, classify_failure, classify_pull_output, collect_pull_result, commit_file_diff,
     commit_file_list,
-    default_base_branch, delete_branch, dirty_count,
+    dedupe_switch_targets, default_base_branch, delete_branch, detect_base_branch, dirty_count,
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
     list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
@@ -106,7 +106,15 @@ pub async fn pull_repo(
             state.elapsed = Some(elapsed);
             state.status = RepoStatus::NoUpstream;
             // Distinguish "never had an upstream" from "tracked ref was deleted (PR merged)".
-            state.status_note = last_output.contains("no such ref was fetched").then_some("ref gone");
+            let ref_gone = last_output.contains("no such ref was fetched");
+            state.status_note = ref_gone.then_some("ref gone");
+            // A "ref gone" branch is a merged/deleted one — refresh details (so the switch-to-base
+            // suggestion is computed from the pull signal, even when the local tracking ref isn't
+            // pruned) and recheck the PR (a merged PR names the exact base).
+            if ref_gone {
+                state.details_stale = true;
+                state.pr_checked_at = None;
+            }
             state
                 .log
                 .push(format!("{} {name} has no upstream — nothing to pull", icons.skip_log));
@@ -461,8 +469,27 @@ pub async fn run_remote_url_discovery(repos: Vec<SharedRepoState>, max_jobs: usi
 /// Fetch the info-panel details for one repo (last commit, ahead/behind, dirty/stash counts)
 /// and store them. The caller sets `details_loading` before spawning; this clears it.
 pub async fn run_repo_details(repo: SharedRepoState) {
-    let path = { repo.lock().unwrap().path.clone() };
-    let details = get_repo_details(&path).await;
+    let (path, ref_gone) = {
+        let state = repo.lock().unwrap();
+        let ref_gone = matches!(state.status, RepoStatus::NoUpstream)
+            && state.status_note == Some("ref gone");
+        (state.path.clone(), ref_gone)
+    };
+    let mut details = get_repo_details(&path).await;
+    // `get_repo_details` only sees the upstream as gone when the local tracking ref was pruned
+    // (`%(upstream:track)` == "gone"). In the common un-pruned case the PULL is what proves it
+    // ("no such ref was fetched" → `ref gone`); trust that signal and compute the base candidates
+    // here (a merged PR's base is layered on later in `switch_targets`).
+    if ref_gone && !details.upstream_gone {
+        details.upstream_gone = true;
+        if details.switch_targets.is_empty() {
+            let branch = get_branch(&path).await.unwrap_or_default();
+            let fork = detect_base_branch(&path, &branch).await;
+            let default = default_base_branch(&path).await;
+            let candidates: Vec<String> = [fork, default].into_iter().flatten().collect();
+            details.switch_targets = dedupe_switch_targets(&candidates, &branch);
+        }
+    }
     let mut state = repo.lock().unwrap();
     state.details = Some(details);
     state.details_loading = false;
