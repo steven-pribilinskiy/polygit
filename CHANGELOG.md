@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.6.2 — 2026-07-09
+Polish: the info-panel switch suggestion reads as an action, not a raw command
+- The SUGGESTED row is now `Switch to <base> · Copy command ⧉` — the title runs the switch+pull,
+  a dotted separator, then a "Copy command" affordance whose dwell tooltip reveals the full
+  `git switch <base> && git pull`
+
 ## v3.6.1 — 2026-07-09
 Fix: the switch-to-base suggestion now fires for un-pruned gone branches
 - v3.6.0 only detected the gone upstream when the local tracking ref had been pruned

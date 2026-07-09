@@ -1720,6 +1720,7 @@ async fn run_event_loop(
                                 let allowed = match area {
                                     app::TooltipArea::Header => tips.headers,
                                     app::TooltipArea::Count => tips.counts,
+                                    app::TooltipArea::Info => !tips.all_off(),
                                 };
                                 allowed.then_some(app::HoverTip {
                                     text,

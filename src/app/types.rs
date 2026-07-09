@@ -2061,6 +2061,8 @@ pub enum TooltipArea {
     Header,
     /// A group / folder header's right-corner count tail.
     Count,
+    /// An info-panel element (e.g. the SUGGESTED "Copy command" button reveals the full command).
+    Info,
 }
 
 /// A captured dwell-tooltip region: the hover hit-area, the text, the element the popup anchors to,

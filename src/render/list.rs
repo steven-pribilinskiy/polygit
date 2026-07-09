@@ -1,7 +1,6 @@
 use super::*;
 
 pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) -> usize {
-    app.hover_tooltips.clear();
     let rows = app.visible_rows();
     let total_repos = app.repos.len();
     let elapsed = app.finished_elapsed.unwrap_or_else(|| app.start.elapsed()).as_secs_f64();

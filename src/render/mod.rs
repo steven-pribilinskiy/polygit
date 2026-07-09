@@ -999,6 +999,10 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     app.clickable.clear();
     app.hint_click.clear();
     app.max_click.clear();
+    // Dwell-tooltip regions are re-registered by whatever panes render (list headers/counts, the
+    // info panel). Clear once per frame here — NOT in render_list, which is skipped when a non-list
+    // pane is maximized (the info panel would then accumulate its tooltips unboundedly).
+    app.hover_tooltips.clear();
     // The list pane's click geometry is captured ONLY by `render_list`. When a pane is maximized
     // (Info/Result/RepoPage) `render_list` doesn't run, so these would otherwise keep last frame's
     // rects and a click on the maximized pane would fall THROUGH to a stale list row / header / kebab

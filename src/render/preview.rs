@@ -581,11 +581,15 @@ pub(crate) fn wrap_link(text: &str, width: usize) -> Vec<String> {
 /// (`(line_index, start_col, end_col, action)`, columns relative to the inner content origin).
 pub(crate) type InfoClick = (usize, u16, u16, InfoAction);
 
+/// An info-block dwell-tooltip region: `(line_index, start_col, end_col, text)`, columns relative
+/// to the inner content origin (translated to absolute + registered by `render_info_block`).
+pub(crate) type InfoTip = (usize, u16, u16, String);
+
 pub(crate) fn build_info_lines(
     app: &AppState,
     repo_idx: usize,
     content_width: usize,
-) -> (Vec<Line<'static>>, Vec<InfoClick>) {
+) -> (Vec<Line<'static>>, Vec<InfoClick>, Vec<InfoTip>) {
     let state = app.repos[repo_idx].lock().unwrap();
 
     const LABEL_W: usize = 13;
@@ -608,6 +612,7 @@ pub(crate) fn build_info_lines(
 
     let mut lines: Vec<Line> = Vec::new();
     let mut clicks: Vec<InfoClick> = Vec::new();
+    let mut tooltips: Vec<InfoTip> = Vec::new();
 
     let plain = |name: &str, text: String| {
         Line::from(vec![
@@ -801,19 +806,25 @@ pub(crate) fn build_info_lines(
             dim,
         )));
         let run_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-        for (rank, base) in switch_targets.iter().enumerate() {
+        for base in &switch_targets {
             let command = crate::app::switch_command(base);
-            let display = truncate_str(&command, copy_avail);
             let line_idx = lines.len();
-            let cmd_w = UnicodeWidthStr::width(display.as_str()) as u16;
-            // The command text runs the switch+pull; the trailing `⧉` copies the full command.
-            clicks.push((line_idx, LABEL_W as u16, LABEL_W as u16 + cmd_w, InfoAction::RunSwitch(base.clone())));
-            let copy_start = LABEL_W as u16 + cmd_w + 1;
-            clicks.push((line_idx, copy_start, copy_start + copy_w, InfoAction::CopyText(command.clone())));
-            let name = if rank == 0 { "Switch" } else { "" };
+            // "Switch to <base>" runs the switch+pull; then a dotted separator; then a
+            // "Copy command ⧉" affordance whose dwell tooltip reveals the full command.
+            let title = format!("Switch to {base}");
+            let title_w = UnicodeWidthStr::width(title.as_str()) as u16;
+            let copy_label = "Copy command";
+            let copy_label_w = UnicodeWidthStr::width(copy_label) as u16;
+            clicks.push((line_idx, LABEL_W as u16, LABEL_W as u16 + title_w, InfoAction::RunSwitch(base.clone())));
+            let copy_start = LABEL_W as u16 + title_w + 3; // after " · "
+            let copy_end = copy_start + copy_label_w + 1 + copy_w; // "Copy command" + " " + glyph
+            clicks.push((line_idx, copy_start, copy_end, InfoAction::CopyText(command.clone())));
+            tooltips.push((line_idx, copy_start, copy_end, command));
             lines.push(Line::from(vec![
-                Span::styled(format!("{name:<13}"), label),
-                Span::styled(display, run_style),
+                Span::styled(format!("{:<13}", ""), label),
+                Span::styled(title, run_style),
+                Span::styled(" · ", dim),
+                Span::styled(copy_label.to_string(), value),
                 Span::raw(" "),
                 Span::styled(copy_glyph.to_string(), copy_icon),
             ]));
@@ -999,7 +1010,7 @@ pub(crate) fn build_info_lines(
     };
     push_copyable(&mut lines, &mut clicks, "Path", display, path);
 
-    (lines, clicks)
+    (lines, clicks, tooltips)
 }
 
 /// Render an info block (border + pre-wrapped lines + scrollbar) into `area`, and translate each
@@ -1009,9 +1020,10 @@ pub(crate) fn build_info_lines(
 pub(crate) fn render_info_panel(frame: &mut Frame, app: &mut AppState, area: Rect, repo_idx: usize) {
     let name = app.repos[repo_idx].lock().unwrap().name.clone();
     let info_width = area.width.saturating_sub(if app.panel_padding { 4 } else { 2 }) as usize;
-    let (lines, clicks) = build_info_lines(app, repo_idx, info_width);
+    let (lines, clicks, tooltips) = build_info_lines(app, repo_idx, info_width);
     let scroll = app.repos[repo_idx].lock().unwrap().info_scroll;
-    let scroll = render_info_block(frame, app, area, format!(" [2] {name} · info "), lines, clicks, scroll);
+    let scroll =
+        render_info_block(frame, app, area, format!(" [2] {name} · info "), lines, clicks, tooltips, scroll);
     // Write back the clamped offset so the wheel/drag never sit past the content.
     app.repos[repo_idx].lock().unwrap().info_scroll = scroll;
 }
@@ -1043,6 +1055,7 @@ pub(crate) fn render_preview_hidden_hint(frame: &mut Frame, app: &mut AppState, 
 /// Render the info block (border + scrollable pre-wrapped lines + draggable scrollbar), translating
 /// each clickable region to an absolute screen rect on `app.info_click`. Returns the clamped scroll
 /// offset (the caller persists it on the repo). `scroll` is the requested top line.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_info_block(
     frame: &mut Frame,
     app: &mut AppState,
@@ -1050,6 +1063,7 @@ pub(crate) fn render_info_block(
     title: String,
     lines: Vec<Line<'static>>,
     clicks: Vec<InfoClick>,
+    tooltips: Vec<InfoTip>,
     scroll: usize,
 ) -> usize {
     let modal_open = app.any_modal_open();
@@ -1079,6 +1093,24 @@ pub(crate) fn render_info_block(
                 inner.x + end,
                 action,
             ));
+        }
+    }
+    // Dwell tooltips for info-panel elements (e.g. SUGGESTED "Copy command" → the full command).
+    for (line_idx, start, end, text) in tooltips {
+        if line_idx >= scroll && line_idx < scroll + viewport {
+            let row = inner.y + (line_idx - scroll) as u16;
+            let col_start = inner.x + start;
+            let col_end = inner.x + end;
+            app.hover_tooltips.push(crate::app::TooltipRegion {
+                row,
+                col_start,
+                col_end,
+                text,
+                anchor: Rect { x: col_start, y: row, width: col_end.saturating_sub(col_start), height: 1 },
+                placement: tui_pick::Placement::bottom_start(),
+                hide_column: None,
+                area: crate::app::TooltipArea::Info,
+            });
         }
     }
     let track = scrollbar_track(area, inner);
