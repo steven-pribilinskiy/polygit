@@ -117,6 +117,9 @@ pub struct RepoDetails {
     /// Deduped, priority-ordered branches to suggest switching to (fork-parent then repo default,
     /// current branch excluded). Empty unless `upstream_gone`.
     pub switch_targets: Vec<String>,
+    /// The subset of `switch_targets` the current branch is fully merged into — switching there can
+    /// safely `git branch -d` the merged branch, so the suggestion offers to delete it too.
+    pub merged_targets: Vec<String>,
 }
 
 /// Lifecycle state of a detected PR. Mirrors `gh`'s `state` field. `Open` is the serde default so
@@ -2538,9 +2541,23 @@ impl CellFlash {
 }
 
 /// The suggested shell command for a gone-upstream (merged + deleted) branch: switch to `base`
-/// and pull. Shown/copied across the info panel, result panel, repo page, and kebab.
-pub fn switch_command(base: &str) -> String {
-    format!("git switch {base} && git pull")
+/// and pull, plus a safe `git branch -d <delete_branch>` when the branch is fully merged (so the
+/// dead local branch is cleaned up). Shown/copied across the info panel, result panel, repo page,
+/// and kebab.
+pub fn switch_command(base: &str, delete_branch: Option<&str>) -> String {
+    match delete_branch {
+        Some(branch) => format!("git switch {base} && git pull && git branch -d {branch}"),
+        None => format!("git switch {base} && git pull"),
+    }
+}
+
+/// The short action title for the suggestion — "Switch to `base`", plus "& delete `branch`" when
+/// the merged local branch will be cleaned up. The dynamic half mirrors `switch_command`.
+pub fn switch_title(base: &str, delete_branch: Option<&str>) -> String {
+    match delete_branch {
+        Some(branch) => format!("Switch to {base} & delete {branch}"),
+        None => format!("Switch to {base}"),
+    }
 }
 
 impl RepoState {
@@ -2610,6 +2627,21 @@ impl RepoState {
         candidates.extend(details.switch_targets.iter().cloned());
         let current = self.branch.clone().unwrap_or_default();
         crate::git::dedupe_switch_targets(&candidates, &current)
+    }
+
+    /// The local branch to `git branch -d` when switching to `base` — `Some(current_branch)` when
+    /// the current branch is fully merged into `base` (safe to delete), else `None`. Drives the
+    /// dynamic "& delete <branch>" verbiage and the worker's cleanup step.
+    pub fn switch_delete_branch(&self, base: &str) -> Option<String> {
+        let details = self.details.as_ref()?;
+        if !details.merged_targets.iter().any(|merged| merged == base) {
+            return None;
+        }
+        let branch = self.branch.clone()?;
+        if branch.is_empty() || branch == "?" || branch == "HEAD" {
+            return None;
+        }
+        Some(branch)
     }
 
     /// Whether the refetch flash should be visible *this instant*. Pulses on/off every 250ms

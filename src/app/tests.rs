@@ -159,6 +159,39 @@
     }
 
     #[test]
+    fn switch_command_and_title_are_dynamic_on_delete() {
+        use crate::app::{switch_command, switch_title};
+        // No delete → switch + pull only.
+        assert_eq!(switch_command("main", None), "git switch main && git pull");
+        assert_eq!(switch_title("main", None), "Switch to main");
+        // Fully-merged branch → also `git branch -d`.
+        assert_eq!(
+            switch_command("main", Some("feature")),
+            "git switch main && git pull && git branch -d feature"
+        );
+        assert_eq!(switch_title("main", Some("feature")), "Switch to main & delete feature");
+    }
+
+    #[test]
+    fn switch_delete_branch_gated_on_merged_targets() {
+        let mut repo = RepoState::new("alpha", std::path::PathBuf::from("/tmp/alpha"));
+        repo.branch = Some("feature".to_string());
+        repo.details = Some(RepoDetails {
+            upstream_gone: true,
+            switch_targets: vec!["main".to_string(), "dev".to_string()],
+            merged_targets: vec!["main".to_string()], // merged into main, not dev
+            ..Default::default()
+        });
+        // Switching to a base it's merged into → offers to delete the branch.
+        assert_eq!(repo.switch_delete_branch("main"), Some("feature".to_string()));
+        // Not merged into dev → no delete.
+        assert_eq!(repo.switch_delete_branch("dev"), None);
+        // A detached / unknown branch is never deleted.
+        repo.branch = Some("HEAD".to_string());
+        assert_eq!(repo.switch_delete_branch("main"), None);
+    }
+
+    #[test]
     fn repo_details_serde_defaults_new_fields() {
         // A pre-existing status-cache entry (no `upstream_gone`/`switch_targets`) still loads.
         let old = r#"{"ahead":0,"behind":3,"dirty_count":0,"stash_count":0,"branch_count":0,

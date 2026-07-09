@@ -686,6 +686,8 @@ pub async fn get_repo_details(dir: &Path) -> RepoDetails {
                     let default = default_base_branch(dir).await;
                     let candidates: Vec<String> = [fork, default].into_iter().flatten().collect();
                     details.switch_targets = dedupe_switch_targets(&candidates, &head_name);
+                    details.merged_targets =
+                        compute_merged_targets(dir, &head_name, &details.switch_targets).await;
                 }
             }
         }
@@ -1627,6 +1629,41 @@ pub fn dedupe_switch_targets(candidates: &[String], exclude: &str) -> Vec<String
         }
     }
     targets
+}
+
+/// Whether `branch` is fully merged into `base` — its tip is an ancestor of the base, so a safe
+/// `git branch -d` would delete it. Checks the up-to-date remote base (`origin/<base>`, where a
+/// merge lands first) before the local base, so a not-yet-pulled local base doesn't hide a merge.
+pub async fn is_branch_merged(dir: &Path, branch: &str, base: &str) -> bool {
+    let dir_str = dir.to_str().unwrap_or(".");
+    for base_ref in [format!("origin/{base}"), base.to_string()] {
+        let Ok(output) = Command::new("git")
+            .args(["-C", dir_str, "merge-base", "--is-ancestor", branch, &base_ref])
+            .output()
+            .await
+        else {
+            continue;
+        };
+        match output.status.code() {
+            Some(0) => return true,   // branch is an ancestor of base_ref → fully merged
+            Some(1) => return false,  // base_ref resolved, branch is NOT merged into it
+            _ => continue,            // base_ref didn't resolve (128) → try the next candidate
+        }
+    }
+    false
+}
+
+/// The subset of `targets` that `branch` is fully merged into (so switching there can safely
+/// `git branch -d` the merged branch). One `merge-base --is-ancestor` per target — cheap, and
+/// only ever run for the handful of gone-upstream repos in a scan.
+pub async fn compute_merged_targets(dir: &Path, branch: &str, targets: &[String]) -> Vec<String> {
+    let mut merged = Vec::new();
+    for base in targets {
+        if is_branch_merged(dir, branch, base).await {
+            merged.push(base.clone());
+        }
+    }
+    merged
 }
 
 /// Parse one US (0x1f)-separated `for-each-ref` line into a BranchInfo. Fields 6 (short sha)

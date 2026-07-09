@@ -544,6 +544,10 @@ pub(crate) fn build_repo_page_info_lines(
     row: &PageRow,
     base_branch: Option<&str>,
     pr: Option<&crate::app::PrInfo>,
+    // The gone-upstream suggestion for the HEAD row: `(base, delete_branch)` — the base to switch
+    // to and, when the branch is fully merged, the branch to `git branch -d`. Resolved by the
+    // caller (which holds the repo's details).
+    suggest: Option<&(String, Option<String>)>,
 ) -> Vec<Line<'static>> {
     let key = Style::default().fg(Color::DarkGray);
     let val = Style::default().fg(Color::Gray);
@@ -580,19 +584,11 @@ pub(crate) fn build_repo_page_info_lines(
                 (None, _) => "(none)".to_string(),
             };
             lines.push(pair("upstream", upstream_text));
-            // A merged/gone-upstream HEAD branch: suggest switching back to base & pulling. Prefer
-            // the merged PR's target, else the detected base, else the repo default. (`S` / the
-            // footer hint runs it; this line is the discoverable command.)
-            if row.is_head && row.upstream_gone {
-                let suggest_base = pr
-                    .filter(|open| open.state == crate::app::PrState::Merged && !open.base_ref.is_empty())
-                    .map(|open| open.base_ref.clone())
-                    .or_else(|| row.base.clone())
-                    .or_else(|| base_branch.map(str::to_string));
-                if let Some(base) = suggest_base {
-                    let bare = base.strip_prefix("origin/").unwrap_or(&base);
-                    lines.push(pair("suggest", crate::app::switch_command(bare)));
-                }
+            // A merged/gone-upstream HEAD branch: suggest switching back to base & pulling (and
+            // deleting the merged branch). The base + delete decision come from the caller (`S` /
+            // the footer hint runs it; this line is the discoverable command).
+            if let Some((base, delete)) = suggest.filter(|_| row.is_head && row.upstream_gone) {
+                lines.push(pair("suggest", crate::app::switch_command(base, delete.as_deref())));
             }
             // The open PR (resolved for the repo's current branch) shows on the HEAD row only.
             if row.is_head {
@@ -687,16 +683,26 @@ pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, O
         footer_segments.push(("d".to_string(), key, Some(HintKey::Char('d'))));
         footer_segments.push((format!(" {action}"), hint, Some(HintKey::Char('d'))));
     }
-    // A merged/gone-upstream HEAD branch: offer `S switch & pull` (switch to the suggested base
-    // and pull). Clicking routes through the repo-page `S` key (PageSwitchToBase).
-    let head_gone = app
+    // A merged/gone-upstream HEAD branch: offer `S switch & pull` (or `switch & delete` when the
+    // branch is fully merged). Clicking routes through the repo-page `S` key (PageSwitchToBase).
+    let (head_gone, deletes) = app
         .repo_page
         .and_then(|idx| app.repos.get(idx))
-        .is_some_and(|repo| repo.lock().unwrap().is_upstream_gone());
+        .map(|repo| {
+            let state = repo.lock().unwrap();
+            let deletes = state
+                .switch_targets()
+                .into_iter()
+                .next()
+                .is_some_and(|top| state.switch_delete_branch(&top).is_some());
+            (state.is_upstream_gone(), deletes)
+        })
+        .unwrap_or((false, false));
     if head_gone {
         footer_segments.push(sep());
         footer_segments.push(("S".to_string(), key, Some(HintKey::Char('S'))));
-        footer_segments.push((" switch & pull".to_string(), hint, Some(HintKey::Char('S'))));
+        let label = if deletes { " switch & delete" } else { " switch & pull" };
+        footer_segments.push((label.to_string(), hint, Some(HintKey::Char('S'))));
     }
     // `t cols` and `m maximize/restore` are intentionally NOT in the footer — they live on the
     // page's top border (`t cols ▾` / `m▢`), so repeating them here is redundant.
@@ -1434,12 +1440,18 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     let selected_row = rows.get(selected);
     let info_lines = if app.repo_page_info {
         selected_row.map(|row| {
-            let (base, pr) = {
+            let (base, pr, suggest) = {
                 let state = app.repos[idx].lock().unwrap();
                 let base = state.page.as_ref().and_then(|page| page.base_branch.clone());
-                (base, state.pr.clone())
+                // The gone-upstream suggestion, resolved the same way as the list/info panel
+                // (top switch target + its delete decision) so every surface agrees.
+                let suggest = state.switch_targets().into_iter().next().map(|top| {
+                    let delete = state.switch_delete_branch(&top);
+                    (top, delete)
+                });
+                (base, state.pr.clone(), suggest)
             };
-            build_repo_page_info_lines(row, base.as_deref(), pr.as_ref())
+            build_repo_page_info_lines(row, base.as_deref(), pr.as_ref(), suggest.as_ref())
         })
     } else {
         None

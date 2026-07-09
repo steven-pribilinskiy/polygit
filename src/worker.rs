@@ -14,7 +14,7 @@ use crate::app::{
 use crate::git::{
     base_file_list, base_merge_base, branch_diff_stats, branch_file_diff, branch_file_list,
     checkout_branch, classify_failure, classify_pull_output, collect_pull_result, commit_file_diff,
-    commit_file_list,
+    commit_file_list, compute_merged_targets,
     dedupe_switch_targets, default_base_branch, delete_branch, detect_base_branch, dirty_count,
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
@@ -482,13 +482,15 @@ pub async fn run_repo_details(repo: SharedRepoState) {
     // here (a merged PR's base is layered on later in `switch_targets`).
     if ref_gone && !details.upstream_gone {
         details.upstream_gone = true;
+        let branch = get_branch(&path).await.unwrap_or_default();
         if details.switch_targets.is_empty() {
-            let branch = get_branch(&path).await.unwrap_or_default();
             let fork = detect_base_branch(&path, &branch).await;
             let default = default_base_branch(&path).await;
             let candidates: Vec<String> = [fork, default].into_iter().flatten().collect();
             details.switch_targets = dedupe_switch_targets(&candidates, &branch);
         }
+        details.merged_targets =
+            compute_merged_targets(&path, &branch, &details.switch_targets).await;
     }
     let mut state = repo.lock().unwrap();
     state.details = Some(details);
@@ -1274,15 +1276,17 @@ pub async fn run_switch_and_pull(
     timeout_secs: u64,
     icon_style: IconStyle,
 ) {
-    let (repo, path, name) = {
+    let (repo, path, name, to_delete) = {
         let app = app_state.lock().unwrap();
         let repo = Arc::clone(&app.repos[repo_idx]);
-        let (path, name) = {
+        let (path, name, to_delete) = {
             let mut state = repo.lock().unwrap();
             state.pull_loading = true;
-            (state.path.clone(), state.name.clone())
+            // The branch to clean up (if fully merged into `base`) — captured from the CURRENT
+            // details, matching exactly the verbiage the user acted on.
+            (state.path.clone(), state.name.clone(), state.switch_delete_branch(&base))
         };
-        (repo, path, name)
+        (repo, path, name, to_delete)
     };
 
     if let Err(err) = switch_branch(&path, &base, false).await {
@@ -1303,6 +1307,16 @@ pub async fn run_switch_and_pull(
 
     // Reuse the standard pull: streams to the log, sets the status, honors throttling.
     let _ = pull_repo(Arc::clone(&repo), control, timeout_secs, icon_style).await;
+
+    // Clean up the dead branch when it's fully merged. We're now on `base` (switched away), so
+    // `git branch -d` (safe: refuses an unmerged branch) can delete it. Log either outcome.
+    if let Some(branch) = to_delete {
+        let line = match delete_branch(&path, &branch, false).await {
+            Ok(()) => format!("Deleted merged branch {branch}"),
+            Err(err) => format!("Kept {branch} (not deleted: {err})"),
+        };
+        repo.lock().unwrap().log.push(line);
+    }
 
     // The branch changed, so force a full facts + page refresh (an AlreadyUpToDate pull wouldn't
     // have marked details stale). This also clears the gone-upstream suggestion.

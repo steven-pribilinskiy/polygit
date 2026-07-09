@@ -489,8 +489,8 @@
         "keys": [
           "S"
         ],
-        "action": "Switch a merged/gone-upstream branch to its suggested base and pull",
-        "note": "only when the current branch's upstream is gone (merged & deleted); switches to the top suggested base (fork-parent / merged-PR base / default), then pulls",
+        "action": "Switch a merged/gone-upstream branch to its suggested base, pull, and delete the merged branch",
+        "note": "only when the current branch's upstream is gone (merged & deleted); switches to the top suggested base (fork-parent / merged-PR base / default), pulls, and — when the branch is fully merged — safely git branch -d's it",
         "keywords": [
           "switch",
           "merged",
@@ -927,8 +927,8 @@
         "keys": [
           "S"
         ],
-        "action": "Switch a merged/gone-upstream branch to its suggested base and pull",
-        "note": "only when the HEAD branch's upstream is gone (merged & deleted)",
+        "action": "Switch a merged/gone-upstream branch to its suggested base, pull, and delete the merged branch",
+        "note": "only when the HEAD branch's upstream is gone (merged & deleted); safely git branch -d's the branch when it's fully merged",
         "keywords": [
           "switch",
           "merged",

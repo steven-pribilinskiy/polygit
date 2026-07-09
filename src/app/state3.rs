@@ -1435,8 +1435,10 @@ impl AppState {
         // top candidate, so hint it on the first row.
         let switch_targets = state.switch_targets();
         for (rank, base) in switch_targets.iter().enumerate() {
+            // Fully-merged branches get a "& delete <branch>" in the label + command.
+            let delete = state.switch_delete_branch(base);
             items.push(KebabItem {
-                label: format!("⎇ Switch to {base} & pull"),
+                label: format!("⎇ {}", crate::app::switch_title(base, delete.as_deref())),
                 action: KebabAction::SwitchBase,
                 enabled: true,
                 hint: if rank == 0 { Some("S".to_string()) } else { None },
@@ -1444,12 +1446,13 @@ impl AppState {
             });
         }
         if let Some(top) = switch_targets.first() {
+            let delete = state.switch_delete_branch(top);
             items.push(KebabItem {
                 label: "⧉ Copy switch command".to_string(),
                 action: KebabAction::CopySwitchCommand,
                 enabled: true,
                 hint: None,
-                data: Some(crate::app::switch_command(top)),
+                data: Some(crate::app::switch_command(top, delete.as_deref())),
             });
         }
         items.extend([

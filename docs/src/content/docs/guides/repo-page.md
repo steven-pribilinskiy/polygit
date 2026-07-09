@@ -68,12 +68,14 @@ expand to fill it), and the **upstream** / **base** columns also **grow to fit**
 instead of truncating. A branch whose tracked upstream's remote ref was deleted shows a red **`✗`
 "ref gone"** marker in the upstream column.
 
-**Merged/gone-upstream → switch & pull.** When the HEAD branch's upstream is *gone* (it was merged
-and its remote branch deleted), the info panel adds a **`suggest`** line — `git switch <base> &&
-git pull` — and the footer offers **`S` switch & pull**. `S` (or clicking the hint) switches the
-repo to its top suggested base (the branch it was cut from / the merged PR's target / the repo
-default) and pulls in the background; the suggestion clears once the new branch's live upstream is
-picked up.
+**Merged/gone-upstream → switch (& delete).** When the HEAD branch's upstream is *gone* (it was
+merged and its remote branch deleted), the info panel adds a **`suggest`** line — `git switch
+<base> && git pull`, extended with `&& git branch -d <branch>` when the branch is **fully merged**
+— and the footer offers **`S` switch & pull** (or **switch & delete**). `S` (or clicking the hint)
+switches the repo to its top suggested base (the branch it was cut from / the merged PR's target /
+the repo default), pulls, and — when the dead branch is fully merged — safely `git branch -d`s it
+(never `-D`, so an unmerged branch is never lost) in the background; the suggestion clears once the
+new branch's live upstream is picked up.
 
 **Base branch resolution.** A branch's base (what its change stats diff against) resolves in this
 order: an explicit **override** (set via the base picker) → the **open PR's target** branch (so it

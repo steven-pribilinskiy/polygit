@@ -247,11 +247,20 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         let mut footer: Vec<(String, Style, Option<Command>)> = Vec::new();
         // Merged/gone-upstream repos lead the footer with an actionable `⎇ switch … & pull` chip
         // (same as `S`) — clicking runs the switch+pull for the selected repo's top candidate.
-        let gone_top: Option<String> = selected_repo
-            .and_then(|idx| app.repos[idx].lock().unwrap().switch_targets().into_iter().next());
-        if let Some(base) = &gone_top {
+        let gone_top: Option<(String, Option<String>)> = selected_repo.and_then(|idx| {
+            let state = app.repos[idx].lock().unwrap();
+            state.switch_targets().into_iter().next().map(|base| {
+                let delete = state.switch_delete_branch(&base);
+                (base, delete)
+            })
+        });
+        if let Some((base, delete)) = &gone_top {
             let attn = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-            footer.push((format!("⎇ switch to {base} & pull"), attn, Some(Command::SwitchToBase)));
+            let label = match delete {
+                Some(branch) => format!("⎇ switch to {base} & delete {branch}"),
+                None => format!("⎇ switch to {base} & pull"),
+            };
+            footer.push((label, attn, Some(Command::SwitchToBase)));
             footer.push(("   ".to_string(), hint, None));
         }
         footer.extend([
@@ -806,12 +815,17 @@ pub(crate) fn build_info_lines(
             dim,
         )));
         let run_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-        for base in &switch_targets {
-            let command = crate::app::switch_command(base);
+        for (rank, base) in switch_targets.iter().enumerate() {
+            // When the branch is fully merged into this base, the suggestion also cleans it up
+            // (`git branch -d`); the title + command say so dynamically.
+            let delete = state.switch_delete_branch(base);
+            let command = crate::app::switch_command(base, delete.as_deref());
             let line_idx = lines.len();
-            // "Switch to <base>" runs the switch+pull; then a dotted separator; then a
+            // A left-column label (first row only) keeps the actions aligned with the other info
+            // rows. "Switch to <base>" runs the switch+pull; then a dotted separator; then a
             // "Copy command ⧉" affordance whose dwell tooltip reveals the full command.
-            let title = format!("Switch to {base}");
+            let name = if rank == 0 { "Actions" } else { "" };
+            let title = crate::app::switch_title(base, delete.as_deref());
             let title_w = UnicodeWidthStr::width(title.as_str()) as u16;
             let copy_label = "Copy command";
             let copy_label_w = UnicodeWidthStr::width(copy_label) as u16;
@@ -821,7 +835,7 @@ pub(crate) fn build_info_lines(
             clicks.push((line_idx, copy_start, copy_end, InfoAction::CopyText(command.clone())));
             tooltips.push((line_idx, copy_start, copy_end, command));
             lines.push(Line::from(vec![
-                Span::styled(format!("{:<13}", ""), label),
+                Span::styled(format!("{name:<13}"), label),
                 Span::styled(title, run_style),
                 Span::styled(" · ", dim),
                 Span::styled(copy_label.to_string(), value),

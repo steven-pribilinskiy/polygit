@@ -3,6 +3,16 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.7.0 — 2026-07-09
+Feature: the switch suggestion also deletes the merged branch, with dynamic verbiage
+- When the gone branch is **fully merged** into the base you're switching to, the suggestion
+  becomes `git switch <base> && git pull && git branch -d <branch>` and reads "Switch to <base> &
+  delete <branch>" — across the info panel, result chip, repo page, and kebab. When it isn't fully
+  merged (e.g. squash-merged), it stays "Switch to <base>" and leaves the branch alone
+- The delete uses the safe `git branch -d` (never `-D`), so an unmerged branch is never lost. `S`
+  (or clicking any run affordance) switches, pulls, and cleans up in one step
+- The info-panel SUGGESTED row gains an aligned `Actions` label
+
 ## v3.6.2 — 2026-07-09
 Polish: the info-panel switch suggestion reads as an action, not a raw command
 - The SUGGESTED row is now `Switch to <base> · Copy command ⧉` — the title runs the switch+pull,
