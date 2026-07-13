@@ -196,11 +196,13 @@ impl AppState {
         self.apply_result_view(target, self.pane_diff_view);
     }
 
-    /// Cycle the Result pane's flat view row: log → raw → unified → split → log. Shared by the
-    /// `d` key and the status-bar `d diff` hint.
+    /// Cycle the Result pane's flat view row: log → commits → files → raw → unified → split → log.
+    /// Shared by the `d` key and the status-bar `d diff` hint.
     pub fn cycle_result_view(&mut self) {
         let (view, style) = match (self.right_view, self.pane_diff_view) {
-            (RightView::Log, _) => (RightView::Diff, DiffView::Raw),
+            (RightView::Log, _) => (RightView::Commits, self.pane_diff_view),
+            (RightView::Commits, _) => (RightView::Files, self.pane_diff_view),
+            (RightView::Files, _) => (RightView::Diff, DiffView::Raw),
             (RightView::Diff, DiffView::Raw) => (RightView::Diff, DiffView::Unified),
             (RightView::Diff, DiffView::Unified) => (RightView::Diff, DiffView::Split),
             (RightView::Diff, DiffView::Split) => (RightView::Log, self.pane_diff_view),
@@ -218,16 +220,18 @@ impl AppState {
     /// Diff, so switching styles never refetches) and the scroll, then persist. The diff body is
     /// (re)loaded lazily by the event loop when `right_view == Diff && diff.is_none()`.
     fn apply_result_view(&mut self, view: RightView, style: DiffView) {
-        let leaving_diff = self.right_view == RightView::Diff && view == RightView::Log;
+        let leaving_diff = self.right_view == RightView::Diff && view != RightView::Diff;
         self.right_view = view;
         self.pane_diff_view = style;
         if let Some(repo_idx) = self.selected_repo_index() {
             let mut state = self.repos[repo_idx].lock().unwrap();
-            if view == RightView::Diff {
-                // Entering diff or switching style: start at the top, not the log's scroll.
+            if view != RightView::Log {
+                // Any non-log tab (commits/files/diff, or a diff style change) starts at the top,
+                // not the log's scroll / auto-scroll tail.
                 state.preview_scroll = 0;
                 state.auto_scroll = false;
-            } else if leaving_diff {
+            }
+            if leaving_diff {
                 state.diff = None;
             }
         }

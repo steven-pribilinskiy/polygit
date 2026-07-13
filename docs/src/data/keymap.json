@@ -345,8 +345,8 @@
         "keys": [
           "d"
         ],
-        "action": "Cycle the result view: log → raw → unified → split",
-        "note": "log = pull output; raw = git-colored diff; unified/split = syntax-highlighted. Click any chip in the pane footer to jump directly; the choice persists",
+        "action": "Cycle the result view: log → commits → files → raw → unified → split",
+        "note": "log = pull output; commits/files = what the pull delivered (each with a count badge — commits as expandable sha/subject/body/author blocks with GitHub links, files as a status-colored list); raw = git-colored diff; unified/split = syntax-highlighted. Click any chip in the pane footer to jump directly; the choice persists",
         "keywords": [
           "diff",
           "unified",

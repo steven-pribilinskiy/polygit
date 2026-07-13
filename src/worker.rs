@@ -17,7 +17,8 @@ use crate::git::{
     commit_file_list, compute_merged_targets,
     dedupe_switch_targets, default_base_branch, delete_branch, detect_base_branch, dirty_count,
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
-    fetch_remote, file_diff_vs, get_branch, get_diff, get_remote_url, get_repo_details, is_dirty,
+    fetch_remote, file_diff_vs, get_branch, get_diff, get_pulled_details, get_remote_url,
+    get_repo_details, is_dirty,
     list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
     pr_diff, pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
     stash_file_list, stash_files, switch_branch, uncommitted_file_list, PullOutcome,
@@ -41,6 +42,10 @@ pub async fn pull_repo(
         state.elapsed = None;
         state.status_note = None;
         state.pull_result = None;
+        // A new pull invalidates the previous pull's Commits/Files tabs — reload on next open.
+        state.pulled_commits = None;
+        state.pulled_files = None;
+        state.pulled_details_loading = false;
         state.stale = false; // pulling this session → no longer a cached/stale entry
         state.cached_at = None;
         (state.path.clone(), state.name.clone())
@@ -692,6 +697,34 @@ pub async fn run_repo_diff(repo: SharedRepoState) {
     let dirty = is_dirty(&path).await.unwrap_or(false);
     let diff = get_diff(&path, dirty).await;
     repo.lock().unwrap().diff = Some(diff);
+}
+
+/// Load the commits + files the last pull delivered (the Result pane's Commits/Files tabs), from
+/// the `prev..new` sha range captured in the repo's `PullResult`. No-op if there's no pull result.
+pub async fn run_pulled_details(repo: SharedRepoState) {
+    let (path, range) = {
+        let state = repo.lock().unwrap();
+        let range = state
+            .pull_result
+            .as_ref()
+            .map(|result| (result.prev_head.clone(), result.new_head.clone()));
+        (state.path.clone(), range)
+    };
+    let (prev, new) = match range {
+        Some(pair) => pair,
+        None => {
+            let mut state = repo.lock().unwrap();
+            state.pulled_commits = Some(Vec::new());
+            state.pulled_files = Some(Vec::new());
+            state.pulled_details_loading = false;
+            return;
+        }
+    };
+    let (commits, files) = get_pulled_details(&path, &prev, &new).await;
+    let mut state = repo.lock().unwrap();
+    state.pulled_commits = Some(commits);
+    state.pulled_files = Some(files);
+    state.pulled_details_loading = false;
 }
 
 /// Populate the dedicated repo page: show branches/worktrees immediately, then `git fetch`

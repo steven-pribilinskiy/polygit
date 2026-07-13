@@ -94,6 +94,8 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         selected_repo.is_some() && !overlay && selected_group.is_none() && selected_folder.is_none();
     let pane_diff_active = single_repo_view && app.right_view == RightView::Diff;
     let pane_diff_style = app.pane_diff_view;
+    let pane_tab_active =
+        single_repo_view && matches!(app.right_view, RightView::Commits | RightView::Files);
 
     let (header_text, content_lines, scroll_offset) = if show_errors {
         (" Errors ".to_string(), build_error_summary(app), 0usize)
@@ -127,6 +129,11 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
                 lines,
                 state.preview_scroll,
             )
+        } else if matches!(app.right_view, RightView::Commits | RightView::Files) {
+            // The Commits/Files tabs build their own styled `Line`s (with clicks) after the block is
+            // drawn — see `pane_tab_active`; `content_lines` is unused for them.
+            let tab = if app.right_view == RightView::Commits { "commits" } else { "files" };
+            (format!(" {} · {tab} ", state.name), Vec::new(), state.preview_scroll)
         } else {
             // The git subprocess PID is only meaningful while the pull is actually running; show it
             // then and omit it otherwise (a settled repo has no process, so `pid —` was just noise).
@@ -241,9 +248,19 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         let active = Style::default().add_modifier(Modifier::BOLD);
         let rv = app.right_view;
         let st = app.pane_diff_view;
+        let badge_style = Style::default().fg(Color::Cyan);
         let chip = |label: &str, on: bool, command: Command| -> (String, Style, Option<Command>) {
             (label.to_string(), if on { active } else { hint }, Some(command))
         };
+        // The commits/files chips carry a badge = the pull's commit/file counts (matching the info
+        // panel's "N commits · N files"). Rendered as a trailing accent number, part of the chip's
+        // click target; hidden at 0 so an up-to-date repo's tabs stay uncluttered.
+        let (commit_badge, file_badge) = selected_repo
+            .map(|idx| {
+                let state = app.repos[idx].lock().unwrap();
+                state.pull_result.as_ref().map(|result| (result.commits, result.files)).unwrap_or((0, 0))
+            })
+            .unwrap_or((0, 0));
         let mut footer: Vec<(String, Style, Option<Command>)> = Vec::new();
         // Merged/gone-upstream repos lead the footer with an actionable `⎇ switch … & pull` chip
         // (same as `S`) — clicking runs the switch+pull for the selected repo's top candidate.
@@ -267,6 +284,20 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
             ("d".to_string(), key, Some(Command::DiffView)),
             (" ".to_string(), hint, None),
             chip("log", rv == RightView::Log, Command::SetResultLog),
+            (" · ".to_string(), hint, None),
+            chip("commits", rv == RightView::Commits, Command::SetResultCommits),
+        ]);
+        if commit_badge > 0 {
+            footer.push((format!(" {commit_badge}"), badge_style, Some(Command::SetResultCommits)));
+        }
+        footer.extend([
+            (" · ".to_string(), hint, None),
+            chip("files", rv == RightView::Files, Command::SetResultFiles),
+        ]);
+        if file_badge > 0 {
+            footer.push((format!(" {file_badge}"), badge_style, Some(Command::SetResultFiles)));
+        }
+        footer.extend([
             (" · ".to_string(), hint, None),
             chip("raw", rv == RightView::Diff && st == DiffView::Raw, Command::SetResultDiff(DiffView::Raw)),
             (" · ".to_string(), hint, None),
@@ -305,6 +336,40 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
 
     let inner_height = inner.height as usize;
 
+    // The Commits/Files tabs build styled `Line`s + relative clicks; render the visible window
+    // WITHOUT wrap (pre-wrapped) so click row N maps to inner row (N - scroll), then translate the
+    // clicks to absolute rects on `app.info_click` (same machinery as the info panel's links).
+    if pane_tab_active {
+        let repo_idx = selected_repo.unwrap_or_default();
+        let (all_lines, clicks) = if app.right_view == RightView::Commits {
+            build_pane_commits(app, repo_idx, inner.width)
+        } else {
+            build_pane_files(app, repo_idx, inner.width)
+        };
+        let total_lines = all_lines.len();
+        let max_scroll = total_lines.saturating_sub(inner_height);
+        let effective_scroll = scroll_offset.min(max_scroll);
+        let visible: Vec<Line> =
+            all_lines.into_iter().skip(effective_scroll).take(inner_height).collect();
+        frame.render_widget(Paragraph::new(visible), inner);
+        for (line_idx, start, end, action) in clicks {
+            if line_idx >= effective_scroll && line_idx < effective_scroll + inner_height {
+                app.info_click.push((
+                    inner.y + (line_idx - effective_scroll) as u16,
+                    inner.x + start,
+                    inner.x + end,
+                    action,
+                ));
+            }
+        }
+        let track = scrollbar_track(area, inner);
+        app.preview_total = total_lines;
+        app.preview_viewport = inner_height;
+        app.preview_scroll_area = track;
+        render_scrollbar(frame, app, track, effective_scroll, total_lines, inner_height, ScrollKind::Preview);
+        return;
+    }
+
     // The diff view renders the raw diff text through the modal's shared styler (raw keeps git's
     // colors; unified/split are syntax-highlighted). Everything else is plain ANSI lines.
     let text_lines: Vec<Line> = if pane_diff_active {
@@ -329,6 +394,223 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
     app.preview_viewport = inner_height;
     app.preview_scroll_area = track;
     render_scrollbar(frame, app, track, effective_scroll, total_lines, inner_height, ScrollKind::Preview);
+}
+
+/// Cap on file rows rendered in the Result pane's Files tab (a 10k-file pull would otherwise build
+/// 10k `Line`s every frame). Beyond it a "… N more" line closes the list.
+const MAX_PANE_FILE_ROWS: usize = 5000;
+
+/// Percent-encode the bytes of `value` that aren't URL-query-safe (keeps `A-Za-z0-9 - _ . ~`), so an
+/// author email can ride in a `?author=` GitHub link. Pure.
+fn urlencode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// A GitHub URL for a commit author: their profile when the email is a GitHub noreply
+/// (`login@users.noreply.github.com` or `12345+login@users.noreply.github.com`), otherwise the
+/// repo's commit list filtered by that author email. `None` without a web remote / email.
+fn author_github_url(web: Option<&str>, email: &str) -> Option<String> {
+    let email = email.trim();
+    if email.is_empty() {
+        return None;
+    }
+    if let Some(local) = email.strip_suffix("@users.noreply.github.com") {
+        let login = local.rsplit('+').next().unwrap_or(local);
+        if !login.is_empty() {
+            return Some(format!("https://github.com/{login}"));
+        }
+    }
+    web.map(|base| format!("{base}/commits?author={}", urlencode(email)))
+}
+
+/// Color + letter for a `git diff --name-status` status char (A/M/D/R/C/T/U/?).
+fn file_status_style(status: &str) -> (String, Color) {
+    let ch = status.chars().next().unwrap_or('?');
+    let color = match ch {
+        'A' | '?' => Color::Green,
+        'M' => Color::Yellow,
+        'D' | 'U' => Color::Red,
+        'R' | 'C' => Color::Cyan,
+        'T' => Color::Magenta,
+        _ => Color::Gray,
+    };
+    (ch.to_string(), color)
+}
+
+/// Build the Result pane's **Commits** tab: one expandable block per commit the last pull delivered
+/// (sha → GitHub commit, subject, one-line body preview that expands on click, `rel_date · author`
+/// with the author → GitHub). Mirrors the info panel's "Last commit" field. Returns pre-wrapped
+/// lines + relative clicks (the caller translates them to absolute rects on `app.info_click`).
+fn build_pane_commits(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
+    let state = app.repos[repo_idx].lock().unwrap();
+    let width = width.max(1) as usize;
+    let dim = Style::default().fg(Color::DarkGray);
+    let value = Style::default();
+    let link = Style::default().fg(Color::Cyan);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut clicks: Vec<InfoClick> = Vec::new();
+
+    let commits = match &state.pulled_commits {
+        None => {
+            lines.push(Line::from(Span::styled("(loading…)", dim)));
+            return (lines, clicks);
+        }
+        Some(commits) => commits,
+    };
+    if commits.is_empty() {
+        let msg = if state.pull_result.as_ref().is_some_and(|result| result.commits > 0) {
+            "(commit list unavailable)"
+        } else {
+            "Nothing pulled this session — no commits to show."
+        };
+        lines.push(Line::from(Span::styled(msg, dim)));
+        return (lines, clicks);
+    }
+
+    let web = state.remote_url.as_deref().and_then(web_remote);
+    let count = commits.len();
+    lines.push(Line::from(Span::styled(
+        format!("{count} commit{}", if count == 1 { "" } else { "s" }),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    for commit in commits {
+        let key = format!("pcommit:{}", commit.sha);
+        let expanded = app.info_expanded.contains(&key);
+        let commit_url = web.as_ref().map(|base| format!("{base}/commit/{}", commit.sha));
+        let author_url = author_github_url(web.as_deref(), &commit.author_email);
+
+        // Line 1: `<sha>  <subject>`. The subject wraps when expanded, else truncates; it's
+        // underlined + click-to-toggle whenever there's more to reveal (a body or an overflow).
+        let sha_w = UnicodeWidthStr::width(commit.sha.as_str());
+        let subj_col = sha_w + 2;
+        let subj_avail = width.saturating_sub(subj_col);
+        let subj_overflows = UnicodeWidthStr::width(commit.subject.as_str()) > subj_avail;
+        let expandable = !commit.body.is_empty() || subj_overflows;
+        let subj_style = if expandable { value.add_modifier(Modifier::UNDERLINED) } else { value };
+        let subj_chunks = if expanded && subj_overflows {
+            wrap_chars(&commit.subject, subj_avail)
+        } else {
+            vec![truncate_str(&commit.subject, subj_avail)]
+        };
+        for (index, chunk) in subj_chunks.iter().enumerate() {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            if index == 0 {
+                if let Some(url) = &commit_url {
+                    clicks.push((lines.len(), 0, sha_w as u16, InfoAction::OpenUrl(url.clone())));
+                }
+                spans.push(Span::styled(commit.sha.clone(), if commit_url.is_some() { link } else { dim }));
+                spans.push(Span::raw("  "));
+            } else {
+                spans.push(Span::raw(" ".repeat(subj_col)));
+            }
+            if expandable {
+                let chunk_w = UnicodeWidthStr::width(chunk.as_str()) as u16;
+                clicks.push((lines.len(), subj_col as u16, subj_col as u16 + chunk_w, InfoAction::ToggleExpand(key.clone())));
+            }
+            spans.push(Span::styled(chunk.clone(), subj_style));
+            lines.push(Line::from(spans));
+        }
+
+        // Meta line: `<indent><rel_date> · <author>` — author links to GitHub.
+        let indent = subj_col;
+        let mut meta: Vec<Span<'static>> = vec![Span::raw(" ".repeat(indent))];
+        meta.push(Span::styled(commit.rel_date.clone(), dim));
+        meta.push(Span::styled(" · ", dim));
+        let author_col = indent + UnicodeWidthStr::width(commit.rel_date.as_str()) + 3;
+        let author_w = UnicodeWidthStr::width(commit.author.as_str()) as u16;
+        if let Some(url) = &author_url {
+            clicks.push((lines.len(), author_col as u16, author_col as u16 + author_w, InfoAction::OpenUrl(url.clone())));
+            meta.push(Span::styled(commit.author.clone(), link));
+        } else {
+            meta.push(Span::styled(commit.author.clone(), dim));
+        }
+        lines.push(Line::from(meta));
+
+        // Body: a one-line preview when collapsed, the full wrapped body when expanded. Either way
+        // it's click-to-toggle. Blank lines in the body are preserved when expanded.
+        if !commit.body.is_empty() {
+            let body_avail = width.saturating_sub(indent);
+            if expanded {
+                for raw in commit.body.lines() {
+                    if raw.trim().is_empty() {
+                        lines.push(Line::from(""));
+                        continue;
+                    }
+                    for chunk in wrap_chars(raw, body_avail) {
+                        let chunk_w = UnicodeWidthStr::width(chunk.as_str()) as u16;
+                        clicks.push((lines.len(), indent as u16, indent as u16 + chunk_w, InfoAction::ToggleExpand(key.clone())));
+                        lines.push(Line::from(vec![Span::raw(" ".repeat(indent)), Span::styled(chunk, dim)]));
+                    }
+                }
+            } else {
+                let preview = truncate_str(&commit.body.replace('\n', " "), body_avail);
+                let preview_w = UnicodeWidthStr::width(preview.as_str()) as u16;
+                clicks.push((lines.len(), indent as u16, indent as u16 + preview_w, InfoAction::ToggleExpand(key.clone())));
+                lines.push(Line::from(vec![
+                    Span::raw(" ".repeat(indent)),
+                    Span::styled(preview, dim.add_modifier(Modifier::UNDERLINED)),
+                ]));
+            }
+        }
+        lines.push(Line::from(""));
+    }
+    (lines, clicks)
+}
+
+/// Build the Result pane's **Files** tab: the files the last pull changed, `git status`-style
+/// (colored status letter + path). No clicks — a plain scrollable list.
+fn build_pane_files(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
+    let state = app.repos[repo_idx].lock().unwrap();
+    let width = width.max(1) as usize;
+    let dim = Style::default().fg(Color::DarkGray);
+    let value = Style::default();
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let files = match &state.pulled_files {
+        None => {
+            lines.push(Line::from(Span::styled("(loading…)", dim)));
+            return (lines, Vec::new());
+        }
+        Some(files) => files,
+    };
+    if files.is_empty() {
+        let msg = if state.pull_result.as_ref().is_some_and(|result| result.has_delta()) {
+            "(no file changes)"
+        } else {
+            "Nothing pulled this session — no files to show."
+        };
+        lines.push(Line::from(Span::styled(msg, dim)));
+        return (lines, Vec::new());
+    }
+
+    let count = files.len();
+    lines.push(Line::from(Span::styled(
+        format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
+        dim,
+    )));
+    lines.push(Line::from(""));
+    for file in files.iter().take(MAX_PANE_FILE_ROWS) {
+        let (letter, color) = file_status_style(&file.status);
+        let path = truncate_str(&file.path, width.saturating_sub(3));
+        lines.push(Line::from(vec![
+            Span::styled(format!("{letter:<2}"), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            Span::styled(path, value),
+        ]));
+    }
+    if count > MAX_PANE_FILE_ROWS {
+        lines.push(Line::from(Span::styled(format!("… {} more", count - MAX_PANE_FILE_ROWS), dim)));
+    }
+    (lines, Vec::new())
 }
 
 /// Render the per-repo info view (status, branch, ahead/behind, remote, last commit,

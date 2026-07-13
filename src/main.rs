@@ -55,7 +55,7 @@ use worker::{
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
     run_all_prs, run_open_pr_web, run_pr_diff, run_pr_view, run_pull_request, run_remove_worktree,
-    run_repo_details, run_repo_diff, run_repo_page, run_switch_and_pull,
+    run_pulled_details, run_repo_details, run_repo_diff, run_repo_page, run_switch_and_pull,
 };
 
 /// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
@@ -767,6 +767,8 @@ fn dispatch_command(
         Cmd::ToggleGroupCollapsed(group_idx) => app.toggle_group_collapsed(group_idx, None),
         Cmd::DiffView => app.cycle_result_view(),
         Cmd::SetResultLog => app.set_result_view(app::RightView::Log, app.pane_diff_view),
+        Cmd::SetResultCommits => app.set_result_view(app::RightView::Commits, app.pane_diff_view),
+        Cmd::SetResultFiles => app.set_result_view(app::RightView::Files, app.pane_diff_view),
         Cmd::SetResultDiff(style) => app.set_result_view(app::RightView::Diff, style),
         Cmd::Claude => {
             if let Some(idx) = app.selected_repo_index() {
@@ -5435,6 +5437,18 @@ async fn run_event_loop(
                         state.diff = Some(vec!["(loading…)".to_string()]);
                         drop(state);
                         tokio::spawn(run_repo_diff(repo));
+                    }
+                }
+            }
+            // Lazily load the Commits/Files tabs' data from the last pull's sha range, once per pull.
+            if matches!(app.right_view, RightView::Commits | RightView::Files) {
+                if let Some(idx) = app.selected_repo_index() {
+                    let repo = Arc::clone(&app.repos[idx]);
+                    let mut state = repo.lock().unwrap();
+                    if state.pulled_commits.is_none() && !state.pulled_details_loading {
+                        state.pulled_details_loading = true;
+                        drop(state);
+                        tokio::spawn(run_pulled_details(repo));
                     }
                 }
             }

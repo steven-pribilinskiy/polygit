@@ -68,6 +68,10 @@ impl RepoStatus {
 pub enum RightView {
     #[default]
     Log,
+    /// The commits the last pull delivered (`prev..new`), each as an expandable block.
+    Commits,
+    /// The files the last pull changed, `git status`-style with colored status letters.
+    Files,
     Diff,
 }
 
@@ -326,6 +330,25 @@ impl PullResult {
     pub fn has_delta(&self) -> bool {
         self.commits > 0 || self.files > 0 || self.new_tags > 0 || self.new_branches > 0
     }
+}
+
+/// One commit a pull delivered (`prev..new`), for the Result pane's Commits tab. Richer than
+/// `CommitInfo` (repo-page rows): it carries the full body (expandable) and the author email so
+/// the sha + author can each link to GitHub.
+#[derive(Debug, Clone)]
+pub struct PulledCommit {
+    /// Abbreviated sha (`%h`).
+    pub sha: String,
+    /// First line of the message (`%s`).
+    pub subject: String,
+    /// The body below the subject (`%b`), possibly multi-line and possibly empty.
+    pub body: String,
+    /// Author name (`%an`).
+    pub author: String,
+    /// Author email (`%ae`) — used to build the GitHub author link.
+    pub author_email: String,
+    /// Relative commit date (`%cr`, e.g. "6 days ago").
+    pub rel_date: String,
 }
 
 /// Per-branch change counts vs the merge-base with the repo's default branch. `None` on a
@@ -2248,10 +2271,14 @@ pub enum Command {
     FoldExpandAll,
     /// Expand the selected header's subtree recursively (`*` / `z O`).
     FoldExpandSubtree,
-    /// Cycle the Result pane's view: log → raw → unified → split → log (same as `d`).
+    /// Cycle the Result pane's view: log → commits → files → raw → unified → split → log (same as `d`).
     DiffView,
     /// Set the Result pane to the command-log view (the `log` chip).
     SetResultLog,
+    /// Set the Result pane to the pulled-commits view (the `commits` chip).
+    SetResultCommits,
+    /// Set the Result pane to the pulled-files view (the `files` chip).
+    SetResultFiles,
     /// Set the Result pane to a diff view with the given render style (the raw/unified/split chips).
     SetResultDiff(DiffView),
     /// Start claude code in the selected repo (same as `c`).
@@ -2325,6 +2352,8 @@ impl Command {
             Command::FoldExpandSubtree => "Expand the selected subtree",
             Command::DiffView => "Cycle the result view: log → raw → unified → split",
             Command::SetResultLog => "Show the command log (pull output)",
+            Command::SetResultCommits => "Show the commits the pull delivered",
+            Command::SetResultFiles => "Show the files the pull changed",
             Command::SetResultDiff(DiffView::Raw) => "Show the pull diff (raw, git-colored)",
             Command::SetResultDiff(DiffView::Unified) => "Show the pull diff (unified, syntax-highlighted)",
             Command::SetResultDiff(DiffView::Split) => "Show the pull diff (split, syntax-highlighted)",
@@ -2509,6 +2538,13 @@ pub struct RepoState {
     pub pr_checked_at: Option<i64>,
     /// Transient diff-view buffer (filled lazily when the Diff view is opened).
     pub diff: Option<Vec<String>>,
+    /// The commits the last pull delivered (Result pane's Commits tab); filled lazily on first
+    /// open, reset to `None` at the next pull. `Some(empty)` = a pull with no commit delta.
+    pub pulled_commits: Option<Vec<PulledCommit>>,
+    /// The files the last pull changed (Result pane's Files tab); same lifecycle as `pulled_commits`.
+    pub pulled_files: Option<Vec<DiffFile>>,
+    /// Guard so the Commits/Files loader is spawned at most once per pull.
+    pub pulled_details_loading: bool,
     /// Dedicated repo-page data (branches + worktrees), filled lazily when the page opens.
     pub page: Option<RepoPageData>,
     /// Guard so the repo-page fetch is spawned at most once per open.
@@ -2648,6 +2684,9 @@ impl RepoState {
             pr_loading: false,
             pr_checked_at: None,
             diff: None,
+            pulled_commits: None,
+            pulled_files: None,
+            pulled_details_loading: false,
             page: None,
             page_loading: false,
             pull_loading: false,

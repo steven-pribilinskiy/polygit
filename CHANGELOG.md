@@ -3,6 +3,22 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.10.0 — 2026-07-13
+Result pane: Commits & Files tabs; a huge/binary pull diff can no longer hang or garble the pane
+- The `[3]` result pane's footer switcher grows two tabs — **`commits`** and **`files`**, each with
+  a **count badge** matching the info panel's "N commits · N files". `d` now cycles
+  `log → commits → files → raw → unified → split`; each chip still jumps directly.
+- **Commits** lists what the pull delivered, each commit an expandable block in the same shape as
+  the info panel's "Last commit": a clickable **sha → GitHub commit**, the subject, a one-line
+  **body preview that expands/collapses on click** (full multi-line body when open), and
+  `rel-date · author` with the **author linking to GitHub** (their profile via a `@users.noreply`
+  email, else the repo's commits filtered by author).
+- **Files** lists the changed files with `git status`-style **colored status letters** (A/M/D/R/…).
+- **Diff hang/garble fix:** the raw/unified/split pull diff is now **byte- and line-capped** and
+  **control-byte-sanitized** — a pull that inlines binary blobs (git diffing them as text) or
+  touches thousands of files no longer corrupts the terminal or pegs a core re-wrapping the pane;
+  it's truncated with a pointer to the Files tab.
+
 ## v3.9.0 — 2026-07-13
 Explorer: pin ⇄ float (draggable, resizable floating window)
 - The explorer can now **float** as a draggable, resizable window instead of the docked centered

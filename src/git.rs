@@ -6,8 +6,8 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::app::{
-    BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PrState, PullResult, RepoDetails,
-    StashInfo, WorktreeInfo,
+    BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PrState, PulledCommit, PullResult,
+    RepoDetails, StashInfo, WorktreeInfo,
 };
 
 /// Result of parsing git pull output to determine status.
@@ -294,6 +294,77 @@ pub async fn collect_pull_result(dir: &Path, output: &str) -> PullResult {
         new_branches,
         new_tag_names,
     }
+}
+
+/// Defensive cap on the commit list a pull-details load returns — a normal pull brings a handful,
+/// but a rebase-onto or a long-idle branch can bring thousands. The Files tab is bounded by the pull.
+const MAX_PULLED_COMMITS: usize = 2000;
+
+/// The commits and files a pull delivered (`prev..new`), for the Result pane's Commits/Files tabs.
+/// `prev`/`new` are the (short) shas captured in `PullResult`, so they stay valid after the reflog
+/// moves on. An empty `prev` (shallow / first pull) yields both empty. Best-effort — a failed git
+/// call yields an empty vec for that half.
+pub async fn get_pulled_details(
+    dir: &Path,
+    prev: &str,
+    new: &str,
+) -> (Vec<PulledCommit>, Vec<DiffFile>) {
+    if prev.is_empty() || new.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let dir_str = dir.to_str().unwrap_or(".");
+    let range = format!("{prev}..{new}");
+
+    // Commits, newest first. Fields are unit-separated (`%x1f`), records record-separated (`%x1e`),
+    // so a multi-line `%b` body survives intact (splitting on newlines would shred it).
+    let commits = match Command::new("git")
+        .args([
+            "-C",
+            dir_str,
+            "log",
+            &format!("-{MAX_PULLED_COMMITS}"),
+            "--format=%h%x1f%s%x1f%b%x1f%an%x1f%ae%x1f%cr%x1e",
+            &range,
+        ])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.split('\u{1e}')
+                .filter_map(|record| {
+                    let record = record.trim_start_matches('\n');
+                    if record.trim().is_empty() {
+                        return None;
+                    }
+                    let mut fields = record.split('\u{1f}');
+                    Some(PulledCommit {
+                        sha: fields.next()?.trim().to_string(),
+                        subject: fields.next().unwrap_or("").to_string(),
+                        body: fields.next().unwrap_or("").trim_end().to_string(),
+                        author: fields.next().unwrap_or("").to_string(),
+                        author_email: fields.next().unwrap_or("").to_string(),
+                        rel_date: fields.next().unwrap_or("").trim_end_matches('\n').to_string(),
+                    })
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+
+    // Files changed across the range — `git diff --name-status prev new` (rename-aware).
+    let files = match Command::new("git")
+        .args(["-C", dir_str, "diff", "--no-ext-diff", "--name-status", prev, new])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            parse_name_status(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => Vec::new(),
+    };
+
+    (commits, files)
 }
 
 /// The names of the new tags a fetch brought in, parsed from the `[new tag]` lines
@@ -698,6 +769,53 @@ pub async fn get_repo_details(dir: &Path) -> RepoDetails {
 
 /// Fetch a colored diff for the info panel: working-tree changes when `dirty`,
 /// otherwise the most recent pull's diff (`HEAD@{1}..HEAD`). Returns its lines.
+/// Byte cap on the raw diff we pull into memory. A pull that touched thousands of files (or
+/// binary blobs git chose to inline) can emit tens of MB; the pane only ever previews a diff, so
+/// slicing here bounds memory before the lossy UTF-8 conversion. The Files tab lists every file.
+const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024;
+/// Cap on rendered diff lines. ratatui's `Paragraph` re-wraps EVERY line each frame (60×/s), so a
+/// 50k-line binary diff pegs a core and freezes the UI — this is the fix for the pane "hang".
+const MAX_DIFF_LINES: usize = 4000;
+/// Cap a single line's length. One minified/binary line of hundreds of KB stalls wrapping on its own.
+const MAX_DIFF_LINE_COLS: usize = 2000;
+
+/// Make one raw diff line safe to render: copy ANSI SGR escapes (`\x1b[…m`, so git's `--color`
+/// still parses) verbatim, replace every other control byte (C0/C1 + DEL) with `·` so binary
+/// content can't corrupt the terminal, and truncate to `MAX_DIFF_LINE_COLS` visible chars. Pure.
+fn sanitize_diff_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len().min(MAX_DIFF_LINE_COLS + 16));
+    let mut chars = line.chars().peekable();
+    let mut cols = 0usize;
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            // An escape sequence (ESC then bytes up to a final ASCII letter — SGR ends in `m`).
+            // Copied whole and NOT counted toward the visible-column budget.
+            out.push(ch);
+            while let Some(&next) = chars.peek() {
+                out.push(next);
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        if cols >= MAX_DIFF_LINE_COLS {
+            out.push('…');
+            break;
+        }
+        if ch == '\t' {
+            out.push(ch);
+        } else if ch.is_control() {
+            out.push('·');
+        } else {
+            out.push(ch);
+        }
+        cols += 1;
+    }
+    out
+}
+
 pub async fn get_diff(dir: &Path, dirty: bool) -> Vec<String> {
     let dir_str = dir.to_str().unwrap_or(".");
     // `--no-ext-diff`: render git's own unified diff, not the user's `diff.external` tool (difftastic
@@ -711,15 +829,35 @@ pub async fn get_diff(dir: &Path, dirty: bool) -> Vec<String> {
         Ok(output) => output,
         Err(_) => return vec!["(diff unavailable)".to_string()],
     };
-    let lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| line.to_string())
-        .collect();
-    if lines.is_empty() {
-        vec!["(no changes)".to_string()]
-    } else {
-        lines
+
+    // Bound memory: slice to the byte cap before the lossy conversion (a mid-char/mid-escape cut
+    // just yields a stray U+FFFD on the last line, which the truncation notice covers).
+    let byte_capped = output.stdout.len() > MAX_DIFF_BYTES;
+    let slice = &output.stdout[..output.stdout.len().min(MAX_DIFF_BYTES)];
+    let raw = String::from_utf8_lossy(slice);
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut overflow = 0usize;
+    for line in raw.lines() {
+        if lines.len() >= MAX_DIFF_LINES {
+            overflow += 1;
+            continue;
+        }
+        lines.push(sanitize_diff_line(line));
     }
+    if lines.is_empty() {
+        return vec!["(no changes)".to_string()];
+    }
+    if overflow > 0 || byte_capped {
+        lines.push(String::new());
+        let tail = if byte_capped {
+            "… diff truncated (very large pull) — switch to the Files tab to see every changed file.".to_string()
+        } else {
+            format!("… diff truncated — {overflow} more line(s). Switch to the Files tab to see every changed file.")
+        };
+        lines.push(tail);
+    }
+    lines
 }
 
 /// Run a git command and return its stdout as diff lines, with friendly placeholders for
