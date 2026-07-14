@@ -138,11 +138,11 @@ pub struct AppState {
     /// independently of the selection (web-app style); keyboard / Alt+wheel nav scrolls it only
     /// enough to keep the selection visible.
     pub list_scroll: usize,
-    /// What the right pane shows for the selected repo (log, info, or diff).
+    /// The Result pane's active category tab (diff / tags / branches / commits / files).
     pub right_view: RightView,
-    /// The render style for the Result pane's diff view (raw / unified / split) — the flat
-    /// `log · raw · unified · split` chip row. Separate from `diff_view` (the diff modal's style).
-    pub pane_diff_view: DiffView,
+    /// The Diff category's sub-display (log / raw / unified / split), cycled by `d`. Separate from
+    /// `diff_view` (the diff modal's style) — this one has a `Log` state the modal never needs.
+    pub pane_diff_view: ResultDiffView,
     /// How the info panel groups its fields (titled sections / blank-line groups / flat). A
     /// maximized info pane always renders titled sections regardless of this. Persisted.
     pub info_layout: InfoLayout,
@@ -714,6 +714,10 @@ pub struct AppState {
     /// Persisted PR cache (repo+branch → open PR + timestamp, 5-min TTL). Consulted before a `gh`
     /// lookup and upserted from resolved repos on flush.
     pub pr_cache: crate::pr_cache::PrCache,
+    /// Persisted email→GitHub-username cache (Commits/Tags author links). Consulted before a `gh
+    /// api` lookup, upserted (incl. `None` = confirmed no account) and saved as each email
+    /// resolves.
+    pub author_cache: crate::author_cache::AuthorCache,
     /// Set once the all-repos PR background pass has been spawned (when the PR column is enabled).
     /// Reset when the column is toggled off so re-enabling re-arms it.
     pub pr_pass_spawned: bool,
@@ -1162,6 +1166,7 @@ impl AppState {
             auto_pull_suppressed: false,
             status_cache: crate::cache::load(),
             pr_cache: crate::pr_cache::load(),
+            author_cache: crate::author_cache::load(),
             pr_pass_spawned: false,
             pulled_seen: false,
         }

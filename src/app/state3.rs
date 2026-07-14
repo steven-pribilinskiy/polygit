@@ -558,6 +558,7 @@ impl AppState {
             // Need a real repo row selected (not Result/Errors or a header).
             Command::Info
             | Command::DiffView
+            | Command::CycleResultCategory
             | Command::OpenPage
             | Command::Claude
             | Command::Lazygit
@@ -838,9 +839,12 @@ impl AppState {
     }
 
     /// Whether a point lands on any pane's top-border button (the pane maximize/restore `m▢`, the
-    /// result/info copy `📋`, or the repo page's `t cols`/`s sort`/maximize/`esc`). Those borders
-    /// double as splitter resize handles, so these columns must be excluded from the splitter grab
-    /// or the buttons could never be clicked (the drag would steal the press).
+    /// result/info copy `📋`, or the repo page's `t cols`/`s sort`/maximize/`esc`), a bottom-border
+    /// footer chip (e.g. the Result pane's `⎇ switch … & pull` suggestion), or any other registered
+    /// `clickable` region. Those borders double as splitter/dock resize handles, so these columns
+    /// must be excluded from the drag grab or the buttons could never be clicked (the drag would
+    /// steal the press) — this exact bug recurred for the Result pane's bottom-border chips when
+    /// the repo page is docked directly below it.
     pub fn title_button_hit(&self, col: u16, row: u16) -> bool {
         let hit = |region: Option<(u16, u16, u16)>| {
             region.is_some_and(|(button_row, start, end)| row == button_row && col >= start && col < end)
@@ -851,6 +855,7 @@ impl AppState {
             || hit(self.page_sort_click)
             || self.max_click.iter().any(|&(r, s, e, _)| row == r && col >= s && col < e)
             || self.info_click.iter().any(|&(r, s, e, _)| row == r && col >= s && col < e)
+            || self.clickable.iter().any(|hit| hit.row == row && col >= hit.col_start && col < hit.col_end)
     }
 
     /// Once the repo page's rows exist, move the selection to the current (HEAD) branch — done

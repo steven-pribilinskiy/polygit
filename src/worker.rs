@@ -19,8 +19,9 @@ use crate::git::{
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_pulled_details, get_remote_url,
     get_repo_details, is_dirty,
-    list_commits, list_local_branches, list_stashes, list_worktrees, merge_base_with, pull_all_branches,
-    pr_diff, pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, stash_diff_stats, stash_file_diff,
+    list_commits, list_local_branches, list_stashes, list_tags, list_worktrees, merge_base_with, pull_all_branches,
+    pr_diff, pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, resolve_commit_author_login,
+    stash_diff_stats, stash_file_diff,
     stash_file_list, stash_files, switch_branch, uncommitted_file_list, PullOutcome,
 };
 
@@ -48,6 +49,12 @@ pub async fn pull_repo(
         state.pulled_details_loading = false;
         state.stale = false; // pulling this session → no longer a cached/stale entry
         state.cached_at = None;
+        // The upcoming dirty-check + pull establish fresh ground truth that supersedes whatever
+        // `details` (dirty/ahead/behind counts) came from the cache or a prior pull — invalidate
+        // unconditionally so the lazy loader refetches, regardless of this pull's outcome. Without
+        // this, an `AlreadyUpToDate` pull left a cached `dirty_count` on screen forever (it never
+        // goes stale, and `flush_cache` re-stamps it with a fresh `updated_at` every settle).
+        state.details_stale = true;
         (state.path.clone(), state.name.clone())
     };
 
@@ -113,11 +120,9 @@ pub async fn pull_repo(
             // Distinguish "never had an upstream" from "tracked ref was deleted (PR merged)".
             let ref_gone = last_output.contains("no such ref was fetched");
             state.status_note = ref_gone.then_some("ref gone");
-            // A "ref gone" branch is a merged/deleted one — refresh details (so the switch-to-base
-            // suggestion is computed from the pull signal, even when the local tracking ref isn't
-            // pruned) and recheck the PR (a merged PR names the exact base).
+            // A "ref gone" branch is a merged/deleted one — recheck the PR (a merged PR names the
+            // exact base). Details are already marked stale up front for every outcome.
             if ref_gone {
-                state.details_stale = true;
                 state.pr_checked_at = None;
             }
             state
@@ -140,7 +145,6 @@ pub async fn pull_repo(
             state.elapsed = Some(started.elapsed());
             state.status = RepoStatus::Updated;
             state.pull_result = Some(result);
-            state.details_stale = true;
             // A pull may have opened/closed/merged a PR or moved HEAD to a new branch — recheck.
             state.pr_checked_at = None;
         }
@@ -592,6 +596,24 @@ pub async fn run_all_prs(
     }
 }
 
+/// Resolve a commit author's real GitHub login for the Commits/Tags tab's author link (`email`
+/// isn't a noreply address, so it can't be read off directly — see `InfoAction::OpenAuthorProfile`).
+/// Caches the result (including a confirmed miss) so this repo+email pair is never re-queried, then
+/// opens the resolved profile — or toasts that no linked account was found.
+pub async fn run_author_lookup(app_state: Arc<Mutex<AppState>>, path: std::path::PathBuf, sha: String, email: String) {
+    let login = resolve_commit_author_login(&path, &sha).await;
+    let mut app = app_state.lock().unwrap();
+    app.author_cache.insert(email, login.clone());
+    crate::author_cache::save(&app.author_cache);
+    match login {
+        Some(login) => {
+            drop(app);
+            crate::open_url(&format!("https://github.com/{login}"));
+        }
+        None => app.show_toast("no linked GitHub account for this commit's author email"),
+    }
+}
+
 /// Load the PR viewer modal's data: `gh pr view <number>` for the open modal's repo, assemble its
 /// markdown (header + description + every review/comment), and store it (clearing the loading
 /// state). A failure shows an inline message so the modal never just hangs on "loading".
@@ -725,6 +747,27 @@ pub async fn run_pulled_details(repo: SharedRepoState) {
     state.pulled_commits = Some(commits);
     state.pulled_files = Some(files);
     state.pulled_details_loading = false;
+}
+
+/// Load the Result pane's Tags tab data (every tag, newest first) — a plain local `for-each-ref`,
+/// no network. Fired once per repo the first time the tab is shown.
+pub async fn run_repo_tags(repo: SharedRepoState) {
+    let path = { repo.lock().unwrap().path.clone() };
+    let tags = list_tags(&path).await;
+    let mut state = repo.lock().unwrap();
+    state.tags = Some(tags);
+    state.tags_loading = false;
+}
+
+/// Load the Result pane's Branches tab data (every local branch) — a plain local `for-each-ref`,
+/// no network (unlike the repo page's own branch fetch, which also runs `git fetch`). Fired once
+/// per repo the first time the tab is shown.
+pub async fn run_repo_branches(repo: SharedRepoState) {
+    let path = { repo.lock().unwrap().path.clone() };
+    let branches = list_local_branches(&path).await;
+    let mut state = repo.lock().unwrap();
+    state.result_branches = Some(branches);
+    state.result_branches_loading = false;
 }
 
 /// Populate the dedicated repo page: show branches/worktrees immediately, then `git fetch`

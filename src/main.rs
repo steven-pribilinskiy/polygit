@@ -1,4 +1,5 @@
 mod app;
+mod author_cache;
 mod cache;
 mod changelog;
 mod commands;
@@ -47,7 +48,7 @@ use std::collections::HashMap;
 use app::{
     point_in, region_hit, AppState, Command as Cmd, ConfirmAction, ConfirmDialog,
     DiffFocus, DiffSource, InfoAction, Leader, PageRow, PageRowKind, Pane,
-    RepoStatus, RightView, SharedRepoState,
+    RepoStatus, ResultDiffView, RightView, SharedRepoState,
 };
 use worker::{
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal, run_load_branches,
@@ -55,7 +56,8 @@ use worker::{
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
     run_all_prs, run_open_pr_web, run_pr_diff, run_pr_view, run_pull_request, run_remove_worktree,
-    run_pulled_details, run_repo_details, run_repo_diff, run_repo_page, run_switch_and_pull,
+    run_author_lookup, run_pulled_details, run_repo_branches, run_repo_details, run_repo_diff,
+    run_repo_page, run_repo_tags, run_switch_and_pull,
 };
 
 /// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
@@ -683,6 +685,7 @@ fn kebab_activate(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_command(
     command: Cmd,
     app: &mut AppState,
@@ -691,6 +694,7 @@ fn dispatch_command(
     pending_lazygit: &mut Option<std::path::PathBuf>,
     pending_pr_view: &mut Option<usize>,
     pending_pr_web: &mut Option<usize>,
+    pending_repaint: &mut bool,
 ) -> Option<i32> {
     match command {
         Cmd::Retry => {
@@ -765,11 +769,10 @@ fn dispatch_command(
         Cmd::FoldExpandAll => app.expand_all(),
         Cmd::FoldExpandSubtree => app.expand_subtree(),
         Cmd::ToggleGroupCollapsed(group_idx) => app.toggle_group_collapsed(group_idx, None),
-        Cmd::DiffView => app.cycle_result_view(),
-        Cmd::SetResultLog => app.set_result_view(app::RightView::Log, app.pane_diff_view),
-        Cmd::SetResultCommits => app.set_result_view(app::RightView::Commits, app.pane_diff_view),
-        Cmd::SetResultFiles => app.set_result_view(app::RightView::Files, app.pane_diff_view),
-        Cmd::SetResultDiff(style) => app.set_result_view(app::RightView::Diff, style),
+        Cmd::DiffView => app.cycle_result_diff_view(),
+        Cmd::CycleResultCategory => app.cycle_result_category(),
+        Cmd::SetResultCategory(view) => app.set_result_category(view),
+        Cmd::SetResultDiffView(style) => app.set_result_diff_view(style),
         Cmd::Claude => {
             if let Some(idx) = app.selected_repo_index() {
                 *pending_claude = Some(app.repos[idx].lock().unwrap().path.clone());
@@ -817,6 +820,7 @@ fn dispatch_command(
             }
         }
         Cmd::Settings => app.open_settings(),
+        Cmd::Repaint => *pending_repaint = true,
         Cmd::ShowBuildInfo => app.open_build_info(),
         Cmd::ShowChangelog => app.open_changelog(false),
         Cmd::NavDown => {
@@ -1426,6 +1430,9 @@ async fn run_event_loop(
     // (`pending_pr_view`) or the PR/compare page on GitHub (`pending_pr_web`). Repo index.
     let mut pending_pr_view: Option<usize> = None;
     let mut pending_pr_web: Option<usize> = None;
+    // Set by `Ctrl+L` (or the `^L repaint` footer chip); consumed at the top of the loop where
+    // `terminal` is in scope, to force a full terminal repaint.
+    let mut pending_repaint = false;
 
     // Last left-click (time, selection) for synthesizing double-click → open repo page.
     let mut last_click: Option<(Instant, usize)> = None;
@@ -1450,6 +1457,16 @@ async fn run_event_loop(
                 (app.claude_agent, app.claude_skip_permissions)
             };
             launch_claude(terminal, &path, agent, skip)?;
+        }
+
+        // Force a full terminal repaint (`Ctrl+L` / the `^L repaint` footer chip): clears stale or
+        // garbled glyphs some terminal emulators can leave behind, and resets ratatui's diff buffer
+        // so the next unconditional `terminal.draw()` below rewrites every cell — mirrors
+        // `launch_claude`/`launch_lazygit`'s own post-suspend `terminal.clear()`.
+        if pending_repaint {
+            pending_repaint = false;
+            terminal.clear()?;
+            app_state.lock().unwrap().show_toast("screen repainted");
         }
 
         // Open the PR viewer for the selected repo's detected PR (loads via `gh pr view`), or toast
@@ -2112,8 +2129,8 @@ async fn run_event_loop(
                 }
 
                 // Footer status-bar commands are clickable in every context — including over an
-                // open modal, where only settings/help/quit stay live (the rest are inert via
-                // `style_footer`, so they have no click region). `q` inside a modal closes it
+                // open modal, where only settings/help/repaint/quit stay live (the rest are inert
+                // via `style_footer`, so they have no click region). `q` inside a modal closes it
                 // (injecting Esc reuses each modal's own close handler) rather than quitting.
                 if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
                     let clicked = app
@@ -2138,6 +2155,7 @@ async fn run_event_loop(
                             &mut pending_lazygit,
                             &mut pending_pr_view,
                             &mut pending_pr_web,
+                            &mut pending_repaint,
                         ) {
                             drop(app);
                             return Ok(code);
@@ -3229,6 +3247,22 @@ async fn run_event_loop(
                                     }
                                 }
                                 InfoAction::ToggleExpand(field) => app.toggle_info_expanded(&field),
+                                InfoAction::OpenAuthorProfile(path, sha, email) => {
+                                    match app.author_cache.get(&email).cloned() {
+                                        Some(Some(login)) => {
+                                            drop(app);
+                                            open_url(&format!("https://github.com/{login}"));
+                                        }
+                                        Some(None) => {
+                                            app.show_toast("no linked GitHub account for this commit's author email");
+                                        }
+                                        None => {
+                                            drop(app);
+                                            tokio::spawn(run_author_lookup(Arc::clone(&app_state), path, sha, email));
+                                        }
+                                    }
+                                    continue;
+                                }
                             }
                         } else if let Some(repo_idx) = app
                             .kebab_open_click
@@ -3283,7 +3317,8 @@ async fn run_event_loop(
                                 app.selected = selection;
                                 app.user_navigated = true;
                                 app.result_overlay = false;
-                                app.right_view = RightView::Log;
+                                app.right_view = RightView::Diff;
+                                app.pane_diff_view = ResultDiffView::Log;
                                 if app.toggle_selected_header() {
                                     // Click a folder / group header: select it and toggle
                                     // collapse (no double-click semantics on headers).
@@ -3392,6 +3427,14 @@ async fn run_event_loop(
                         app.update_dismissed = true;
                         continue;
                     }
+                }
+
+                // Force a full terminal repaint. Fixed (not remappable, not in the keybindings
+                // table), like Esc/q/Ctrl-C/Ctrl-R/Ctrl-X above — handled here, before every
+                // modal/leader/filter-input gate, so it always works no matter what's open.
+                if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    pending_repaint = true;
+                    continue;
                 }
 
                 // Filter input mode
@@ -5218,9 +5261,20 @@ async fn run_event_loop(
                     (KeyCode::Char('I'), _) => app.toggle_result_panel(),
                     // Cycle the info panel's grouping layout (titled → spaced → flat).
                     (KeyCode::Char('L'), _) => app.cycle_info_layout(),
-                    // Cycle the result view: log → raw → unified → split → log.
+                    // Open the documentation website in the browser (`D` cycles the result
+                    // category tab instead, so this moved to Ctrl+D — still mnemonic).
+                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                        drop(app);
+                        open_url(render::DOCS_URL);
+                    }
+                    // Cycle the Diff category's sub-display: log → raw → unified → split → log.
                     (KeyCode::Char('d'), _) => {
-                        app.cycle_result_view();
+                        app.cycle_result_diff_view();
+                    }
+                    // Cycle the Result pane's category tab: diff / tags / branches / commits /
+                    // files, skipping any tab with nothing to show.
+                    (KeyCode::Char('D'), _) => {
+                        app.cycle_result_category();
                     }
                     // Open the selected repo's remote in the browser.
                     (KeyCode::Char('o'), _) => {
@@ -5231,11 +5285,6 @@ async fn run_event_loop(
                             drop(app);
                             open_url(&url);
                         }
-                    }
-                    // Open the documentation website in the browser.
-                    (KeyCode::Char('D'), _) => {
-                        drop(app);
-                        open_url(render::DOCS_URL);
                     }
                     // Copy the selected repo's local path to the clipboard.
                     (KeyCode::Char('y'), _) => {
@@ -5429,7 +5478,7 @@ async fn run_event_loop(
                     }
                 }
             }
-            if app.right_view == RightView::Diff {
+            if app.right_view == RightView::Diff && app.pane_diff_view != ResultDiffView::Log {
                 if let Some(idx) = app.selected_repo_index() {
                     let repo = Arc::clone(&app.repos[idx]);
                     let mut state = repo.lock().unwrap();
@@ -5450,6 +5499,37 @@ async fn run_event_loop(
                         drop(state);
                         tokio::spawn(run_pulled_details(repo));
                     }
+                }
+            }
+            // Eagerly load the Tags/Branches tab data (both a network-free `for-each-ref`) for the
+            // selected repo, regardless of which category tab is active — unlike Commits/Files
+            // (whose *count* is already known synchronously from `pull_result`, only their
+            // detailed content is lazy), whether Tags/Branches has anything to show at all is only
+            // knowable by actually fetching, so the tab-bar visibility check needs this data ready
+            // before the user could ever switch to it.
+            if let Some(idx) = app.selected_repo_index() {
+                let repo = Arc::clone(&app.repos[idx]);
+                let needs_tags = {
+                    let mut state = repo.lock().unwrap();
+                    let needs = state.tags.is_none() && !state.tags_loading;
+                    if needs {
+                        state.tags_loading = true;
+                    }
+                    needs
+                };
+                if needs_tags {
+                    tokio::spawn(run_repo_tags(Arc::clone(&repo)));
+                }
+                let needs_branches = {
+                    let mut state = repo.lock().unwrap();
+                    let needs = state.result_branches.is_none() && !state.result_branches_loading;
+                    if needs {
+                        state.result_branches_loading = true;
+                    }
+                    needs
+                };
+                if needs_branches {
+                    tokio::spawn(run_repo_branches(repo));
                 }
             }
         }

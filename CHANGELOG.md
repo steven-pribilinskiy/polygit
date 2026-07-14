@@ -3,6 +3,69 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.12.0 — 2026-07-14
+Result pane: category tab bar (diff / tags / branches / commits / files), on top
+The pull-diff sub-display switcher and the pull-scoped Commits/Files tabs used to share one flat
+footer strip (`d log · commits N · files N · raw · unified · split`), mixing two different
+concerns into one cycle key. Split them apart and gave Tags/Branches a real home:
+- `d` now only cycles the Diff tab's sub-display: **log → raw → unified → split**. `D` is new —
+  cycles the Result pane's **category tab**: **diff / tags / branches / commits / files**.
+  Pressing `d` from any other tab jumps straight into Diff.
+- The category tabs render at the **top of the pane body** now (icon + item count, active tab
+  highlighted), mirroring the repo page's own tab-bar style, instead of a bottom-border footer.
+- Two new tabs: **Tags** (every tag, newest first) and **Branches** (every local branch) — both
+  mirror the repo page's list style and fetch instantly (a plain local `git for-each-ref`, no
+  network, unlike the repo page's own branches fetch which also runs `git fetch`).
+- Every tab — including Tags/Branches — only appears when it actually has something to show; an
+  up-to-date repo with no tags just shows Diff.
+- Fixed a real bug in the commit-author GitHub link: it fell back to `?author=<email>` on the
+  GitHub commits page for a non-noreply email, which doesn't reliably resolve to a profile. It now
+  resolves the real login lazily via `gh api repos/{owner}/{repo}/commits/{sha}` on click (GitHub
+  does the email→account matching), caches the result (incl. a confirmed miss) in a new
+  `author-cache.json`, and toasts when no GitHub account is linked to that email — instead of
+  opening a dead link. Applies to both the Commits tab and the new Tags tab.
+- Fixed a click-priority bug: the old bottom-border footer's chips could be stolen by the dock
+  divider when the repo page ([4]) was docked directly below the Result pane. The tab bar moving
+  off the border sidesteps it structurally; `title_button_hit` (the divider-grab exclusion) was
+  also hardened to cover every registered `clickable` region, not just title-bar buttons, so any
+  remaining bottom-border chip (e.g. the `⎇ switch … & pull` suggestion) is covered too.
+- The maximize/copy-button hotspot padding no longer touches the `·` separator: only one new blank
+  column is added per button (reusing the pre-existing separator space on the other side), so
+  there's never a double space or a stray gap around the dot.
+Docs (README, keybindings guide, keymap.json) updated to match.
+
+## v3.11.0 — 2026-07-14
+Ctrl+L: force a full terminal repaint
+Some terminal emulators (Tabby confirmed) can leave stale glyphs from a previous frame bleeding
+into new content. Add the classic vim/readline/tmux/htop/less Ctrl+L "clear and redraw" escape
+hatch:
+- `Ctrl+L` clears the terminal and forces ratatui to rewrite every cell on the next frame —
+  handled at the top of the key match (before the per-view/modal gates), so it works from any
+  view or modal, mirroring the always-on Ctrl-R/Ctrl-X handler.
+- Also a clickable `[^L repaint]` footer chip next to `, settings` / `? help` / `q`, staying live
+  even while a modal is open (same whitelist as those three).
+- A small "screen repainted" toast confirms the keypress/click landed even when nothing looked
+  visibly wrong.
+Docs (README, keybindings guide, keymap.json) updated to match.
+
+## v3.10.2 — 2026-07-13
+Wider click hitboxes for the pane maximize button and the result-pane copy button
+- The `m`+`▢`/`▣` maximize button (every pane's top border) now has a padded hotspot: a blank
+  column appended after the icon, plus the existing blank/separator column just before `m`, are
+  both clickable — not just the glyphs themselves.
+- The result pane's `⧉`/`📋` log-copy button gets the same treatment: a blank column on each side
+  of the icon is part of its click target too.
+
+## v3.10.1 — 2026-07-13
+Fix: a repo could show ✅ up-to-date with a stale, nonzero dirty-file count
+- A pull that came back `AlreadyUpToDate` (or any outcome besides `Updated`) never invalidated the
+  repo's cached `details` (dirty/ahead/behind counts) — so a `dirty_count` seeded from
+  `status-cache.json` (or left over from an earlier fetch) stayed on screen forever, while the
+  "stale" dimming was already cleared the moment the pull started. Worse, settle re-persists the
+  cache with a fresh timestamp regardless, so the wrong count looked freshly-checked indefinitely.
+- Every terminal pull outcome now marks details stale up front, so the next lazy load refetches the
+  real dirty/ahead/behind counts instead of parroting whatever was cached.
+
 ## v3.10.0 — 2026-07-13
 Result pane: Commits & Files tabs; a huge/binary pull diff can no longer hang or garble the pane
 - The `[3]` result pane's footer switcher grows two tabs — **`commits`** and **`files`**, each with

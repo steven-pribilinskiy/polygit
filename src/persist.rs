@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::app::{
     AutoUpdate, Background, BranchCheck, ButtonHoverStyle, ChangedRowEffect, ClaudeAgent,
     CliHelpMode, ColumnFlags, Contrast, DesignLayout, DiffView, HelpTab, IconStyle, InfoLayout,
-    RepoPageColumns, RepoPageStashColumns, RepoTabsMode, RightView, SelectionStyle, SettingsLayout,
-    SortColumn, SortDir, SplitterMode, Theme, TooltipPrefs, UpdateInterval,
+    RepoPageColumns, RepoPageStashColumns, RepoTabsMode, ResultDiffView, RightView, SelectionStyle,
+    SettingsLayout, SortColumn, SortDir, SplitterMode, Theme, TooltipPrefs, UpdateInterval,
 };
 
 /// `state.json` schema version. Files carrying this key load via the nested path; files without it
@@ -288,10 +288,12 @@ impl Default for RepoPagePrefs {
 pub struct ViewPrefs {
     /// Diff modal render style (raw / unified / split). Default raw.
     pub diff_view: DiffView,
-    /// Result pane view on last exit: log vs diff.
+    /// Result pane category tab on last exit (diff / tags / branches / commits / files).
+    #[serde(deserialize_with = "right_view_tolerant")]
     pub right_view: RightView,
-    /// Result pane diff render style (raw / unified / split). Default raw.
-    pub pane_diff_view: DiffView,
+    /// Result pane Diff-category sub-display (log / raw / unified / split). Default log.
+    #[serde(deserialize_with = "result_diff_view_tolerant")]
+    pub pane_diff_view: ResultDiffView,
 }
 
 /// Transient / chrome state that isn't a Settings toggle (last-seen version, active tabs, collapsed
@@ -413,10 +415,10 @@ pub struct LegacyFlatState {
     pub cli_help_mode: CliHelpMode,
     #[serde(default)]
     pub diff_view: DiffView,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "right_view_tolerant")]
     pub right_view: RightView,
-    #[serde(default)]
-    pub pane_diff_view: DiffView,
+    #[serde(default, deserialize_with = "result_diff_view_tolerant")]
+    pub pane_diff_view: ResultDiffView,
     #[serde(default)]
     pub info_layout: InfoLayout,
     #[serde(default)]
@@ -566,6 +568,40 @@ where
         "stashes" => SortColumn::Stashes,
         // "name", removed "discovery", and anything unknown → default.
         _ => SortColumn::Name,
+    })
+}
+
+/// Deserialize `right_view` tolerantly: the removed `"log"` value (the Result pane's category tab
+/// used to include Log as a top-level variant; it's now `Diff`'s own sub-display) and any unknown
+/// string fall back to the default (`Diff`) instead of failing the whole-file parse.
+fn right_view_tolerant<'de, D>(deserializer: D) -> Result<RightView, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(match raw.as_str() {
+        "tags" => RightView::Tags,
+        "branches" => RightView::Branches,
+        "commits" => RightView::Commits,
+        "files" => RightView::Files,
+        // "diff", removed "log", and anything unknown → default.
+        _ => RightView::Diff,
+    })
+}
+
+/// Deserialize `pane_diff_view` tolerantly: any unknown string falls back to the default (`Log`)
+/// instead of failing the whole-file parse.
+fn result_diff_view_tolerant<'de, D>(deserializer: D) -> Result<ResultDiffView, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(match raw.as_str() {
+        "raw" => ResultDiffView::Raw,
+        "unified" => ResultDiffView::Unified,
+        "split" => ResultDiffView::Split,
+        // "log" and anything unknown → default.
+        _ => ResultDiffView::Log,
     })
 }
 

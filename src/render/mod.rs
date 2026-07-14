@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{
     AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, DiffView,
     DropdownKind, HelpTab, HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow,
-    PageRowKind, Pane, RepoPageSort, RepoState, RepoStatus, RightView, ScrollHit,
+    PageRowKind, Pane, RepoPageSort, RepoState, RepoStatus, ResultDiffView, RightView, ScrollHit,
     ScrollKind, SortColumn, SortDir, SplitterMode, StatusFilter,
 };
 
@@ -81,17 +81,26 @@ fn window_button(
 /// The maximize/restore button (`m`+`▢`/`▣`, or the emoji equivalents) for `pane`, registered into
 /// `max_click` so the universal hit-test + hover wiring handle it. Returns the spans + the column
 /// just left of it. Every pane gets one, so maximize has a consistent click affordance + `m` key.
+///
+/// The hotspot is padded a column wider than the glyphs themselves: a trailing blank column is
+/// appended after the icon, and the click region also swallows the blank/separator column the
+/// caller already renders just before `m` — so clicking either side of the icon, not just the
+/// glyphs, toggles maximize.
 fn max_button_spans(
     app: &mut AppState,
     pane: Pane,
     row: u16,
     right_end: u16,
-) -> ([Span<'static>; 2], u16) {
+) -> ([Span<'static>; 3], u16) {
     let icons = app.icons();
     let glyph = if app.maximized == Some(pane) { icons.restore } else { icons.maximize };
-    let (spans, (r, start, end), left) = window_button("m", glyph, row, right_end);
-    app.max_click.push((r, start, end, pane));
-    (spans, left)
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let width = (UnicodeWidthStr::width("m") + UnicodeWidthStr::width(glyph)) as u16 + 1; // +1 trailing pad
+    let start = right_end.saturating_sub(width);
+    let left = start.saturating_sub(1);
+    app.max_click.push((row, left, right_end, pane));
+    ([Span::styled("m", key), Span::styled(glyph.to_string(), dim), Span::raw(" ")], left)
 }
 
 /// Title style for the main panes: dim while a modal overlays them, so the background chrome
@@ -1574,4 +1583,3 @@ fn highlight_name(name: &str, filter: Option<&str>, base: Style, width: usize) -
     }
     spans
 }
-

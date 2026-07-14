@@ -1667,6 +1667,33 @@ pub(crate) fn settings_row_line(
     Line::from(spans)
 }
 
+/// One line of the settings search results: either an inert section-title header (no click
+/// region, no chevron — identical regardless of the active layout) or a matching row.
+#[derive(Debug, PartialEq)]
+pub(crate) enum SearchItem {
+    /// Index into `SETTINGS_TABS`.
+    Header(usize),
+    /// Global settings row index, into `all_rows` / `SETTINGS_LABELS`.
+    Row(usize),
+}
+
+/// Interleave an inert section header before each run of matches from a new section, walking
+/// `filtered_rows` in order (already ascending/alphabetical since `SETTINGS_TABS` is
+/// alphabetized — no extra sort needed).
+pub(crate) fn settings_search_items(filtered_rows: &[usize]) -> Vec<SearchItem> {
+    let mut items = Vec::with_capacity(filtered_rows.len() * 2);
+    let mut last_section: Option<usize> = None;
+    for &row in filtered_rows {
+        let section = AppState::settings_tab_of_row(row);
+        if last_section != Some(section) {
+            items.push(SearchItem::Header(section));
+            last_section = Some(section);
+        }
+        items.push(SearchItem::Row(row));
+    }
+    items
+}
+
 /// Render the settings modal (`,`): IDE-style vertical tabs (or a flat list — toggle with `v`).
 /// `↑↓` move, `tab`/`shift+tab` (or `shift+↑↓`) switch tab, `←→` change the value (collapse/expand
 /// in accordion), `space`/`enter` toggle, `esc` closes.
@@ -1944,6 +1971,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     // becomes a flat filtered list (one row per match + a count line), regardless of layout.
     let search_active = !app.settings_search.is_empty();
     let filtered_rows = app.settings_filtered_rows();
+    // Interleave inert section headers now — the count feeds the height floor below, and the
+    // same vec is reused by the search render loop further down (no rebuilding it twice).
+    let search_items = settings_search_items(&filtered_rows);
     let search_rows = 2u16;
     let (base_width, base_rows) = if tabbed {
         (tab_col_w + 1 + content_w, max_tab_rows.max(SETTINGS_TABS.len() as u16) + 1)
@@ -1966,9 +1996,15 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
         let row_count = all_rows.len() as u16;
         (content_w.max(40) + 1, row_count + SETTINGS_TABS.len() as u16 * 2 + groups_hint as u16)
     };
+    // Search overlays a flat, scrollable header+row list on whichever layout is active. Never
+    // shrink below the active layout's own (search-empty) size — `base_width`/`base_rows` are
+    // recomputed every frame above for the CURRENT `SettingsLayout`, so this floor tracks a live
+    // `v` layout switch mid-search with no extra state. Growing beyond the floor (many matches +
+    // headers) is expected and fine.
     let (width, content_rows) = if search_active {
-        // +1 scrollbar gutter — the filtered list can overflow too.
-        (content_w.max(40) + 1, filtered_rows.len() as u16 + 1 + search_rows)
+        // +1 for the pinned "N matches" summary line (always shown, above the scrolled window).
+        let natural_rows = search_items.len() as u16 + 1;
+        ((content_w.max(40) + 1).max(base_width), natural_rows.max(base_rows) + search_rows)
     } else {
         (base_width, base_rows + search_rows)
     };
@@ -2103,36 +2139,90 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     };
 
     if search_active {
-        // A flat list of the matching rows with the matched chars highlighted (ignores tabs).
+        // The "N matches" line is pinned at the top and never scrolls; only the header+row list
+        // below it scrolls, mirroring the Flat branch's own scroll/ensure-visible/drag-sync
+        // pattern (below) but with the viewport and scrollbar track shrunk by 1 row to exclude
+        // the pinned line.
         let query = app.settings_search.clone();
-        let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+        let count_line = Line::from(Span::styled(
             format!(
                 "  {} match{}",
                 filtered_rows.len(),
                 if filtered_rows.len() == 1 { "" } else { "es" }
             ),
             Style::default().fg(Color::DarkGray),
-        ))];
-        for &row_idx in &filtered_rows {
-            let (label, options) = &all_rows[row_idx];
+        ));
+        let viewport = inner.height.saturating_sub(1) as usize;
+        let max_scroll = search_items.len().saturating_sub(viewport);
+        let sel_line = search_items
+            .iter()
+            .position(|item| matches!(item, SearchItem::Row(row) if *row == app.settings_selected));
+        let mut scroll = app.settings_scroll.min(max_scroll);
+        if app.scrollbar_dragging == Some(crate::app::ScrollKind::Settings) {
+            // A scrollbar drag drives the view; sync the selection (+ its tab) to the first
+            // visible row so the keyboard selection stays put and the next frame doesn't snap
+            // the view back.
+            if let Some(SearchItem::Row(row)) =
+                search_items.iter().skip(scroll).find(|item| matches!(item, SearchItem::Row(_)))
+            {
+                app.settings_selected = *row;
+                app.settings_tab = AppState::settings_tab_of_row(*row);
+            }
+        } else if ensure_visible {
+            if let Some(sel) = sel_line {
+                if sel < scroll {
+                    scroll = sel;
+                } else if viewport > 0 && sel >= scroll + viewport {
+                    scroll = sel + 1 - viewport;
+                }
+            }
+        }
+        app.settings_scroll = scroll;
+        let mut lines: Vec<Line> = vec![count_line];
+        for item in search_items.iter().skip(scroll).take(viewport) {
             let row_y = inner.y + lines.len() as u16;
-            let in_view = row_y < inner.y + inner.height;
-            let underline_idx = if *label == "Theme" { theme_underline } else { None };
-            let disabled = *label == "Hide zeros" && emoji_icons;
-            lines.push(settings_row_line(
-                row_idx,
-                app.settings_selected == row_idx,
-                label,
-                options,
-                (inner.x, row_y),
-                in_view,
-                underline_idx,
-                disabled,
-                Some(query.as_str()),
-                &mut app.settings_click,
-            ));
+            match item {
+                SearchItem::Header(tab_idx) => {
+                    let (name, _) = SETTINGS_TABS[*tab_idx];
+                    lines.push(Line::from(Span::styled(format!("  {name}"), section_style)));
+                }
+                SearchItem::Row(row_idx) => {
+                    let (label, options) = &all_rows[*row_idx];
+                    let underline_idx = if *label == "Theme" { theme_underline } else { None };
+                    let disabled = *label == "Hide zeros" && emoji_icons;
+                    lines.push(settings_row_line(
+                        *row_idx,
+                        app.settings_selected == *row_idx,
+                        label,
+                        options,
+                        (inner.x, row_y),
+                        true,
+                        underline_idx,
+                        disabled,
+                        Some(query.as_str()),
+                        &mut app.settings_click,
+                    ));
+                }
+            }
         }
         frame.render_widget(Paragraph::new(lines), inner);
+        if search_items.len() > viewport {
+            let track = Rect {
+                x: inner.x + inner.width.saturating_sub(1),
+                y: inner.y + 1,
+                width: 1,
+                height: inner.height.saturating_sub(1),
+            };
+            render_scrollbar(
+                frame,
+                app,
+                track,
+                scroll,
+                search_items.len(),
+                viewport,
+                crate::app::ScrollKind::Settings,
+            );
+        }
     } else if tabbed {
         // Left: clickable vertical tab list. Right: the active tab's rows.
         let mut tab_lines: Vec<Line> = Vec::new();

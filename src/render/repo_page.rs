@@ -862,6 +862,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     title_spans.extend([
         max_spans[0].clone(),
         max_spans[1].clone(),
+        max_spans[2].clone(),
         sep(),
         close_spans[0].clone(),
         close_spans[1].clone(),

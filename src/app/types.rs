@@ -61,18 +61,72 @@ impl RepoStatus {
     }
 }
 
-/// What the right pane shows for the selected repo. The info block is an additive overlay
-/// (`info_pinned`) drawn above whichever of these is active, not a separate variant.
+/// What the right pane shows for the selected repo — a top-level "category" tab. The info block is
+/// an additive overlay (`info_pinned`) drawn above whichever of these is active, not a separate
+/// variant. `Diff` is the pull-diff category; its own log/raw/unified/split sub-display is tracked
+/// separately by `AppState::pane_diff_view` (a `ResultDiffView`), cycled by `d` — `D` cycles which
+/// of these categories is active. Each non-`Diff` category is hidden from the tab bar (and skipped
+/// when cycling) whenever it has nothing to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RightView {
+    /// The pulled diff, in one of four sub-displays (see `ResultDiffView`): the command log, or a
+    /// raw/unified/split render of the pull's diff.
     #[default]
-    Log,
+    Diff,
+    /// The repo's tags, newest first (mirrors the repo page's list style).
+    Tags,
+    /// The repo's local branches (mirrors the repo page's Branches tab).
+    Branches,
     /// The commits the last pull delivered (`prev..new`), each as an expandable block.
     Commits,
     /// The files the last pull changed, `git status`-style with colored status letters.
     Files,
-    Diff,
+}
+
+/// The Result pane's Diff-category sub-display, cycled by `d`: the command log, or a raw/unified/
+/// split render of the pull's diff (mirroring `DiffView`'s render styles, but as its own type since
+/// `DiffView` is shared with the diff-modal views elsewhere, which have no "log" state).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResultDiffView {
+    #[default]
+    Log,
+    Raw,
+    Unified,
+    Split,
+}
+
+impl ResultDiffView {
+    /// Cycle Log → Raw → Unified → Split → Log (shared by the `d` key and its footer/tab click).
+    pub fn cycle(self) -> Self {
+        match self {
+            ResultDiffView::Log => ResultDiffView::Raw,
+            ResultDiffView::Raw => ResultDiffView::Unified,
+            ResultDiffView::Unified => ResultDiffView::Split,
+            ResultDiffView::Split => ResultDiffView::Log,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ResultDiffView::Log => "log",
+            ResultDiffView::Raw => "raw",
+            ResultDiffView::Unified => "unified",
+            ResultDiffView::Split => "split",
+        }
+    }
+
+    /// The equivalent diff-modal render style, or `None` for `Log` (which has no modal
+    /// equivalent — the modals never show a command log).
+    pub fn as_diff_view(self) -> Option<DiffView> {
+        match self {
+            ResultDiffView::Log => None,
+            ResultDiffView::Raw => Some(DiffView::Raw),
+            ResultDiffView::Unified => Some(DiffView::Unified),
+            ResultDiffView::Split => Some(DiffView::Split),
+        }
+    }
 }
 
 /// How the info panel groups its fields: `Sections` (dim UPPERCASE titles + blank lines between
@@ -433,6 +487,20 @@ pub struct CommitInfo {
     pub rel_date: String,
     /// Abbreviated parent shas (as `git log %p` emits them) — drives the graph lane layout.
     pub parents: Vec<String>,
+}
+
+/// A git tag (`for-each-ref refs/tags`), for the Result pane's Tags tab — mirrors the repo page's
+/// Branches list style (name, tagged commit's subject/author/date).
+#[derive(Debug, Clone)]
+pub struct TagInfo {
+    pub name: String,
+    pub sha: String,
+    pub subject: String,
+    /// Tagged commit's author name (`%an`).
+    pub author: String,
+    /// Tagged commit's author email (`%ae`) — used to build the GitHub author link.
+    pub author_email: String,
+    pub rel_date: String,
 }
 
 /// Which diff a dirty row's modal shows. (Stash rows ignore this.)
@@ -1952,6 +2020,11 @@ pub enum InfoAction {
     /// Switch the selected repo to the carried base branch and pull (the merged/gone-upstream
     /// "switch & pull" suggestion).
     RunSwitch(String),
+    /// Open a commit author's GitHub profile when their email isn't a noreply address (so the
+    /// login isn't already in the email itself). Checks `AppState::author_cache` first; on a
+    /// miss, resolves lazily via `gh api repos/{owner}/{repo}/commits/{sha}` and caches the
+    /// result. `(repo path, commit sha, author email)`.
+    OpenAuthorProfile(std::path::PathBuf, String, String),
 }
 
 /// The semantic glyphs the UI renders, swappable between Unicode and emoji via `IconStyle`.
@@ -1974,6 +2047,8 @@ pub struct IconSet {
     pub stashes: &'static str,
     /// The repo page's Commits section/tab.
     pub commits: &'static str,
+    /// The Result pane's Tags tab.
+    pub tags: &'static str,
     /// Commits the last pull landed (pulled-commits column).
     pub pulled: &'static str,
     /// Files the last pull changed (changed-files column).
@@ -2015,6 +2090,7 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     worktrees: "⑃",
     stashes: "≡",
     commits: "◉",
+    tags: "◆",
     pulled: "⇣",
     changed: "±",
     ahead: "↑",
@@ -2052,6 +2128,7 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     worktrees: "🌳",
     stashes: "📦",
     commits: "📜",
+    tags: "🏷",
     pulled: "📥",
     changed: "📄",
     // Keep the compact 1-cell arrows for the tight ahead/behind numeric column — emoji arrows
@@ -2271,16 +2348,18 @@ pub enum Command {
     FoldExpandAll,
     /// Expand the selected header's subtree recursively (`*` / `z O`).
     FoldExpandSubtree,
-    /// Cycle the Result pane's view: log → commits → files → raw → unified → split → log (same as `d`).
+    /// Cycle the Diff category's sub-display: log → raw → unified → split → log (same as `d`).
+    /// Switches the Result pane to the Diff category first if another tab is active.
     DiffView,
-    /// Set the Result pane to the command-log view (the `log` chip).
-    SetResultLog,
-    /// Set the Result pane to the pulled-commits view (the `commits` chip).
-    SetResultCommits,
-    /// Set the Result pane to the pulled-files view (the `files` chip).
-    SetResultFiles,
-    /// Set the Result pane to a diff view with the given render style (the raw/unified/split chips).
-    SetResultDiff(DiffView),
+    /// Cycle the Result pane's category tab: diff / tags / branches / commits / files, skipping
+    /// any tab with nothing to show (same as `D`).
+    CycleResultCategory,
+    /// Jump the Result pane to a category tab, keeping its current diff sub-display if it's Diff
+    /// (a tab click).
+    SetResultCategory(RightView),
+    /// Jump the Result pane to the Diff category with the given sub-display (the log/raw/unified/
+    /// split chip clicks).
+    SetResultDiffView(ResultDiffView),
     /// Start claude code in the selected repo (same as `c`).
     Claude,
     /// Open lazygit in the selected repo (same as `l`).
@@ -2300,6 +2379,9 @@ pub enum Command {
     /// Copy the selected repo's remote URL (same as `Y`).
     CopyRemote,
     Settings,
+    /// Force a full terminal repaint — clears stale/garbled glyphs a terminal emulator can leave
+    /// behind (same as `Ctrl+L`).
+    Repaint,
     /// Open the build-info modal (the clickable "built … ago" status-bar tag).
     ShowBuildInfo,
     /// Open the changelog modal (the clickable `vX.Y.Z` status-bar tag).
@@ -2350,13 +2432,21 @@ impl Command {
             Command::FoldCollapseAll => "Collapse all folders and groups",
             Command::FoldExpandAll => "Expand all folders and groups",
             Command::FoldExpandSubtree => "Expand the selected subtree",
-            Command::DiffView => "Cycle the result view: log → raw → unified → split",
-            Command::SetResultLog => "Show the command log (pull output)",
-            Command::SetResultCommits => "Show the commits the pull delivered",
-            Command::SetResultFiles => "Show the files the pull changed",
-            Command::SetResultDiff(DiffView::Raw) => "Show the pull diff (raw, git-colored)",
-            Command::SetResultDiff(DiffView::Unified) => "Show the pull diff (unified, syntax-highlighted)",
-            Command::SetResultDiff(DiffView::Split) => "Show the pull diff (split, syntax-highlighted)",
+            Command::DiffView => "Cycle the diff sub-display: log → raw → unified → split",
+            Command::CycleResultCategory => "Cycle the result tab: diff / tags / branches / commits / files",
+            Command::SetResultCategory(RightView::Diff) => "Show the pulled diff",
+            Command::SetResultCategory(RightView::Tags) => "Show the repo's tags",
+            Command::SetResultCategory(RightView::Branches) => "Show the repo's branches",
+            Command::SetResultCategory(RightView::Commits) => "Show the commits the pull delivered",
+            Command::SetResultCategory(RightView::Files) => "Show the files the pull changed",
+            Command::SetResultDiffView(ResultDiffView::Log) => "Show the command log (pull output)",
+            Command::SetResultDiffView(ResultDiffView::Raw) => "Show the pull diff (raw, git-colored)",
+            Command::SetResultDiffView(ResultDiffView::Unified) => {
+                "Show the pull diff (unified, syntax-highlighted)"
+            }
+            Command::SetResultDiffView(ResultDiffView::Split) => {
+                "Show the pull diff (split, syntax-highlighted)"
+            }
             Command::Claude => "Start claude code in the selected repo's directory",
             Command::Lazygit => "Open lazygit in the selected repo",
             Command::Explore => "Open the file explorer for the selected repo",
@@ -2367,6 +2457,10 @@ impl Command {
             Command::CopyPath => "Copy the selected repo's absolute path",
             Command::CopyRemote => "Copy the selected repo's remote (origin) URL",
             Command::Settings => "Open settings",
+            Command::Repaint => {
+                "Force a full terminal repaint — fixes stale/garbled glyphs some terminal \
+                 emulators can leave behind"
+            }
             Command::ShowBuildInfo => "Show when this build was made + reload to a newer one",
             Command::ShowChangelog => "Show the changelog (every release, newest first)",
             Command::NavDown => "Move the selection down",
@@ -2549,6 +2643,16 @@ pub struct RepoState {
     pub page: Option<RepoPageData>,
     /// Guard so the repo-page fetch is spawned at most once per open.
     pub page_loading: bool,
+    /// The repo's tags, newest first (Result pane's Tags tab); filled lazily on first open.
+    pub tags: Option<Vec<TagInfo>>,
+    /// Guard so the tags fetch is spawned at most once.
+    pub tags_loading: bool,
+    /// The repo's local branches (Result pane's Branches tab) — a lighter, network-free fetch than
+    /// the repo page's own `page.branches` (no remote `git fetch`, no worktrees/stashes/commits/
+    /// stats), so opening this tab never triggers a surprise network call.
+    pub result_branches: Option<Vec<BranchInfo>>,
+    /// Guard so the Result-pane branches fetch is spawned at most once.
+    pub result_branches_loading: bool,
     /// True while a repo-page pull (`p`/`P`) is in flight, for the page spinner.
     pub pull_loading: bool,
     /// Which list cells changed in the last refetch (drives the attention flash).
@@ -2689,6 +2793,10 @@ impl RepoState {
             pulled_details_loading: false,
             page: None,
             page_loading: false,
+            tags: None,
+            tags_loading: false,
+            result_branches: None,
+            result_branches_loading: false,
             pull_loading: false,
             flash: CellFlash::default(),
             flash_until: None,

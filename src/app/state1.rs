@@ -185,53 +185,103 @@ impl AppState {
         self.groups.iter().any(|group| group.source.is_dynamic())
     }
 
-    /// Toggle the Result pane between the command log and the diff view, keeping the current diff
-    /// render style (the kebab "Diff" action — a simple on/off, distinct from the `d` cycle).
+    /// Toggle the Result pane between the command log and an actual diff render, keeping the
+    /// current diff render style (the kebab "Diff" action — a simple on/off, distinct from the
+    /// `d` cycle).
     pub fn toggle_diff_view(&mut self) {
-        let target = if self.right_view == RightView::Diff {
-            RightView::Log
+        let showing_diff_render =
+            self.right_view == RightView::Diff && self.pane_diff_view != ResultDiffView::Log;
+        let style = if showing_diff_render {
+            ResultDiffView::Log
+        } else if self.pane_diff_view == ResultDiffView::Log {
+            ResultDiffView::Raw
         } else {
-            RightView::Diff
+            self.pane_diff_view
         };
-        self.apply_result_view(target, self.pane_diff_view);
+        self.apply_result_view(RightView::Diff, style);
     }
 
-    /// Cycle the Result pane's flat view row: log → commits → files → raw → unified → split → log.
-    /// Shared by the `d` key and the status-bar `d diff` hint.
-    pub fn cycle_result_view(&mut self) {
-        let (view, style) = match (self.right_view, self.pane_diff_view) {
-            (RightView::Log, _) => (RightView::Commits, self.pane_diff_view),
-            (RightView::Commits, _) => (RightView::Files, self.pane_diff_view),
-            (RightView::Files, _) => (RightView::Diff, DiffView::Raw),
-            (RightView::Diff, DiffView::Raw) => (RightView::Diff, DiffView::Unified),
-            (RightView::Diff, DiffView::Unified) => (RightView::Diff, DiffView::Split),
-            (RightView::Diff, DiffView::Split) => (RightView::Log, self.pane_diff_view),
+    /// Cycle the Diff category's sub-display: log → raw → unified → split → log. Shared by the
+    /// `d` key and the status-bar `d diff` hint. Switches the Result pane to the Diff category
+    /// first (landing on its current sub-display, not skipping it) if another tab is active.
+    pub fn cycle_result_diff_view(&mut self) {
+        let style =
+            if self.right_view == RightView::Diff { self.pane_diff_view.cycle() } else { self.pane_diff_view };
+        self.apply_result_view(RightView::Diff, style);
+    }
+
+    /// Cycle the Result pane's category tab (diff / tags / branches / commits / files), skipping
+    /// any tab with nothing to show. Shared by the `D` key and its footer/tab click. If the
+    /// current category isn't one of the visible tabs (e.g. its data was cleared since), lands on
+    /// the first visible one (`Diff`) rather than no-op'ing.
+    pub fn cycle_result_category(&mut self) {
+        let categories = self.visible_result_categories();
+        let current = categories.iter().position(|&view| view == self.right_view).unwrap_or(0);
+        let next = categories[(current + 1) % categories.len()];
+        self.apply_result_view(next, self.pane_diff_view);
+    }
+
+    /// Jump the Result pane directly to a category tab (a tab click), keeping the current diff
+    /// sub-display if landing on Diff.
+    pub fn set_result_category(&mut self, view: RightView) {
+        self.apply_result_view(view, self.pane_diff_view);
+    }
+
+    /// Jump the Result pane to the Diff category with a specific sub-display (the log/raw/
+    /// unified/split chip clicks).
+    pub fn set_result_diff_view(&mut self, style: ResultDiffView) {
+        self.apply_result_view(RightView::Diff, style);
+    }
+
+    /// Which category tabs currently have something to show, in display order. `Diff` is always
+    /// included (the command log always exists); the rest only when their data is non-empty.
+    pub fn visible_result_categories(&self) -> Vec<RightView> {
+        let mut views = vec![RightView::Diff];
+        let Some(repo_idx) = self.selected_repo_index() else {
+            return views;
         };
-        self.apply_result_view(view, style);
+        let state = self.repos[repo_idx].lock().unwrap();
+        for view in [RightView::Tags, RightView::Branches, RightView::Commits, RightView::Files] {
+            if self.result_category_count(&state, view) > 0 {
+                views.push(view);
+            }
+        }
+        views
     }
 
-    /// Jump the Result pane directly to a chip's view (the `log` / `raw` / `unified` / `split`
-    /// clicks). `RightView::Log` ignores `style`; diff views adopt it.
-    pub fn set_result_view(&mut self, view: RightView, style: DiffView) {
-        self.apply_result_view(view, style);
+    /// Item count backing a category tab's visibility + badge (0 hides the tab). `Diff` has no
+    /// count of its own — it's always shown regardless.
+    pub fn result_category_count(&self, state: &RepoState, view: RightView) -> usize {
+        match view {
+            RightView::Diff => 0,
+            RightView::Tags => state.tags.as_ref().map_or(0, Vec::len),
+            RightView::Branches => state.result_branches.as_ref().map_or(0, Vec::len),
+            RightView::Commits => {
+                state.pull_result.as_ref().map(|result| result.commits as usize).unwrap_or(0)
+            }
+            RightView::Files => state.pull_result.as_ref().map(|result| result.files as usize).unwrap_or(0),
+        }
     }
 
-    /// Apply a Result-pane view change: manage the per-repo diff buffer (dropped only when leaving
-    /// Diff, so switching styles never refetches) and the scroll, then persist. The diff body is
-    /// (re)loaded lazily by the event loop when `right_view == Diff && diff.is_none()`.
-    fn apply_result_view(&mut self, view: RightView, style: DiffView) {
-        let leaving_diff = self.right_view == RightView::Diff && view != RightView::Diff;
+    /// Apply a Result-pane view change: manage the per-repo diff buffer (dropped only when
+    /// leaving an actual diff render, so switching among raw/unified/split never refetches) and
+    /// the scroll, then persist. The diff body is (re)loaded lazily by the event loop when
+    /// `right_view == Diff && pane_diff_view != Log && diff.is_none()`.
+    fn apply_result_view(&mut self, view: RightView, style: ResultDiffView) {
+        let showing_diff_render_before =
+            self.right_view == RightView::Diff && self.pane_diff_view != ResultDiffView::Log;
+        let showing_diff_render_after = view == RightView::Diff && style != ResultDiffView::Log;
         self.right_view = view;
         self.pane_diff_view = style;
         if let Some(repo_idx) = self.selected_repo_index() {
             let mut state = self.repos[repo_idx].lock().unwrap();
-            if view != RightView::Log {
-                // Any non-log tab (commits/files/diff, or a diff style change) starts at the top,
-                // not the log's scroll / auto-scroll tail.
+            if view != RightView::Diff || style != ResultDiffView::Log {
+                // Any non-log tab (tags/branches/commits/files/diff, or a diff style change)
+                // starts at the top, not the log's scroll / auto-scroll tail.
                 state.preview_scroll = 0;
                 state.auto_scroll = false;
             }
-            if leaving_diff {
+            if showing_diff_render_before && !showing_diff_render_after {
                 state.diff = None;
             }
         }

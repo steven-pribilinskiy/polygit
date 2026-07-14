@@ -269,7 +269,10 @@ pub fn highlight(text: &str, path: &str) -> Vec<(String, Tok)> {
         }
         // Block comment `/* … */` (single-line best effort).
         if syntax.block_comment && rest.starts_with("/*") {
-            let end = rest.find("*/").map(|pos| index + pos + 2).unwrap_or(chars.len());
+            let end = rest
+                .find("*/")
+                .map(|pos| index + rest[..pos].chars().count() + 2)
+                .unwrap_or(chars.len());
             push(&mut out, chars[index..end].iter().collect(), Tok::Comment);
             index = end;
             continue;
@@ -431,5 +434,18 @@ mod tests {
         assert!(toks.iter().any(|(text, tok)| text == "let" && *tok == Tok::Keyword));
         assert!(toks.iter().any(|(text, tok)| text == "\"hi\"" && *tok == Tok::Str));
         assert!(toks.iter().any(|(_, tok)| *tok == Tok::Comment));
+    }
+
+    #[test]
+    fn block_comment_with_multibyte_chars_does_not_panic() {
+        // `find("*/")` returns a byte offset; a multi-byte char before the marker
+        // previously overshot the char-index end bound and panicked on slicing.
+        let toks = highlight("/* café — done */ x", "f.c");
+        let comment: String = toks
+            .iter()
+            .filter(|(_, tok)| *tok == Tok::Comment)
+            .map(|(text, _)| text.as_str())
+            .collect();
+        assert_eq!(comment, "/* café — done */");
     }
 }

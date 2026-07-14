@@ -345,14 +345,30 @@
         "keys": [
           "d"
         ],
-        "action": "Cycle the result view: log → commits → files → raw → unified → split",
-        "note": "log = pull output; commits/files = what the pull delivered (each with a count badge — commits as expandable sha/subject/body/author blocks with GitHub links, files as a status-colored list); raw = git-colored diff; unified/split = syntax-highlighted. Click any chip in the pane footer to jump directly; the choice persists",
+        "action": "Cycle the Diff tab's sub-display: log → raw → unified → split",
+        "note": "log = pull output; raw = git-colored diff; unified/split = syntax-highlighted. Switches the Result pane to the Diff tab first (landing on its current sub-display) if another tab is active. Click the Diff tab again to cycle it with the mouse too; the choice persists",
         "keywords": [
           "diff",
           "unified",
           "split",
           "raw",
           "log"
+        ],
+        "group": "Panes & views"
+      },
+      {
+        "keys": [
+          "D"
+        ],
+        "action": "Cycle the Result pane's category tab: diff / tags / branches / commits / files",
+        "note": "the tab bar sits at the top of the Result pane's body (mirroring the repo page's tab style) — each tab shows an icon + item count, and only tabs with something to show appear (an up-to-date repo with no tags shows just Diff). Commits/files are what the last pull delivered (each with a count badge — commits as expandable sha/subject/body/author blocks with GitHub links, files as a status-colored list); tags/branches list the whole repo (mirroring the repo page's Branches tab). Click any tab to jump directly; the choice persists",
+        "keywords": [
+          "tags",
+          "branches",
+          "commits",
+          "files",
+          "tabs",
+          "category"
         ],
         "group": "Panes & views"
       },
@@ -525,9 +541,10 @@
       },
       {
         "keys": [
-          "D"
+          "ctrl+d"
         ],
         "action": "Open the documentation website in the browser",
+        "note": "moved from plain D, which now cycles the Result pane's category tab",
         "keywords": [
           "docs",
           "help website"
@@ -768,7 +785,7 @@
           "q"
         ],
         "action": "Quit",
-        "note": "with a modal open it closes the modal instead (the footer hint reads `q close`); `, settings` / `? help` / `q` stay clickable from inside any modal",
+        "note": "with a modal open it closes the modal instead (the footer hint reads `q close`); `, settings` / `? help` / `^L repaint` / `q` stay clickable from inside any modal",
         "group": "App & modals"
       },
       {
@@ -796,6 +813,15 @@
         ],
         "action": "Dismiss the new-build notice",
         "note": "only while the notice is up; re-arms if the binary changes again (also the clickable `[^X]`); works from any view or modal",
+        "group": "App & modals"
+      },
+      {
+        "keys": [
+          "Ctrl",
+          "L"
+        ],
+        "action": "Force a full terminal repaint",
+        "note": "clears stale/garbled glyphs some terminal emulators leave behind and forces every cell to redraw; also the clickable `[^L repaint]`; works from any view or modal",
         "group": "App & modals"
       },
       {

@@ -88,14 +88,20 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         (false, true) => area,
     };
 
-    // A single repo's log/diff view shows the flat `log · raw · unified · split` switcher (in the
-    // bottom border) and, in a diff view, renders the body through `diff_body_lines`.
+    // A single repo's log/diff view shows the category tab bar (top of the body) and, in a diff
+    // view, renders the body through `diff_body_lines`. `app.right_view` can be a category that's
+    // no longer visible (e.g. loaded from disk, or its data cleared since) — `effective_view`
+    // falls back to `Diff` in that case, so the tab bar's highlight and the rendered content never
+    // disagree about which tab is "active".
     let single_repo_view =
         selected_repo.is_some() && !overlay && selected_group.is_none() && selected_folder.is_none();
-    let pane_diff_active = single_repo_view && app.right_view == RightView::Diff;
+    let visible_categories = if single_repo_view { app.visible_result_categories() } else { Vec::new() };
+    let effective_view = if visible_categories.contains(&app.right_view) { app.right_view } else { RightView::Diff };
+    let pane_diff_active =
+        single_repo_view && effective_view == RightView::Diff && app.pane_diff_view != ResultDiffView::Log;
     let pane_diff_style = app.pane_diff_view;
-    let pane_tab_active =
-        single_repo_view && matches!(app.right_view, RightView::Commits | RightView::Files);
+    let pane_tab_active = single_repo_view
+        && matches!(effective_view, RightView::Tags | RightView::Branches | RightView::Commits | RightView::Files);
 
     let (header_text, content_lines, scroll_offset) = if show_errors {
         (" Errors ".to_string(), build_error_summary(app), 0usize)
@@ -117,46 +123,56 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
     } else {
         let repo_idx = selected_repo.unwrap_or_default();
         let state = app.repos[repo_idx].lock().unwrap();
-        if app.right_view == RightView::Diff {
-            let lines = state
-                .diff
-                .clone()
-                .unwrap_or_else(|| vec!["(loading…)".to_string()]);
-            // `content_lines` stays the RAW diff text; the chosen style (raw/unified/split) is
-            // rendered at the tail via `diff_body_lines` (see `pane_diff_active`).
-            (
-                format!(" {} · {} ", state.name, app.pane_diff_view.label()),
-                lines,
-                state.preview_scroll,
-            )
-        } else if matches!(app.right_view, RightView::Commits | RightView::Files) {
-            // The Commits/Files tabs build their own styled `Line`s (with clicks) after the block is
-            // drawn — see `pane_tab_active`; `content_lines` is unused for them.
-            let tab = if app.right_view == RightView::Commits { "commits" } else { "files" };
-            (format!(" {} · {tab} ", state.name), Vec::new(), state.preview_scroll)
-        } else {
-            // The git subprocess PID is only meaningful while the pull is actually running; show it
-            // then and omit it otherwise (a settled repo has no process, so `pid —` was just noise).
-            let pid_str = match &state.status {
-                RepoStatus::Running { pid } => format!(" · pid {pid}"),
-                _ => String::new(),
-            };
-            let elapsed_str = match state.elapsed {
-                Some(elapsed) => format!(" · {:.2}s", elapsed.as_secs_f64()),
-                None => match state.start {
-                    Some(start) => format!(" · {:.2}s", start.elapsed().as_secs_f64()),
-                    None => String::new(),
-                },
-            };
-            let header = format!(
-                " Command log · {} · {}{}{} ",
-                state.name,
-                status_label(&state.status),
-                pid_str,
-                elapsed_str
-            );
-            let lines: Vec<String> = state.log.lines().iter().cloned().collect();
-            (header, lines, state.preview_scroll)
+        match effective_view {
+            RightView::Diff if app.pane_diff_view == ResultDiffView::Log => {
+                // The git subprocess PID is only meaningful while the pull is actually running;
+                // show it then and omit it otherwise (a settled repo has no process, so `pid —`
+                // was just noise).
+                let pid_str = match &state.status {
+                    RepoStatus::Running { pid } => format!(" · pid {pid}"),
+                    _ => String::new(),
+                };
+                let elapsed_str = match state.elapsed {
+                    Some(elapsed) => format!(" · {:.2}s", elapsed.as_secs_f64()),
+                    None => match state.start {
+                        Some(start) => format!(" · {:.2}s", start.elapsed().as_secs_f64()),
+                        None => String::new(),
+                    },
+                };
+                let header = format!(
+                    " Command log · {} · {}{}{} ",
+                    state.name,
+                    status_label(&state.status),
+                    pid_str,
+                    elapsed_str
+                );
+                let lines: Vec<String> = state.log.lines().iter().cloned().collect();
+                (header, lines, state.preview_scroll)
+            }
+            RightView::Diff => {
+                let lines = state
+                    .diff
+                    .clone()
+                    .unwrap_or_else(|| vec!["(loading…)".to_string()]);
+                // `content_lines` stays the RAW diff text; the chosen style (raw/unified/split)
+                // is rendered at the tail via `diff_body_lines` (see `pane_diff_active`).
+                (
+                    format!(" {} · {} ", state.name, app.pane_diff_view.label()),
+                    lines,
+                    state.preview_scroll,
+                )
+            }
+            RightView::Tags | RightView::Branches | RightView::Commits | RightView::Files => {
+                // These tabs build their own styled `Line`s (with clicks) after the block is
+                // drawn — see `pane_tab_active`; `content_lines` is unused for them.
+                let tab = match effective_view {
+                    RightView::Tags => "tags",
+                    RightView::Branches => "branches",
+                    RightView::Commits => "commits",
+                    _ => "files",
+                };
+                (format!(" {} · {tab} ", state.name), Vec::new(), state.preview_scroll)
+            }
         }
     };
 
@@ -182,21 +198,25 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
             log_text
         };
         if !copy_text.is_empty() {
-            // The copy button follows the icon set (⧉ in Unicode mode, 📋 in emoji mode); its click +
-            // hover region is exactly the glyph's display width (1 or 2 cells), so the hover bg lands
-            // squarely on the glyph. A dim ` · ` separator (3 cols) sits between it and the maximize
-            // button — matching the header's filter · sort · columns dots.
+            // The copy button follows the icon set (⧉ in Unicode mode, 📋 in emoji mode). Its
+            // hotspot is padded a column wider than the glyph on each side, but without widening
+            // the rendered gap around the ` · ` separator (no new space touches the dot, no double
+            // space): the trailing pad reuses the separator's own leading space, and only a leading
+            // pad (before the glyph) is newly rendered — mirroring the maximize button's treatment.
             let glyph = app.icons().copy;
             let glyph_w = UnicodeWidthStr::width(glyph) as u16;
-            let copy_end = copy_end.saturating_sub(2); // ` · ` separator = 3 cols
-            let col_start = copy_end.saturating_sub(glyph_w);
+            let sep_start = copy_end.saturating_sub(2); // ` · ` separator = 3 cols
+            let col_start = sep_start.saturating_sub(glyph_w);
+            let hot_start = col_start.saturating_sub(1); // leading pad column
+            top_spans.push(Span::raw(" "));
             top_spans.push(Span::styled(glyph, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
             top_spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
-            app.info_click.push((area.y, col_start, copy_end, InfoAction::CopyText(copy_text)));
+            app.info_click.push((area.y, hot_start, sep_start + 1, InfoAction::CopyText(copy_text)));
         }
     }
     top_spans.push(max_spans[0].clone());
     top_spans.push(max_spans[1].clone());
+    top_spans.push(max_spans[2].clone());
     let mut block = Block::default()
         .title(format!(" [3]{header_text}"))
         .title_top(Line::from(top_spans).right_aligned())
@@ -240,30 +260,10 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         }
         block = block.title_bottom(Line::from(spans).right_aligned());
     } else if single_repo_view {
-        // Flat view switcher in the bottom border: `d log · raw · unified · split`. `d` cycles;
-        // each chip jumps straight to that view. Active chip is bold/accent, the rest dim. Hover +
-        // click come free via `app.clickable` (apply_hover highlights the region under the cursor).
-        let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-        let hint = Style::default().fg(Color::DarkGray);
-        let active = Style::default().add_modifier(Modifier::BOLD);
-        let rv = app.right_view;
-        let st = app.pane_diff_view;
-        let badge_style = Style::default().fg(Color::Cyan);
-        let chip = |label: &str, on: bool, command: Command| -> (String, Style, Option<Command>) {
-            (label.to_string(), if on { active } else { hint }, Some(command))
-        };
-        // The commits/files chips carry a badge = the pull's commit/file counts (matching the info
-        // panel's "N commits · N files"). Rendered as a trailing accent number, part of the chip's
-        // click target; hidden at 0 so an up-to-date repo's tabs stay uncluttered.
-        let (commit_badge, file_badge) = selected_repo
-            .map(|idx| {
-                let state = app.repos[idx].lock().unwrap();
-                state.pull_result.as_ref().map(|result| (result.commits, result.files)).unwrap_or((0, 0))
-            })
-            .unwrap_or((0, 0));
-        let mut footer: Vec<(String, Style, Option<Command>)> = Vec::new();
-        // Merged/gone-upstream repos lead the footer with an actionable `⎇ switch … & pull` chip
-        // (same as `S`) — clicking runs the switch+pull for the selected repo's top candidate.
+        // Merged/gone-upstream repos get an actionable `⎇ switch … & pull` chip in the bottom
+        // border (same as `S`) — clicking runs the switch+pull for the selected repo's top
+        // candidate. The category tab bar itself now lives at the top of the body (below),
+        // mirroring the repo page's tab-bar style.
         let gone_top: Option<(String, Option<String>)> = selected_repo.and_then(|idx| {
             let state = app.repos[idx].lock().unwrap();
             state.switch_targets().into_iter().next().map(|base| {
@@ -274,77 +274,84 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         if let Some((base, delete)) = &gone_top {
             let attn = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
             let label = match delete {
-                Some(branch) => format!("⎇ switch to {base} & delete {branch}"),
-                None => format!("⎇ switch to {base} & pull"),
+                Some(branch) => format!(" ⎇ switch to {base} & delete {branch} "),
+                None => format!(" ⎇ switch to {base} & pull "),
             };
-            footer.push((label, attn, Some(Command::SwitchToBase)));
-            footer.push(("   ".to_string(), hint, None));
+            let width = UnicodeWidthStr::width(label.as_str()) as u16;
+            let footer_row = area.y + area.height.saturating_sub(1);
+            let col = area.x + area.width.saturating_sub(width + 1);
+            app.clickable.push(ClickRegion {
+                row: footer_row,
+                col_start: col,
+                col_end: col + width,
+                command: Command::SwitchToBase,
+            });
+            block = block.title_bottom(Line::from(Span::styled(label, attn)).right_aligned());
         }
-        footer.extend([
-            ("d".to_string(), key, Some(Command::DiffView)),
-            (" ".to_string(), hint, None),
-            chip("log", rv == RightView::Log, Command::SetResultLog),
-            (" · ".to_string(), hint, None),
-            chip("commits", rv == RightView::Commits, Command::SetResultCommits),
-        ]);
-        if commit_badge > 0 {
-            footer.push((format!(" {commit_badge}"), badge_style, Some(Command::SetResultCommits)));
-        }
-        footer.extend([
-            (" · ".to_string(), hint, None),
-            chip("files", rv == RightView::Files, Command::SetResultFiles),
-        ]);
-        if file_badge > 0 {
-            footer.push((format!(" {file_badge}"), badge_style, Some(Command::SetResultFiles)));
-        }
-        footer.extend([
-            (" · ".to_string(), hint, None),
-            chip("raw", rv == RightView::Diff && st == DiffView::Raw, Command::SetResultDiff(DiffView::Raw)),
-            (" · ".to_string(), hint, None),
-            chip(
-                "unified",
-                rv == RightView::Diff && st == DiffView::Unified,
-                Command::SetResultDiff(DiffView::Unified),
-            ),
-            (" · ".to_string(), hint, None),
-            chip("split", rv == RightView::Diff && st == DiffView::Split, Command::SetResultDiff(DiffView::Split)),
-            (" ".to_string(), hint, None),
-        ]);
-        let footer_width: u16 =
-            footer.iter().map(|(text, _, _)| UnicodeWidthStr::width(text.as_str()) as u16).sum();
-        let footer_row = area.y + area.height.saturating_sub(1);
-        let mut col = area.x + area.width.saturating_sub(footer_width + 1);
-        let mut spans = Vec::new();
-        for (text, style, command) in footer {
-            let text_width = UnicodeWidthStr::width(text.as_str()) as u16;
-            if let Some(command) = command {
-                app.clickable.push(ClickRegion {
-                    row: footer_row,
-                    col_start: col,
-                    col_end: col + text_width,
-                    command,
-                });
-            }
-            col += text_width;
-            spans.push(Span::styled(text, style));
-        }
-        block = block.title_bottom(Line::from(spans).right_aligned());
     }
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let inner_height = inner.height as usize;
+    // The category tab bar (diff / tags / branches / commits / files): one row at the top of the
+    // body, mirroring the repo page's tab-bar style. Hidden tabs (nothing to show) are skipped.
+    // Reserves 1 row off `inner` for the scrollable content below.
+    let (inner, tab_bar_height) = if single_repo_view {
+        let repo_idx = selected_repo.unwrap_or_default();
+        let state = app.repos[repo_idx].lock().unwrap();
+        let icons = app.icons();
+        let active_style = Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::BOLD);
+        let inactive_style = Style::default().fg(Color::Gray);
+        let mut spans: Vec<Span> = Vec::new();
+        let mut col = inner.x;
+        for view in &visible_categories {
+            let (icon, label) = match view {
+                RightView::Diff => (icons.pulled, app.pane_diff_view.label().to_string()),
+                RightView::Tags => (icons.tags, format!("tags ({})", app.result_category_count(&state, *view))),
+                RightView::Branches => {
+                    (icons.branches, format!("branches ({})", app.result_category_count(&state, *view)))
+                }
+                RightView::Commits => {
+                    (icons.commits, format!("commits ({})", app.result_category_count(&state, *view)))
+                }
+                RightView::Files => (icons.changed, format!("files ({})", app.result_category_count(&state, *view))),
+            };
+            let chip = format!(" {icon} {label} ");
+            let chip_w = UnicodeWidthStr::width(chip.as_str()) as u16;
+            let is_active = *view == effective_view;
+            let style = if is_active { active_style } else { inactive_style };
+            // Clicking the already-active Diff tab cycles its sub-display (same as `d`) instead
+            // of a no-op re-select — gives the log/raw/unified/split cycle a mouse affordance too.
+            let command = if is_active && *view == RightView::Diff {
+                Command::SetResultDiffView(app.pane_diff_view.cycle())
+            } else {
+                Command::SetResultCategory(*view)
+            };
+            app.clickable.push(ClickRegion { row: inner.y, col_start: col, col_end: col + chip_w, command });
+            spans.push(Span::styled(chip, style));
+            spans.push(Span::raw(" "));
+            col += chip_w + 1;
+        }
+        drop(state);
+        frame.render_widget(Paragraph::new(Line::from(spans)), Rect { height: 1, ..inner });
+        (Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner }, 1u16)
+    } else {
+        (inner, 0u16)
+    };
 
-    // The Commits/Files tabs build styled `Line`s + relative clicks; render the visible window
+    let inner_height = inner.height as usize;
+    let _ = tab_bar_height;
+
+    // The Tags/Branches/Commits/Files tabs build styled `Line`s + relative clicks; render the visible window
     // WITHOUT wrap (pre-wrapped) so click row N maps to inner row (N - scroll), then translate the
     // clicks to absolute rects on `app.info_click` (same machinery as the info panel's links).
     if pane_tab_active {
         let repo_idx = selected_repo.unwrap_or_default();
-        let (all_lines, clicks) = if app.right_view == RightView::Commits {
-            build_pane_commits(app, repo_idx, inner.width)
-        } else {
-            build_pane_files(app, repo_idx, inner.width)
+        let (all_lines, clicks) = match effective_view {
+            RightView::Tags => build_pane_tags(app, repo_idx, inner.width),
+            RightView::Branches => build_pane_branches(app, repo_idx, inner.width),
+            RightView::Commits => build_pane_commits(app, repo_idx, inner.width),
+            _ => build_pane_files(app, repo_idx, inner.width),
         };
         let total_lines = all_lines.len();
         let max_scroll = total_lines.saturating_sub(inner_height);
@@ -372,8 +379,10 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
 
     // The diff view renders the raw diff text through the modal's shared styler (raw keeps git's
     // colors; unified/split are syntax-highlighted). Everything else is plain ANSI lines.
-    let text_lines: Vec<Line> = if pane_diff_active {
-        diff_body_lines(&content_lines, pane_diff_style, None, inner.width, &app.palette())
+    let text_lines: Vec<Line> = if let Some(diff_style) =
+        pane_diff_active.then(|| pane_diff_style.as_diff_view()).flatten()
+    {
+        diff_body_lines(&content_lines, diff_style, None, inner.width, &app.palette())
     } else {
         content_lines.iter().map(|line| ansi_line_to_ratatui(line)).collect()
     };
@@ -400,34 +409,28 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
 /// 10k `Line`s every frame). Beyond it a "… N more" line closes the list.
 const MAX_PANE_FILE_ROWS: usize = 5000;
 
-/// Percent-encode the bytes of `value` that aren't URL-query-safe (keeps `A-Za-z0-9 - _ . ~`), so an
-/// author email can ride in a `?author=` GitHub link. Pure.
-fn urlencode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
+/// A commit author's GitHub profile URL when it can be read directly off a GitHub noreply email
+/// (`login@users.noreply.github.com` or `12345+login@users.noreply.github.com`) — no network
+/// needed. `None` for a regular email, where the real login (if any) can only be resolved via
+/// `gh api` (see `InfoAction::OpenAuthorProfile` — GitHub's `?author=<email>` search on the
+/// commits page does NOT reliably match by email, so that's not used as a fallback here).
+fn author_noreply_url(email: &str) -> Option<String> {
+    let email = email.trim();
+    let local = email.strip_suffix("@users.noreply.github.com")?;
+    let login = local.rsplit('+').next().unwrap_or(local);
+    (!login.is_empty()).then(|| format!("https://github.com/{login}"))
 }
 
-/// A GitHub URL for a commit author: their profile when the email is a GitHub noreply
-/// (`login@users.noreply.github.com` or `12345+login@users.noreply.github.com`), otherwise the
-/// repo's commit list filtered by that author email. `None` without a web remote / email.
-fn author_github_url(web: Option<&str>, email: &str) -> Option<String> {
-    let email = email.trim();
-    if email.is_empty() {
+/// The click action for a commit/tag author: the noreply fast path when possible, else the lazy
+/// `gh api` + cache resolution. `None` when there's no email to work with at all.
+fn author_click_action(path: &std::path::Path, sha: &str, email: &str) -> Option<InfoAction> {
+    if email.trim().is_empty() {
         return None;
     }
-    if let Some(local) = email.strip_suffix("@users.noreply.github.com") {
-        let login = local.rsplit('+').next().unwrap_or(local);
-        if !login.is_empty() {
-            return Some(format!("https://github.com/{login}"));
-        }
+    if let Some(url) = author_noreply_url(email) {
+        return Some(InfoAction::OpenUrl(url));
     }
-    web.map(|base| format!("{base}/commits?author={}", urlencode(email)))
+    Some(InfoAction::OpenAuthorProfile(path.to_path_buf(), sha.to_string(), email.to_string()))
 }
 
 /// Color + letter for a `git diff --name-status` status char (A/M/D/R/C/T/U/?).
@@ -486,7 +489,7 @@ fn build_pane_commits(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<
         let key = format!("pcommit:{}", commit.sha);
         let expanded = app.info_expanded.contains(&key);
         let commit_url = web.as_ref().map(|base| format!("{base}/commit/{}", commit.sha));
-        let author_url = author_github_url(web.as_deref(), &commit.author_email);
+        let author_action = author_click_action(&state.path, &commit.sha, &commit.author_email);
 
         // Line 1: `<sha>  <subject>`. The subject wraps when expanded, else truncates; it's
         // underlined + click-to-toggle whenever there's more to reveal (a body or an overflow).
@@ -527,8 +530,8 @@ fn build_pane_commits(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<
         meta.push(Span::styled(" · ", dim));
         let author_col = indent + UnicodeWidthStr::width(commit.rel_date.as_str()) + 3;
         let author_w = UnicodeWidthStr::width(commit.author.as_str()) as u16;
-        if let Some(url) = &author_url {
-            clicks.push((lines.len(), author_col as u16, author_col as u16 + author_w, InfoAction::OpenUrl(url.clone())));
+        if let Some(action) = &author_action {
+            clicks.push((lines.len(), author_col as u16, author_col as u16 + author_w, action.clone()));
             meta.push(Span::styled(commit.author.clone(), link));
         } else {
             meta.push(Span::styled(commit.author.clone(), dim));
@@ -609,6 +612,137 @@ fn build_pane_files(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'s
     }
     if count > MAX_PANE_FILE_ROWS {
         lines.push(Line::from(Span::styled(format!("… {} more", count - MAX_PANE_FILE_ROWS), dim)));
+    }
+    (lines, Vec::new())
+}
+
+/// Build the Result pane's **Tags** tab: every tag, newest first (mirrors the repo page's list
+/// style) — sha → GitHub commit, subject, `rel_date · author` with the author → GitHub.
+fn build_pane_tags(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
+    let state = app.repos[repo_idx].lock().unwrap();
+    let width = width.max(1) as usize;
+    let dim = Style::default().fg(Color::DarkGray);
+    let value = Style::default();
+    let link = Style::default().fg(Color::Cyan);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut clicks: Vec<InfoClick> = Vec::new();
+
+    let tags = match &state.tags {
+        None => {
+            lines.push(Line::from(Span::styled("(loading…)", dim)));
+            return (lines, clicks);
+        }
+        Some(tags) => tags,
+    };
+    if tags.is_empty() {
+        lines.push(Line::from(Span::styled("No tags in this repo.", dim)));
+        return (lines, clicks);
+    }
+
+    let web = state.remote_url.as_deref().and_then(web_remote);
+    let count = tags.len();
+    lines.push(Line::from(Span::styled(format!("{count} tag{}", if count == 1 { "" } else { "s" }), dim)));
+    lines.push(Line::from(""));
+
+    for tag in tags {
+        let commit_url = web.as_ref().map(|base| format!("{base}/commit/{}", tag.sha));
+        let author_action = author_click_action(&state.path, &tag.sha, &tag.author_email);
+
+        let name_w = UnicodeWidthStr::width(tag.name.as_str());
+        let subj_col = name_w + 2;
+        let subj_avail = width.saturating_sub(subj_col);
+        let mut header: Vec<Span<'static>> = vec![Span::styled(tag.name.clone(), value.add_modifier(Modifier::BOLD))];
+        header.push(Span::raw("  "));
+        header.push(Span::styled(truncate_str(&tag.subject, subj_avail), dim));
+        lines.push(Line::from(header));
+
+        let indent = subj_col;
+        let mut meta: Vec<Span<'static>> = vec![Span::raw(" ".repeat(indent))];
+        if let Some(url) = &commit_url {
+            let sha_w = UnicodeWidthStr::width(tag.sha.as_str()) as u16;
+            clicks.push((lines.len(), indent as u16, indent as u16 + sha_w, InfoAction::OpenUrl(url.clone())));
+            meta.push(Span::styled(tag.sha.clone(), link));
+        } else {
+            meta.push(Span::styled(tag.sha.clone(), dim));
+        }
+        meta.push(Span::styled(" · ", dim));
+        meta.push(Span::styled(tag.rel_date.clone(), dim));
+        meta.push(Span::styled(" · ", dim));
+        let author_col =
+            indent + UnicodeWidthStr::width(tag.sha.as_str()) + 3 + UnicodeWidthStr::width(tag.rel_date.as_str()) + 3;
+        let author_w = UnicodeWidthStr::width(tag.author.as_str()) as u16;
+        if let Some(action) = &author_action {
+            clicks.push((lines.len(), author_col as u16, author_col as u16 + author_w, action.clone()));
+            meta.push(Span::styled(tag.author.clone(), link));
+        } else {
+            meta.push(Span::styled(tag.author.clone(), dim));
+        }
+        lines.push(Line::from(meta));
+        lines.push(Line::from(""));
+    }
+    (lines, clicks)
+}
+
+/// Build the Result pane's **Branches** tab: every local branch (mirrors the repo page's Branches
+/// list) — name (HEAD marked), upstream ahead/behind, `rel_date · author`, tip subject.
+fn build_pane_branches(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
+    let state = app.repos[repo_idx].lock().unwrap();
+    let width = width.max(1) as usize;
+    let dim = Style::default().fg(Color::DarkGray);
+    let value = Style::default();
+    let head = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let branches = match &state.result_branches {
+        None => {
+            lines.push(Line::from(Span::styled("(loading…)", dim)));
+            return (lines, Vec::new());
+        }
+        Some(branches) => branches,
+    };
+    if branches.is_empty() {
+        lines.push(Line::from(Span::styled("No local branches.", dim)));
+        return (lines, Vec::new());
+    }
+
+    let count = branches.len();
+    lines.push(Line::from(Span::styled(
+        format!("{count} branch{}", if count == 1 { "" } else { "es" }),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    for branch in branches {
+        let name_style = if branch.is_head { head } else { value.add_modifier(Modifier::BOLD) };
+        let mut header: Vec<Span<'static>> = Vec::new();
+        if branch.is_head {
+            header.push(Span::styled("* ", head));
+        } else {
+            header.push(Span::raw("  "));
+        }
+        header.push(Span::styled(branch.name.clone(), name_style));
+        let track = match (branch.ahead, branch.behind) {
+            (Some(0), Some(0)) | (None, None) => String::new(),
+            (ahead, behind) => {
+                let ahead = ahead.unwrap_or(0);
+                let behind = behind.unwrap_or(0);
+                format!("  ↑{ahead} ↓{behind}")
+            }
+        };
+        if !track.is_empty() {
+            header.push(Span::styled(track, dim));
+        }
+        lines.push(Line::from(header));
+
+        let indent = 2;
+        let meta = format!("{}{} · {}", " ".repeat(indent), branch.last_commit_rel, branch.author);
+        lines.push(Line::from(Span::styled(meta, dim)));
+        let subj_avail = width.saturating_sub(indent);
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(indent)),
+            Span::styled(truncate_str(&branch.subject, subj_avail), dim),
+        ]));
+        lines.push(Line::from(""));
     }
     (lines, Vec::new())
 }

@@ -7,7 +7,7 @@ use tokio::sync::{mpsc, Semaphore};
 
 use crate::app::{
     BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PrState, PulledCommit, PullResult,
-    RepoDetails, StashInfo, WorktreeInfo,
+    RepoDetails, StashInfo, TagInfo, WorktreeInfo,
 };
 
 /// Result of parsing git pull output to determine status.
@@ -1073,6 +1073,24 @@ pub async fn branch_file_diff(dir: &Path, branch: &str, path: &str) -> Vec<Strin
     run_diff(&["-C", dir_str, "diff", "--color=always", &merge_base, branch, "--", path]).await
 }
 
+/// Resolve a commit's real GitHub author login via the commits API (GitHub does the email→account
+/// matching server-side — this is the only reliable way short of the noreply-email shortcut).
+/// `None` when `gh` fails, the repo isn't on GitHub, or GitHub couldn't match the commit's email to
+/// any account (`.author` is `null` in the response).
+pub async fn resolve_commit_author_login(dir: &Path, sha: &str) -> Option<String> {
+    let output = Command::new("gh")
+        .args(["api", &format!("repos/{{owner}}/{{repo}}/commits/{sha}")])
+        .current_dir(dir)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    json.get("author")?.get("login")?.as_str().map(str::to_string)
+}
+
 /// Fetch a PR's full data via `gh pr view <number> --json …` and assemble it into one markdown
 /// document for the PR viewer modal: a metadata header, the description, then every review and
 /// comment. Returns `None` when `gh` fails / isn't a GitHub repo.
@@ -1861,6 +1879,49 @@ pub async fn list_local_branches(dir: &Path) -> Vec<BranchInfo> {
         .lines()
         .filter_map(parse_branch_line)
         .collect()
+}
+
+/// Parse one US (0x1f)-separated `for-each-ref refs/tags` line into a `TagInfo`. Requests both the
+/// direct and `*`-dereferenced (tag → tagged-commit) forms of each field: for an annotated tag the
+/// direct fields describe the tag object itself (no author/committer date), so the dereferenced
+/// form carries the tagged commit's real info; for a lightweight tag the ref points straight at the
+/// commit and the dereferenced form is empty (nothing to dereference) — the direct form has it
+/// already. Preferring whichever is non-empty covers both.
+fn parse_tag_line(line: &str) -> Option<TagInfo> {
+    let fields: Vec<&str> = line.split('\u{1f}').collect();
+    if fields.len() < 11 || fields[0].is_empty() {
+        return None;
+    }
+    let pick = |direct: &str, deref: &str| -> String {
+        if !deref.is_empty() { deref.to_string() } else { direct.to_string() }
+    };
+    Some(TagInfo {
+        name: fields[0].to_string(),
+        sha: pick(fields[1], fields[2]),
+        subject: pick(fields[3], fields[4]),
+        author: pick(fields[5], fields[6]),
+        author_email: pick(fields[7], fields[8]),
+        rel_date: pick(fields[9], fields[10]),
+    })
+}
+
+/// List tags (newest tagged-commit first) with sha, subject, author, author email, and relative
+/// date — Result pane's Tags tab. Works for both annotated and lightweight tags (see
+/// `parse_tag_line`).
+pub async fn list_tags(dir: &Path) -> Vec<TagInfo> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let format = "%(refname:short)%1f%(objectname:short)%1f%(*objectname:short)%1f\
+%(contents:subject)%1f%(*contents:subject)%1f%(authorname)%1f%(*authorname)%1f\
+%(authoremail:trim)%1f%(*authoremail:trim)%1f%(committerdate:relative)%1f%(*committerdate:relative)";
+    let output = match Command::new("git")
+        .args(["-C", dir_str, "for-each-ref", "--sort=-creatordate", "--format", format, "refs/tags"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&output.stdout).lines().filter_map(parse_tag_line).collect()
 }
 
 /// Parse `git worktree list --porcelain` output into worktrees, skipping the main checkout

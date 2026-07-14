@@ -73,6 +73,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         Span::raw(" "),
         max_spans[0].clone(),
         max_spans[1].clone(),
+        max_spans[2].clone(),
     ])
     .right_aligned();
     let block = Block::default()

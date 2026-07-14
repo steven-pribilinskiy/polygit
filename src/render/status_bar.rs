@@ -168,7 +168,7 @@ pub(crate) fn compose_status_row(
 
 /// Style a footer segment list for the current footer state, returning inert (`None`-command),
 /// dimmed segments where a command can't run right now. When a **modal** is open everything goes
-/// inert except `settings`/`help`/`quit` (which stay live); when a **leader** menu is armed
+/// inert except `settings`/`help`/`repaint`/`quit` (which stay live); when a **leader** menu is armed
 /// everything goes inert except the leader's trigger (which gets a highlight pill); otherwise each
 /// command dims when `command_applicable` is false. Non-command separators recede with the row only
 /// under a modal/leader, so a single disabled command doesn't dim its neighbors' separators.
@@ -185,7 +185,7 @@ pub(crate) fn style_footer(
         .into_iter()
         .map(|(text, style, command)| match command {
             Some(cmd) if modal_open => {
-                if matches!(cmd, Command::Settings | Command::Help | Command::Quit) {
+                if matches!(cmd, Command::Settings | Command::Help | Command::Quit | Command::Repaint) {
                     (text, style, Some(cmd))
                 } else {
                     (text, dim, None)
@@ -311,6 +311,9 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
         ("?".to_string(), key, Some(Command::Help)),
         (" help".to_string(), hint, Some(Command::Help)),
         (" · ".to_string(), hint, None),
+        ("^L".to_string(), key, Some(Command::Repaint)),
+        (" repaint".to_string(), hint, Some(Command::Repaint)),
+        (" · ".to_string(), hint, None),
         ("q".to_string(), key, Some(Command::Quit)),
         // Inside a modal, `q` closes the modal rather than quitting — label it dynamically.
         (if modal_open { " close" } else { " quit" }.to_string(), hint, Some(Command::Quit)),
@@ -413,6 +416,9 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
             (" · ".to_string(), hint, None),
             ("d".to_string(), key, Some(Command::DiffView)),
             (" diff".to_string(), diff_label, Some(Command::DiffView)),
+            (" · ".to_string(), hint, None),
+            ("D".to_string(), key, Some(Command::CycleResultCategory)),
+            (" category".to_string(), hint, Some(Command::CycleResultCategory)),
             (" · ".to_string(), hint, None),
             ("tab".to_string(), key, Some(Command::FocusToggle)),
             (" focus".to_string(), hint, Some(Command::FocusToggle)),
