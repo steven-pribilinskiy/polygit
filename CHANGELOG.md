@@ -3,6 +3,15 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.14.2 — 2026-07-14
+Internal: split `app/state1.rs`/`state2.rs`/`state3.rs` into thematic `app/state/` modules
+The three `impl AppState` files were split by size, not by concern, so related methods (the
+settings dialog, navigation, hit-testing) were smeared across all three with no way to guess
+where a given method lived short of memorizing the split. Replaced with fourteen thematic
+modules under `app/state/` (`grouping`, `rows`, `nav`, `list_controls`, `settings`, `panes`,
+`results`, `queries`, `hits`, `repo_page`, `diff_modal`, `modals`, `keybindings_ui`, `session`).
+Pure mechanical move — no behavior change.
+
 ## v3.14.1 — 2026-07-14
 Fix: a possible panic when sorting the list while background pulls are updating repo state
 `visible_indices`'s comparators used to re-lock each repo's mutex live on every pairwise

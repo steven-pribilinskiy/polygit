@@ -12,9 +12,7 @@ mod types;
 pub use types::*;
 
 mod dropdown;
-mod state1;
-mod state2;
-mod state3;
+mod state;
 
 #[cfg(test)]
 mod tests;
