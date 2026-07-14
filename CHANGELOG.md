@@ -3,6 +3,18 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.14.1 — 2026-07-14
+Fix: a possible panic when sorting the list while background pulls are updating repo state
+`visible_indices`'s comparators used to re-lock each repo's mutex live on every pairwise
+comparison during `sort_by`. Since a repo's mutex is independent of `AppState`'s own lock, a
+background pull/detail worker mutating that `RepoState` (status, dirty count, ahead/behind, …)
+between two comparisons of the same pair could flip the result mid-sort — violating the total
+order `sort_by` requires and panicking with "user-provided comparison function does not correctly
+implement a total order".
+- Each candidate repo's filter/sort-relevant fields are now snapshotted once, under a single lock,
+  before sorting (`RankedRepo` / `RepoSortKey`) — every comparison during the sort reads from that
+  frozen snapshot instead of live, concurrently-mutating state.
+
 ## v3.14.0 — 2026-07-14
 Layout density preset (compact/spacious/custom), and a fix for an undraggable pane splitter
 The pane splitter's "on hover" style (the shipped default) rendered the divider between the list

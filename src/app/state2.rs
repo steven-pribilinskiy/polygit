@@ -1,5 +1,30 @@
 use super::*;
 
+/// A repo's frozen filter/sort fields, snapshotted under a single lock in `visible_indices`
+/// before sorting — see that function for why re-locking live inside the comparator is unsafe.
+struct RankedRepo {
+    index: usize,
+    /// Fuzzy-match score against a name filter; 0 when no name filter is active.
+    score: u32,
+    name_lower: String,
+    sort_key: RepoSortKey,
+}
+
+/// A frozen per-repo sort key for the currently-active `SortColumn`, captured once per repo
+/// instead of read live on every pairwise comparison during a sort. Only same-variant keys are
+/// ever compared in practice since `sort_column` is fixed for the whole `visible_indices` call,
+/// but the derived `Ord` (which orders by variant position first) is a valid total order
+/// regardless of that.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum RepoSortKey {
+    Text(String),
+    Num(u32),
+    NumPair(u32, u32),
+    Timestamp(i64),
+    PullRequest(bool, u32),
+    Bool(bool),
+}
+
 impl AppState {
     pub fn visible_indices(&self) -> Vec<usize> {
         let filter = self.filter.as_ref().map(|filter| filter.to_lowercase());
@@ -8,8 +33,15 @@ impl AppState {
         let name_needle = filter
             .as_deref()
             .filter(|needle| !needle.is_empty() && !needle.starts_with('@'));
-        // (index, fuzzy score) — score is 0 unless a name filter is ranking the results.
-        let mut scored: Vec<(usize, u32)> = self
+        // Snapshot each candidate repo's filter/sort fields under ONE lock, before sorting. The
+        // comparators here used to re-lock `self.repos[x]` live on every comparison — since each
+        // repo's mutex is independent of AppState's own lock, a background pull/detail worker
+        // mutating `RepoState` (status, dirty_count, ahead/behind, …) between two comparisons of
+        // the SAME pair could flip the result mid-sort, violating the total-order guarantee
+        // `sort_by` requires and panicking ("user-provided comparison function does not correctly
+        // implement a total order"). Locking once up front freezes every comparison against a
+        // consistent snapshot instead of live, concurrently-mutating state.
+        let mut scored: Vec<RankedRepo> = self
             .repos
             .iter()
             .enumerate()
@@ -24,42 +56,99 @@ impl AppState {
                 {
                     return None;
                 }
-                match filter.as_deref() {
-                    None => Some((index, 0)),
+                let score = match filter.as_deref() {
+                    None => Some(0),
                     Some(needle) => match needle.strip_prefix('@') {
-                        Some(token) => Self::status_token_matches(&state, token).then_some((index, 0)),
+                        Some(token) => Self::status_token_matches(&state, token).then_some(0),
                         None => tui_pick::finder::fuzzy_match(&state.rel_path, needle)
-                            .map(|(score, _)| (index, score)),
+                            .map(|(score, _)| score),
                     },
-                }
+                }?;
+                Some(RankedRepo {
+                    index,
+                    score,
+                    name_lower: state.rel_path.to_lowercase(),
+                    sort_key: self.repo_sort_key(&state),
+                })
             })
             .collect();
         if name_needle.is_some() {
             // Rank by fuzzy score (best first), tie-break by name ascending.
-            scored.sort_by(|&(left, left_score), &(right, right_score)| {
-                right_score.cmp(&left_score).then_with(|| {
-                    self.repos[left].lock().unwrap().rel_path.to_lowercase().cmp(
-                        &self.repos[right].lock().unwrap().rel_path.to_lowercase(),
-                    )
-                })
+            scored.sort_by(|left, right| {
+                right.score.cmp(&left.score).then_with(|| left.name_lower.cmp(&right.name_lower))
             });
         } else {
             // The list is sorted by the active column (direction-aware), then ties break by name
             // (rel_path) ascending — always alphabetical, never discovery order, and independent of
             // the primary direction (so `branch ▼` lists branches Z→A but each branch's repos A→Z).
-            scored.sort_by(|&(left, _), &(right, _)| {
+            scored.sort_by(|left, right| {
                 let primary = match self.sort_dir {
-                    SortDir::Asc => self.compare_repos(left, right),
-                    SortDir::Desc => self.compare_repos(left, right).reverse(),
+                    SortDir::Asc => left.sort_key.cmp(&right.sort_key),
+                    SortDir::Desc => left.sort_key.cmp(&right.sort_key).reverse(),
                 };
-                primary.then_with(|| {
-                    self.repos[left].lock().unwrap().rel_path.to_lowercase().cmp(
-                        &self.repos[right].lock().unwrap().rel_path.to_lowercase(),
-                    )
-                })
+                primary.then_with(|| left.name_lower.cmp(&right.name_lower))
             });
         }
-        scored.into_iter().map(|(index, _)| index).collect()
+        scored.into_iter().map(|ranked| ranked.index).collect()
+    }
+
+    /// Extract the currently-active sort column's key from an already-locked `RepoState` — the
+    /// single-state counterpart of the old per-pair `compare_repos`, captured once per repo in
+    /// `visible_indices` instead of re-read live on every comparison during the sort.
+    fn repo_sort_key(&self, state: &RepoState) -> RepoSortKey {
+        match self.sort_column {
+            SortColumn::Name => RepoSortKey::Text(state.rel_path.to_lowercase()),
+            SortColumn::Branch => {
+                RepoSortKey::Text(state.branch.as_deref().unwrap_or("").to_lowercase())
+            }
+            SortColumn::Status => RepoSortKey::Num(state.status.sort_rank() as u32),
+            SortColumn::AheadBehind => {
+                let details = state.details.as_ref();
+                RepoSortKey::NumPair(
+                    details.and_then(|d| d.behind).unwrap_or(0),
+                    details.and_then(|d| d.ahead).unwrap_or(0),
+                )
+            }
+            SortColumn::Dirty => {
+                RepoSortKey::Num(state.details.as_ref().map_or(0, |d| d.dirty_count))
+            }
+            SortColumn::LastCommit => {
+                // Newest first under ascending feels wrong; use the raw timestamp ascending
+                // (oldest first), so Desc gives newest first.
+                RepoSortKey::Timestamp(state.details.as_ref().map_or(0, |d| d.commit_timestamp))
+            }
+            SortColumn::Worktrees => {
+                let count =
+                    self.worktrees.iter().filter(|worktree| worktree.repo == state.name).count();
+                RepoSortKey::Num(count as u32)
+            }
+            SortColumn::Branches => {
+                RepoSortKey::Num(state.details.as_ref().map_or(0, |d| d.branch_count))
+            }
+            SortColumn::Stashes => {
+                RepoSortKey::Num(state.details.as_ref().map_or(0, |d| d.stash_count))
+            }
+            SortColumn::PulledCommits => {
+                RepoSortKey::Num(state.pull_result.as_ref().map_or(0, |p| p.commits))
+            }
+            SortColumn::PulledFiles => {
+                RepoSortKey::Num(state.pull_result.as_ref().map_or(0, |p| p.files))
+            }
+            SortColumn::PullRequest => {
+                // Repos with a shown PR first (by number asc), PR-less repos last (in Asc). A
+                // merged/closed PR counts as PR-less unless the "Merged PRs" setting is on.
+                let number = state
+                    .pr
+                    .as_ref()
+                    .filter(|pr| pr.shown(self.show_merged_prs))
+                    .map(|pr| pr.number);
+                RepoSortKey::PullRequest(number.is_none(), number.unwrap_or(0))
+            }
+            SortColumn::Favorite => {
+                // Favorited repos first (Asc) — keyed by absolute path, like `is_favorite`.
+                RepoSortKey::Bool(!self.favorites.contains(&favorite_key(&state.path)))
+            }
+        }
     }
 
     /// The list rows in display order — the single source of truth for the list pane. With
@@ -713,80 +802,6 @@ impl AppState {
             self.selected = pos;
         } else {
             self.snap_selection(false);
-        }
-    }
-
-    /// Compare two repos by the active sort column (ascending). Missing details sort as 0.
-    fn compare_repos(&self, a: usize, b: usize) -> std::cmp::Ordering {
-        let left = self.repos[a].lock().unwrap();
-        let right = self.repos[b].lock().unwrap();
-        let worktrees = |name: &str| self.worktrees.iter().filter(|wt| wt.repo == name).count();
-        match self.sort_column {
-            SortColumn::Name => left.rel_path.to_lowercase().cmp(&right.rel_path.to_lowercase()),
-            SortColumn::Branch => {
-                let key = |state: &RepoState| {
-                    state.branch.as_deref().unwrap_or("").to_lowercase()
-                };
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::Status => left.status.sort_rank().cmp(&right.status.sort_rank()),
-            SortColumn::AheadBehind => {
-                let key = |state: &RepoState| {
-                    let details = state.details.as_ref();
-                    (
-                        details.and_then(|d| d.behind).unwrap_or(0),
-                        details.and_then(|d| d.ahead).unwrap_or(0),
-                    )
-                };
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::Dirty => {
-                let key = |state: &RepoState| state.details.as_ref().map_or(0, |d| d.dirty_count);
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::LastCommit => {
-                // Newest first under ascending feels wrong; use the raw timestamp ascending
-                // (oldest first), so Desc gives newest first.
-                let key =
-                    |state: &RepoState| state.details.as_ref().map_or(0, |d| d.commit_timestamp);
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::Worktrees => worktrees(&left.name).cmp(&worktrees(&right.name)),
-            SortColumn::Branches => {
-                let key = |state: &RepoState| state.details.as_ref().map_or(0, |d| d.branch_count);
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::Stashes => {
-                let key = |state: &RepoState| state.details.as_ref().map_or(0, |d| d.stash_count);
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::PulledCommits => {
-                let key = |state: &RepoState| state.pull_result.as_ref().map_or(0, |p| p.commits);
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::PulledFiles => {
-                let key = |state: &RepoState| state.pull_result.as_ref().map_or(0, |p| p.files);
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::PullRequest => {
-                // Repos with a shown PR first (by number asc), PR-less repos last (in Asc). A
-                // merged/closed PR counts as PR-less unless the "Merged PRs" setting is on.
-                let show_merged = self.show_merged_prs;
-                let key = |state: &RepoState| {
-                    let number = state
-                        .pr
-                        .as_ref()
-                        .filter(|pr| pr.shown(show_merged))
-                        .map(|pr| pr.number);
-                    (number.is_none(), number.unwrap_or(0))
-                };
-                key(&left).cmp(&key(&right))
-            }
-            SortColumn::Favorite => {
-                // Favorited repos first (Asc) — keyed by absolute path, like `is_favorite`.
-                let key = |state: &RepoState| !self.favorites.contains(&favorite_key(&state.path));
-                key(&left).cmp(&key(&right))
-            }
         }
     }
 
