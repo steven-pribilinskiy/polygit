@@ -3,6 +3,22 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.14.0 — 2026-07-14
+Layout density preset (compact/spacious/custom), and a fix for an undraggable pane splitter
+The pane splitter's "on hover" style (the shipped default) rendered the divider between the list
+and preview panes completely flush — zero width, no reserved cell — so there was nothing to grab.
+It was compounded by a hit-test collision: the list's own scrollbar claimed the one column that
+would have been the divider's leftmost hotspot, leaving an even narrower target whenever the list
+was scrollable.
+- Every pane boundary (list/preview, the docked repo page, the info/result split) now always
+  reserves a real 1-cell lane so the splitter stays reliably draggable — "dedicated" and "on hover"
+  now differ only in how that lane is painted (a persistent grip vs. one that only shows under the
+  cursor), never in whether space is reserved at all.
+- New **Settings → Layout → Layout density** row bundles Panel padding + Borders + Pane splitter
+  style into one quick preset: **compact** (padding/borders off, hover-style splitter), **spacious**
+  (padding/borders on, persistent splitter grip), or **custom** — which lights up automatically
+  whenever the three settings don't exactly match either bundle, rather than being a state you pick.
+
 ## v3.13.0 — 2026-07-14
 Settings dialog: search no longer shifts the modal, and results keep their section titles
 Typing into the settings search box used to resize the modal on every keystroke (it sized itself

@@ -1143,29 +1143,27 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
             render_preview(frame, app, full_main_area, tick);
         }
     } else {
-        // In "dedicated" splitter mode each boundary gets a real 1-cell lane (a row for the dock /
-        // info-result splits, a column for the list/preview split) that render_divider fills with a
-        // persistent grip; in "hover" mode the panes stay flush and the grip only shows under the
-        // cursor. The lane steals one cell, so the panes are laid out against the reduced extent.
-        let dedicated = app.splitter_mode == SplitterMode::Dedicated;
+        // Every boundary (dock, list/preview, info/result) always reserves a real 1-cell lane (a
+        // row for the dock/info-result splits, a column for the list/preview split) — that's what
+        // keeps the splitter draggable regardless of style. `splitter_mode` only controls how
+        // render_divider paints that lane: a persistent grip fill (`Dedicated`) or a grip that only
+        // shows under the cursor (`Hover`), the lane itself stays empty either way. The lane steals
+        // one cell, so the panes are laid out against the reduced extent.
 
         // Docked repo page: carve a bottom panel off the main area; the boundary is a draggable
         // horizontal splitter (height = dock_ratio of the main area).
         let dock_area = if app.repo_page.is_some() {
             let dock_height = (f64::from(full_main_area.height) * app.dock_ratio).round() as u16;
             let dock_height = dock_height.clamp(6, full_main_area.height.saturating_sub(6).max(6));
-            let constraints = if dedicated {
-                vec![Constraint::Min(0), Constraint::Length(1), Constraint::Length(dock_height)]
-            } else {
-                vec![Constraint::Min(0), Constraint::Length(dock_height)]
-            };
+            let constraints =
+                vec![Constraint::Min(0), Constraint::Length(1), Constraint::Length(dock_height)];
             let split = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
                 .split(full_main_area);
             let dock = *split.last().unwrap();
-            // The hotspot/lane row: the dedicated lane (split[1]) or the dock's top border row.
-            app.dock_divider_row = Some(if dedicated { split[1].y } else { dock.y });
+            // The hotspot/lane row: always the reserved lane (split[1]).
+            app.dock_divider_row = Some(split[1].y);
             Some((split[0], dock))
         } else {
             None
@@ -1173,15 +1171,12 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         let main_area = dock_area.map_or(full_main_area, |(top, _)| top);
 
         // Split main area horizontally using the adjustable ratio (against the width left after the
-        // dedicated lane, if any).
-        let avail = if dedicated { main_area.width.saturating_sub(1) } else { main_area.width };
+        // reserved divider lane).
+        let avail = main_area.width.saturating_sub(1);
         let left_width = ((f64::from(avail)) * app.split_ratio).round() as u16;
         let left_width = left_width.clamp(1, avail.saturating_sub(1).max(1));
-        let constraints = if dedicated {
-            vec![Constraint::Length(left_width), Constraint::Length(1), Constraint::Min(0)]
-        } else {
-            vec![Constraint::Length(left_width), Constraint::Min(0)]
-        };
+        let constraints =
+            vec![Constraint::Length(left_width), Constraint::Length(1), Constraint::Min(0)];
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(constraints)
@@ -1190,12 +1185,12 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         let list_area = horizontal_chunks[0];
         let preview_area = *horizontal_chunks.last().unwrap();
 
-        // Capture geometry for mouse hit-testing in the event loop. `divider_col` is the lane column
-        // (dedicated) or the flush boundary (hover); the hotspot test is ±1 around it either way.
+        // Capture geometry for mouse hit-testing in the event loop. `divider_col` is always the
+        // reserved lane column; the hotspot test is ±1 around it.
         app.main_area = main_area;
         app.list_area = list_area;
         app.preview_area = preview_area;
-        app.divider_col = if dedicated { horizontal_chunks[1].x } else { preview_area.x };
+        app.divider_col = horizontal_chunks[1].x;
 
         // Render left pane (returns the list's scroll offset for hit-testing).
         let list_offset = render_list(frame, app, list_area, tick);

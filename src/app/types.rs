@@ -1351,11 +1351,11 @@ impl Theme {
     }
 }
 
-/// How the draggable pane splitters are presented. `Dedicated` reserves a real 1-cell lane (a
-/// column between the panes, a row between stacked panes) filled with a persistent grip — clearly
-/// visible, at the cost of one cell of space. `Hover` keeps the panes flush (zero-width boundary)
-/// and only shows a thin grip under the cursor when it crosses a splitter hotspot. The two are
-/// mutually exclusive; the hotspots work in both.
+/// How the draggable pane splitters render. Every boundary always reserves a real 1-cell lane (a
+/// column between the panes, a row between stacked panes) so the splitter stays grabbable either
+/// way — the two modes differ only in how that lane is painted. `Dedicated` fills it with a
+/// persistent grip — clearly visible at rest. `Hover` leaves it blank at rest and only shows a
+/// thin grip under the cursor when it crosses a splitter hotspot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SplitterMode {
@@ -1877,7 +1877,7 @@ impl RepoTabsMode {
 pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Agent", 2),
     ("Interaction", 2),
-    ("Layout", 6),
+    ("Layout", 7),
     ("Lists", 3),
     ("Pull requests", 1),
     ("Sync", 3),
@@ -1903,7 +1903,7 @@ pub struct SettingInfo {
 
 /// Every settings row in global (alphabetical-section) order — see `SETTINGS_TABS`. The ONLY place
 /// row labels + tips live; everything else derives from this or is asserted against it.
-pub const SETTINGS: [SettingInfo; 34] = [
+pub const SETTINGS: [SettingInfo; 35] = [
     // Agent
     SettingInfo { label: "AI agent", tip: "Which AI agent `c` launches for the selected repo, run in its directory", option_tips: &[] },
     SettingInfo { label: "Skip permissions", tip: "Launch the agent with its skip-permissions flag (e.g. claude's --dangerously-skip-permissions)", option_tips: &[] },
@@ -1921,6 +1921,7 @@ pub const SETTINGS: [SettingInfo; 34] = [
     SettingInfo { label: "Repo page tabs", tip: "Split the repo page into Branches/Worktrees/Stashes tabs (auto = when 2+ sections have rows)", option_tips: &[] },
     SettingInfo { label: "Auto branch-check", tip: "Periodically refresh each repo's local branch/status (no pull) — auto scales the interval with the repo count", option_tips: &[] },
     SettingInfo { label: "Info layout", tip: "How the info panel groups its fields: titled (dim UPPERCASE section headers + blank lines), spaced (blank lines only), or flat. A maximized info pane always shows titled sections. (also the `L` key)", option_tips: &[] },
+    SettingInfo { label: "Layout density", tip: "Quick preset for panel padding + borders + pane splitter style: compact, spacious, or custom (already matching neither)", option_tips: &[] },
     // Lists
     SettingInfo { label: "Grouping", tip: "Render the repo list as named group sections (from groups.json)", option_tips: &[] },
     SettingInfo { label: "Tree view", tip: "Render the repos as a collapsible directory tree", option_tips: &[] },

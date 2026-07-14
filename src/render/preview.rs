@@ -48,26 +48,22 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
     let area = match (info_visible, result_visible) {
         (true, true) => {
             let repo_idx = selected_repo.unwrap();
-            // In "dedicated" splitter mode a 1-row lane separates the info + result panes (filled by
-            // render_divider); in "hover" mode they're flush and the boundary row is the result's top
-            // border. Lay out info against the height left after the lane, if any.
-            let dedicated = app.splitter_mode == SplitterMode::Dedicated;
-            let avail = if dedicated { area.height.saturating_sub(1) } else { area.height };
+            // A 1-row lane always separates the info + result panes (filled by render_divider —
+            // persistently in "dedicated" splitter mode, only under the cursor in "hover" mode).
+            // Lay out info against the height left after the lane.
+            let avail = area.height.saturating_sub(1);
             let info_h = ((f64::from(avail)) * app.preview_split_ratio).round() as u16;
             let info_h = info_h.clamp(3, avail.saturating_sub(3).max(3));
-            let constraints = if dedicated {
-                vec![Constraint::Length(info_h), Constraint::Length(1), Constraint::Min(0)]
-            } else {
-                vec![Constraint::Length(info_h), Constraint::Min(0)]
-            };
+            let constraints =
+                vec![Constraint::Length(info_h), Constraint::Length(1), Constraint::Min(0)];
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
                 .split(area);
             app.preview_split_area = area;
-            // The hotspot/lane row: the dedicated lane (chunks[1]) or the result pane's top border.
+            // The hotspot/lane row: always the reserved lane (chunks[1]).
             let result_area = *chunks.last().unwrap();
-            app.preview_divider_row = Some(if dedicated { chunks[1].y } else { result_area.y });
+            app.preview_divider_row = Some(chunks[1].y);
             render_info_panel(frame, app, chunks[0], repo_idx);
             result_area
         }

@@ -828,7 +828,7 @@ impl AppState {
     }
 
     /// Number of rows in the settings modal.
-    pub const SETTINGS_ROWS: usize = 34;
+    pub const SETTINGS_ROWS: usize = 35;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -1160,53 +1160,67 @@ impl AppState {
             }
             8 => self.branch_check = self.branch_check.cycle(),
             9 => self.info_layout = self.info_layout.cycle(),
-            // Lists
+            // Layout density preset (derived) — cycles Compact ⇄ Spacious; Custom isn't a cycle
+            // target since it has no bundle of its own (see `layout_density`). Mirrors
+            // `set_setting_option`'s (10, 0)/(10, 1) bundles directly (no double save_state).
             10 => {
+                if self.layout_density() == 1 {
+                    self.panel_padding = false;
+                    self.show_borders = false;
+                    self.splitter_mode = SplitterMode::Hover;
+                } else {
+                    self.panel_padding = true;
+                    self.show_borders = true;
+                    self.splitter_mode = SplitterMode::Dedicated;
+                }
+            }
+            // Lists
+            11 => {
                 let prev = self.selected_repo_index();
                 self.grouping_enabled = !self.grouping_enabled;
                 self.reselect_repo(prev);
             }
-            11 => {
+            12 => {
                 let prev = self.selected_repo_index();
                 self.tree_enabled = !self.tree_enabled;
                 self.reselect_repo(prev);
             }
-            12 => self.hide_folder_lines = !self.hide_folder_lines,
+            13 => self.hide_folder_lines = !self.hide_folder_lines,
             // Pull requests
-            13 => self.show_merged_prs = !self.show_merged_prs,
+            14 => self.show_merged_prs = !self.show_merged_prs,
             // Sync
-            14 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
-            15 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
-            16 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            15 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            16 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            17 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
             // Theming
-            17 => {
+            18 => {
                 self.icon_style = match self.icon_style {
                     IconStyle::Unicode => IconStyle::Emoji,
                     IconStyle::Emoji => IconStyle::Unicode,
                 };
             }
             // Inert in emoji mode (always hides zeros); only togglable with the Unicode set.
-            18 if self.icon_style != IconStyle::Emoji => {
+            19 if self.icon_style != IconStyle::Emoji => {
                 self.hide_zero_counts = !self.hide_zero_counts;
             }
-            19 => self.theme = self.theme.cycle(),
-            20 => self.background = self.background.cycle(),
-            21 => self.contrast = self.contrast.cycle(),
-            22 => self.selection_style = self.selection_style.cycle(),
-            23 => self.button_hover_style = self.button_hover_style.cycle(),
+            20 => self.theme = self.theme.cycle(),
+            21 => self.background = self.background.cycle(),
+            22 => self.contrast = self.contrast.cycle(),
+            23 => self.selection_style = self.selection_style.cycle(),
+            24 => self.button_hover_style = self.button_hover_style.cycle(),
             // Tooltips
-            24 => self.tooltips.set_all(!self.tooltips.all_on()),
-            25 => self.tooltips.footer = !self.tooltips.footer,
-            26 => self.tooltips.headers = !self.tooltips.headers,
-            27 => self.tooltips.counts = !self.tooltips.counts,
-            28 => self.tooltips.settings = !self.tooltips.settings,
-            29 => self.tooltips.links = !self.tooltips.links,
+            25 => self.tooltips.set_all(!self.tooltips.all_on()),
+            26 => self.tooltips.footer = !self.tooltips.footer,
+            27 => self.tooltips.headers = !self.tooltips.headers,
+            28 => self.tooltips.counts = !self.tooltips.counts,
+            29 => self.tooltips.settings = !self.tooltips.settings,
+            30 => self.tooltips.links = !self.tooltips.links,
             // Updates
-            30 => self.auto_update = self.auto_update.cycle(),
-            31 => self.update_interval = self.update_interval.cycle(),
+            31 => self.auto_update = self.auto_update.cycle(),
+            32 => self.update_interval = self.update_interval.cycle(),
             // Workers — mode row cycles Exact↔Percent; value row opens its dropdown.
-            32 => self.toggle_max_pull_mode(),
-            33 => self.open_parallel_value_dropdown(),
+            33 => self.toggle_max_pull_mode(),
+            34 => self.open_parallel_value_dropdown(),
             _ => {}
         }
         self.save_state();

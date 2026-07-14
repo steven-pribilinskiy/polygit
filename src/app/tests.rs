@@ -1132,9 +1132,16 @@
                 "row {row} default option out of range"
             );
             assert!(state.settings_active_option(row) < options.len(), "row {row} active out of range");
-            // Every option must round-trip set → active so the write/read dispatch agree.
+            // Every option must round-trip set → active so the write/read dispatch agree. Exception:
+            // "Layout density"'s "custom" option is a derived label with no bundle of its own — a
+            // click on it is intentionally a no-op, so it reads back as whatever preset the fields
+            // already matched (from the previous iteration's "spacious"), not "custom".
+            let is_layout_density = row == crate::app::settings_row("Layout density");
             for opt in 0..options.len() {
                 state.set_setting_option(row, opt);
+                if is_layout_density && opt == 2 {
+                    continue;
+                }
                 assert_eq!(
                     state.settings_active_option(row),
                     opt,
@@ -1143,6 +1150,25 @@
                 );
             }
         }
+    }
+
+    #[test]
+    fn layout_density_reflects_the_three_bundled_fields() {
+        let mut state = state_named(&["a"]);
+        state.panel_padding = false;
+        state.show_borders = false;
+        state.splitter_mode = SplitterMode::Hover;
+        assert_eq!(state.layout_density(), 0, "compact bundle");
+
+        state.panel_padding = true;
+        state.show_borders = true;
+        state.splitter_mode = SplitterMode::Dedicated;
+        assert_eq!(state.layout_density(), 1, "spacious bundle");
+
+        // Any other combination — including one field alone diverging from either bundle — reads
+        // as custom.
+        state.splitter_mode = SplitterMode::Hover;
+        assert_eq!(state.layout_density(), 2, "mismatched combination is custom");
     }
 
     #[test]

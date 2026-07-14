@@ -786,8 +786,22 @@ impl AppState {
             (9, 0) => self.info_layout = crate::app::InfoLayout::Sections,
             (9, 1) => self.info_layout = crate::app::InfoLayout::Groups,
             (9, 2) => self.info_layout = crate::app::InfoLayout::Flat,
+            // Layout density preset (derived, not stored — see `layout_density`). Compact/Spacious
+            // apply their bundle to the three fields above; Custom has no bundle of its own, so
+            // clicking it is a no-op.
+            (10, 0) => {
+                self.panel_padding = false;
+                self.show_borders = false;
+                self.splitter_mode = SplitterMode::Hover;
+            }
+            (10, 1) => {
+                self.panel_padding = true;
+                self.show_borders = true;
+                self.splitter_mode = SplitterMode::Dedicated;
+            }
+            (10, 2) => {}
             // Lists
-            (10, 0) | (10, 1) => {
+            (11, 0) | (11, 1) => {
                 let enable = option_idx == 0;
                 if self.grouping_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -795,7 +809,7 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
-            (11, 0) | (11, 1) => {
+            (12, 0) | (12, 1) => {
                 let enable = option_idx == 0;
                 if self.tree_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -803,65 +817,81 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
-            (12, 0) => self.hide_folder_lines = true,
-            (12, 1) => self.hide_folder_lines = false,
+            (13, 0) => self.hide_folder_lines = true,
+            (13, 1) => self.hide_folder_lines = false,
             // Pull requests
-            (13, 0) => self.show_merged_prs = true,
-            (13, 1) => self.show_merged_prs = false,
+            (14, 0) => self.show_merged_prs = true,
+            (14, 1) => self.show_merged_prs = false,
             // Sync
-            (14, 0) => self.auto_pull_on_launch = true,
-            (14, 1) => self.auto_pull_on_launch = false,
-            (15, 0) => self.auto_pull_max_repos = 50,
-            (15, 1) => self.auto_pull_max_repos = 100,
-            (15, 2) => self.auto_pull_max_repos = 250,
-            (15, 3) => self.auto_pull_max_repos = 0,
-            (16, 0) => self.auto_pull_in_tree = true,
-            (16, 1) => self.auto_pull_in_tree = false,
+            (15, 0) => self.auto_pull_on_launch = true,
+            (15, 1) => self.auto_pull_on_launch = false,
+            (16, 0) => self.auto_pull_max_repos = 50,
+            (16, 1) => self.auto_pull_max_repos = 100,
+            (16, 2) => self.auto_pull_max_repos = 250,
+            (16, 3) => self.auto_pull_max_repos = 0,
+            (17, 0) => self.auto_pull_in_tree = true,
+            (17, 1) => self.auto_pull_in_tree = false,
             // Theming
-            (17, 0) => self.icon_style = IconStyle::Unicode,
-            (17, 1) => self.icon_style = IconStyle::Emoji,
+            (18, 0) => self.icon_style = IconStyle::Unicode,
+            (18, 1) => self.icon_style = IconStyle::Emoji,
             // Hide zeros is forced on (and inert) in emoji mode — ignore clicks then.
-            (18, 0) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = true,
-            (18, 1) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = false,
-            (19, 0) => self.theme = Theme::Auto,
-            (19, 1) => self.theme = Theme::Dark,
-            (19, 2) => self.theme = Theme::Light,
-            (20, 0) => self.background = Background::Normal,
-            (20, 1) => self.background = Background::Soft,
-            (20, 2) => self.background = Background::Terminal,
-            (21, 0) => self.contrast = Contrast::Normal,
-            (21, 1) => self.contrast = Contrast::Soft,
-            (22, 0) => self.selection_style = SelectionStyle::Blue,
-            (22, 1) => self.selection_style = SelectionStyle::Subtle,
-            (23, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
-            (23, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
+            (19, 0) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = true,
+            (19, 1) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = false,
+            (20, 0) => self.theme = Theme::Auto,
+            (20, 1) => self.theme = Theme::Dark,
+            (20, 2) => self.theme = Theme::Light,
+            (21, 0) => self.background = Background::Normal,
+            (21, 1) => self.background = Background::Soft,
+            (21, 2) => self.background = Background::Terminal,
+            (22, 0) => self.contrast = Contrast::Normal,
+            (22, 1) => self.contrast = Contrast::Soft,
+            (23, 0) => self.selection_style = SelectionStyle::Blue,
+            (23, 1) => self.selection_style = SelectionStyle::Subtle,
+            (24, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
+            (24, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
             // Tooltips
-            (24, 0) => self.tooltips.set_all(true),
-            (24, 1) => self.tooltips.set_all(false),
-            (25, 0) => self.tooltips.footer = true,
-            (25, 1) => self.tooltips.footer = false,
-            (26, 0) => self.tooltips.headers = true,
-            (26, 1) => self.tooltips.headers = false,
-            (27, 0) => self.tooltips.counts = true,
-            (27, 1) => self.tooltips.counts = false,
-            (28, 0) => self.tooltips.settings = true,
-            (28, 1) => self.tooltips.settings = false,
-            (29, 0) => self.tooltips.links = true,
-            (29, 1) => self.tooltips.links = false,
+            (25, 0) => self.tooltips.set_all(true),
+            (25, 1) => self.tooltips.set_all(false),
+            (26, 0) => self.tooltips.footer = true,
+            (26, 1) => self.tooltips.footer = false,
+            (27, 0) => self.tooltips.headers = true,
+            (27, 1) => self.tooltips.headers = false,
+            (28, 0) => self.tooltips.counts = true,
+            (28, 1) => self.tooltips.counts = false,
+            (29, 0) => self.tooltips.settings = true,
+            (29, 1) => self.tooltips.settings = false,
+            (30, 0) => self.tooltips.links = true,
+            (30, 1) => self.tooltips.links = false,
             // Updates
-            (30, 0) => self.auto_update = AutoUpdate::Off,
-            (30, 1) => self.auto_update = AutoUpdate::Notify,
-            (30, 2) => self.auto_update = AutoUpdate::Install,
-            (31, 0) => self.update_interval = UpdateInterval::Daily,
-            (31, 1) => self.update_interval = UpdateInterval::Weekly,
+            (31, 0) => self.auto_update = AutoUpdate::Off,
+            (31, 1) => self.auto_update = AutoUpdate::Notify,
+            (31, 2) => self.auto_update = AutoUpdate::Install,
+            (32, 0) => self.update_interval = UpdateInterval::Daily,
+            (32, 1) => self.update_interval = UpdateInterval::Weekly,
             // Workers
-            (32, 0) => self.set_max_pull_mode(crate::app::MaxPullMode::Exact),
-            (32, 1) => self.set_max_pull_mode(crate::app::MaxPullMode::Percent),
+            (33, 0) => self.set_max_pull_mode(crate::app::MaxPullMode::Exact),
+            (33, 1) => self.set_max_pull_mode(crate::app::MaxPullMode::Percent),
             // The value is picked from a dropdown, not a radio — a no-op here keeps the round-trip.
-            (33, _) => {}
+            (34, _) => {}
             _ => return,
         }
         self.save_state();
+    }
+
+    /// Layout density derived from the three bundled fields (panel padding / borders / splitter
+    /// style): 0 = compact, 1 = spacious, 2 = custom (neither bundle matches exactly). Shared by
+    /// `settings_active_option` and the Settings-modal render so the two can't drift.
+    pub fn layout_density(&self) -> usize {
+        if !self.panel_padding && !self.show_borders && self.splitter_mode == SplitterMode::Hover {
+            0
+        } else if self.panel_padding
+            && self.show_borders
+            && self.splitter_mode == SplitterMode::Dedicated
+        {
+            1
+        } else {
+            2
+        }
     }
 
     /// Index of the currently-active option for settings row `row_idx` (mirrors the render row
@@ -903,52 +933,53 @@ impl AppState {
                 crate::app::InfoLayout::Groups => 1,
                 crate::app::InfoLayout::Flat => 2,
             },
+            10 => self.layout_density(),
             // Lists
-            10 => usize::from(!self.grouping_enabled),
-            11 => usize::from(!self.tree_enabled),
-            12 => usize::from(!self.hide_folder_lines),
+            11 => usize::from(!self.grouping_enabled),
+            12 => usize::from(!self.tree_enabled),
+            13 => usize::from(!self.hide_folder_lines),
             // Pull requests
-            13 => usize::from(!self.show_merged_prs),
+            14 => usize::from(!self.show_merged_prs),
             // Sync
-            14 => usize::from(!self.auto_pull_on_launch),
-            15 => match self.auto_pull_max_repos {
+            15 => usize::from(!self.auto_pull_on_launch),
+            16 => match self.auto_pull_max_repos {
                 50 => 0,
                 100 => 1,
                 250 => 2,
                 _ => 3,
             },
-            16 => usize::from(!self.auto_pull_in_tree),
+            17 => usize::from(!self.auto_pull_in_tree),
             // Theming
-            17 => match self.icon_style {
+            18 => match self.icon_style {
                 IconStyle::Unicode => 0,
                 IconStyle::Emoji => 1,
             },
             // Emoji always hides zeros → force-selected "on" regardless of the stored flag.
-            18 => usize::from(!(self.hide_zero_counts || self.icon_style == IconStyle::Emoji)),
-            19 => match self.theme {
+            19 => usize::from(!(self.hide_zero_counts || self.icon_style == IconStyle::Emoji)),
+            20 => match self.theme {
                 Theme::Auto => 0,
                 Theme::Dark => 1,
                 Theme::Light => 2,
             },
-            20 => match self.background {
+            21 => match self.background {
                 Background::Normal => 0,
                 Background::Soft => 1,
                 Background::Terminal => 2,
             },
-            21 => match self.contrast {
+            22 => match self.contrast {
                 Contrast::Normal => 0,
                 Contrast::Soft => 1,
             },
-            22 => match self.selection_style {
+            23 => match self.selection_style {
                 SelectionStyle::Blue => 0,
                 SelectionStyle::Subtle => 1,
             },
-            23 => match self.button_hover_style {
+            24 => match self.button_hover_style {
                 ButtonHoverStyle::Inverted => 0,
                 ButtonHoverStyle::Subtle => 1,
             },
             // Tooltips — All tooltips: 0 = all on, 1 = all off, 2 = mixed (neither radio active).
-            24 => {
+            25 => {
                 if self.tooltips.all_on() {
                     0
                 } else if self.tooltips.all_off() {
@@ -957,27 +988,27 @@ impl AppState {
                     2
                 }
             }
-            25 => usize::from(!self.tooltips.footer),
-            26 => usize::from(!self.tooltips.headers),
-            27 => usize::from(!self.tooltips.counts),
-            28 => usize::from(!self.tooltips.settings),
-            29 => usize::from(!self.tooltips.links),
+            26 => usize::from(!self.tooltips.footer),
+            27 => usize::from(!self.tooltips.headers),
+            28 => usize::from(!self.tooltips.counts),
+            29 => usize::from(!self.tooltips.settings),
+            30 => usize::from(!self.tooltips.links),
             // Updates
-            30 => match self.auto_update {
+            31 => match self.auto_update {
                 AutoUpdate::Off => 0,
                 AutoUpdate::Notify => 1,
                 AutoUpdate::Install => 2,
             },
-            31 => match self.update_interval {
+            32 => match self.update_interval {
                 UpdateInterval::Daily => 0,
                 UpdateInterval::Weekly => 1,
             },
-            // Workers — row 32 mode (exact/percent); row 33 is the dropdown value (single chip).
-            32 => match self.max_pull_mode {
+            // Workers — row 33 mode (exact/percent); row 34 is the dropdown value (single chip).
+            33 => match self.max_pull_mode {
                 crate::app::MaxPullMode::Exact => 0,
                 crate::app::MaxPullMode::Percent => 1,
             },
-            33 => 0,
+            34 => 0,
             _ => 0,
         }
     }
@@ -992,19 +1023,20 @@ impl AppState {
             7 => &["off", "auto"],
             8 => &["off", "auto"],
             9 => &["titled", "spaced", "flat"],
-            15 => &["50", "100", "250", "\u{221e}"],
-            17 => &["unicode", "emoji"],
-            19 => &["auto", "dark", "light"],
-            20 => &["normal", "soft", "terminal"],
-            21 => &["normal", "soft"],
-            22 => &["blue", "subtle"],
-            23 => &["inverted", "subtle"],
-            30 => &["off", "notify", "install"],
-            31 => &["daily", "weekly"],
-            32 => &["exact", "percent"],
+            10 => &["compact", "spacious", "custom"],
+            16 => &["50", "100", "250", "\u{221e}"],
+            18 => &["unicode", "emoji"],
+            20 => &["auto", "dark", "light"],
+            21 => &["normal", "soft", "terminal"],
+            22 => &["normal", "soft"],
+            23 => &["blue", "subtle"],
+            24 => &["inverted", "subtle"],
+            31 => &["off", "notify", "install"],
+            32 => &["daily", "weekly"],
+            33 => &["exact", "percent"],
             // The value row is a dropdown, not radio chips; this static placeholder just satisfies
             // the "one option, round-trips" invariant — the real chip label is built at render time.
-            33 => &["value"],
+            34 => &["value"],
             _ => &["on", "off"],
         }
     }
@@ -1015,14 +1047,18 @@ impl AppState {
         match row {
             // Rows whose DEFAULT is the first option (index 0). Agent: AI agent→claude(0). Interaction:
             // hover on(2). Layout: panel padding on(4), borders on(5), branch-check off(8), info layout
-            // titled(9). Lists: grouping on(10). Sync: auto-pull-on-launch(14). Theming: icons unicode(17),
-            // theme auto(19), background normal(20), contrast normal(21), selection blue(22). Tooltips
-            // (24–29) all on.
-            // Updates: update-check daily(31) defaults to option 0; auto-update(30) defaults to
+            // titled(9). Lists: grouping on(11). Sync: auto-pull-on-launch(15). Theming: icons unicode(18),
+            // theme auto(20), background normal(21), contrast normal(22), selection blue(23). Tooltips
+            // (25–30) all on.
+            // Updates: update-check daily(32) defaults to option 0; auto-update(31) defaults to
             // option 1 (notify) — handled by the `_ => 1` arm below.
-            0 | 2 | 4 | 5 | 8 | 9 | 10 | 14 | 17 | 19 | 20 | 21 | 22 | 24 | 25 | 26 | 27 | 28 | 29 | 31 | 33 => 0,
+            0 | 2 | 4 | 5 | 8 | 9 | 11 | 15 | 18 | 20 | 21 | 22 | 23 | 25 | 26 | 27 | 28 | 29 | 30 | 32 | 34 => 0,
+            // Layout density(10) — derived; the shipped/reset field values (padding+borders on,
+            // splitter on-hover) don't exactly match either named bundle, so its "default" is
+            // custom(2), not compact/spacious. See `layout_density`.
+            10 => 2,
             // Index-1 defaults: changed-row effect flash(3), pane splitter on-hover(6), repo-page-tabs
-            // auto(7), auto-pull-limit 100(15), button-hover subtle(23), parallel-pulls mode percent(32),
+            // auto(7), auto-pull-limit 100(16), button-hover subtle(24), parallel-pulls mode percent(33),
             // and every remaining boolean off.
             _ => 1,
         }

@@ -1845,6 +1845,19 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                         ("flat", app.info_layout == crate::app::InfoLayout::Flat),
                     ],
                 ),
+                (
+                    "Layout density",
+                    // Quick preset bundling Panel padding + Borders + Pane splitter; "custom" lights
+                    // up whenever the three don't exactly match either named bundle.
+                    {
+                        let density = app.layout_density();
+                        vec![
+                            ("compact", density == 0),
+                            ("spacious", density == 1),
+                            ("custom", density == 2),
+                        ]
+                    },
+                ),
             ],
         ),
         (

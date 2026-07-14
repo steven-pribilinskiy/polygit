@@ -168,8 +168,9 @@ Radios · Dialogs) as clickable **vertical tabs**, with `[`/`]` to move between 
 a **Lists** section (grouping, tree view, hide folder-header lines), a **Theming** section (icons,
 theme, background, contrast, selection), a **Sync** section (auto-pull policy — see below), an
 **Interaction** section (hover effects, changed-row effect), a **Layout** section (panel padding, borders, pane
-splitter — *dedicated lane* vs *on hover*, repo-page tabs,
-branch-check), a **Tooltips** section (a master
+splitter — *dedicated* (persistent grip) vs *on hover* (grip only under the cursor; both always
+reserve a draggable 1-cell lane), repo-page tabs, branch-check, and a **Layout density** preset
+bundling padding + borders + splitter style into compact / spacious / custom), a **Tooltips** section (a master
 "All tooltips" toggle plus per-area switches — footer commands, column headers, group counts,
 settings rows, help links; tooltips also require Hover effects on), an **Agent** section
 (which AI coding-agent the `c` key launches — claude / codex / gemini — and a "Skip permissions"
@@ -193,6 +194,10 @@ The **flat** layout stacks every section expanded. Press **`R`** (or the footer 
 aligned `current → default` column (new value highlighted; favorites and workspaces are untouched):
 
 - **Panel padding** — a 1-cell inner padding inside every bordered panel and modal.
+- **Layout density** — a quick preset bundling Panel padding + Borders + Pane splitter style:
+  **compact** (padding/borders off, on-hover splitter), **spacious** (padding/borders on, dedicated
+  splitter), or **custom** — a derived label that lights up automatically whenever the three don't
+  exactly match either bundle, rather than something you pick directly.
 - **Icons** — switch the status / column / marker glyphs between the default Unicode set and
   an emoji set.
 - **Hide zeros** — hide zero-count column cells (a dim `0` becomes blank), so only repos that
