@@ -120,6 +120,7 @@ Every pane ([1] list · [2] info · [3] result · [4] repo page) is maximizeable
 
 - **This is a public personal repo: keep it free of any employer/organization-internal names** (internal service names, hosts, property IDs, private URLs, org details) in source, tests, comments, commit messages, or PR bodies — the tool scans whatever real repos you point it at, but none of that belongs in tracked content. Grep the diff before committing.
 - **Verifying TUI changes:** run it under tmux and drive it with SGR mouse sequences (`\e[<0;col;row M`/`m` click, `\e[<64/65..M` wheel); `tmux capture-pane -e -p` shows color escapes for asserting active-pane borders, flashes, etc. "typecheck + clippy pass" is not "done" for visual changes.
+- **Always push to `origin/main` right after committing — no need to ask first.** This repo's release pipeline (`.github/workflows/release.yml`) triggers on a `main`-branch push that touches `Cargo.toml`: it tags `vX.Y.Z` and builds/bundles prebuilt binaries for 5 targets (Linux x86_64/arm64, macOS x86_64/arm64, Windows x86_64), attached to a GitHub Release. Since every change here also bumps the version, an unpushed commit means that version never gets released or bundled — push is part of "done," not a separate step. Local checks (build/clippy/test) still gate the push per the global rule; this just removes the extra confirmation prompt for this specific repo.
 
 ## Docs are part of every change
 
