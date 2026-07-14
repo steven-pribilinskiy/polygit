@@ -3,6 +3,30 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.13.0 — 2026-07-14
+Settings dialog: search no longer shifts the modal, and results keep their section titles
+Typing into the settings search box used to resize the modal on every keystroke (it sized itself
+purely from the current match count) and dropped all section context, rendering matches as a bare
+flat list with no way to tell which section (Agent, Layout, Sync, Theming, …) a result belonged to.
+- The modal now never shrinks below its normal (empty-query) size for whichever layout — Tabbed,
+  Accordion, or Flat — is active; it can still grow to fit more matches, just never shrinks smaller
+  than its own unfiltered footprint. Cycling layout (`v`) mid-search updates the floor live.
+- Search results now show the same inert section-title headers the Flat layout already uses,
+  interleaved above each run of matches from a new section — never foldable/clickable, even while
+  Accordion is the active layout, since folding doesn't make sense over an already-filtered list.
+- Search mode gained scroll + scrollbar support (it previously had none, unlike the other three
+  layouts) — a pinned "N matches" summary line stays fixed at the top while the header+row list
+  beneath it scrolls, draggable via the same `Settings` scrollbar the other layouts use.
+
+## v3.12.1 — 2026-07-14
+Fix: a crash when previewing a diff with a multi-byte character before a `/* … */` comment closer
+The single-line syntax highlighter used in diff previews (`diffview::highlight`) computed the end
+of a `/* … */` block comment from `str::find`'s BYTE offset, but then used it as a CHAR index into
+the line's `Vec<char>` — any multi-byte UTF-8 character (accented letters, em dashes, arrows, …)
+before the closing `*/` made that index overshoot the line's true length, panicking with a slice
+out-of-range error and aborting the whole TUI. The byte offset is now converted to a char count
+before indexing.
+
 ## v3.12.0 — 2026-07-14
 Result pane: category tab bar (diff / tags / branches / commits / files), on top
 The pull-diff sub-display switcher and the pull-scoped Commits/Files tabs used to share one flat

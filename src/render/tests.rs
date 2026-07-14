@@ -357,3 +357,29 @@
         assert!(body.contains("src/table.rs"), "Files lists the changed file\n{body}");
     }
 
+    // settings_search_items interleaves an inert section-title header before each run of matches
+    // from a new section, walking the (already ascending/alphabetical) filtered row list.
+    #[test]
+    fn settings_search_items_empty_input_is_empty() {
+        assert_eq!(settings_search_items(&[]), Vec::new());
+    }
+
+    #[test]
+    fn settings_search_items_one_header_per_section_run() {
+        // Rows 0 and 1 are both in the first SETTINGS_TABS section ("Agent", 2 rows) — a
+        // consecutive run from the same section gets exactly one header.
+        let items = settings_search_items(&[0, 1]);
+        assert_eq!(items, vec![SearchItem::Header(0), SearchItem::Row(0), SearchItem::Row(1)]);
+    }
+
+    #[test]
+    fn settings_search_items_new_section_gets_its_own_header() {
+        // Row 0 ("Agent") and row 33 (last row, "Workers", the final SETTINGS_TABS section) are in
+        // different sections — a gap between matches emits a header for each.
+        let items = settings_search_items(&[0, 33]);
+        assert_eq!(
+            items,
+            vec![SearchItem::Header(0), SearchItem::Row(0), SearchItem::Header(9), SearchItem::Row(33)]
+        );
+    }
+
