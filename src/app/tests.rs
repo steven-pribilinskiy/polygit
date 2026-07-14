@@ -270,6 +270,10 @@
         state.sort_column = SortColumn::Name;
         state.sort_dir = SortDir::Asc;
         state.status_filter = StatusFilter::All;
+        state.branch_filter = None;
+        state.branch_filter_mode = crate::app::BranchExistenceMode::default();
+        state.branch_filter_modal = None;
+        state.branch_filter_fetched_count = 0;
         state.filter = None;
         state.grouping_enabled = false;
         state.collapsed_groups.clear();
@@ -726,6 +730,93 @@
             .map(|name| Arc::new(Mutex::new(RepoState::new(*name, PathBuf::from(format!("/tmp/{name}"))))))
             .collect();
         normalized(AppState::new(repos, Some(4), true))
+    }
+
+    fn set_branches(state: &AppState, index: usize, branches: crate::app::RepoBranches) {
+        state.repos[index].lock().unwrap().branches = Some(branches);
+    }
+
+    #[test]
+    fn branch_existence_mode_matches_active_local_remote_any() {
+        let mut branches = crate::app::RepoBranches {
+            active: Some("main".to_string()),
+            ..Default::default()
+        };
+        branches.local.insert("main".to_string());
+        branches.local.insert("feature".to_string());
+        branches.remote.insert("main".to_string());
+        branches.remote.insert("mf2".to_string());
+
+        assert!(BranchExistenceMode::Active.matches(&branches, "main"));
+        assert!(!BranchExistenceMode::Active.matches(&branches, "feature"));
+        assert!(BranchExistenceMode::Local.matches(&branches, "feature"));
+        assert!(!BranchExistenceMode::Local.matches(&branches, "mf2"));
+        assert!(BranchExistenceMode::Remote.matches(&branches, "mf2"));
+        assert!(!BranchExistenceMode::Remote.matches(&branches, "feature"));
+        assert!(BranchExistenceMode::Any.matches(&branches, "feature"));
+        assert!(BranchExistenceMode::Any.matches(&branches, "mf2"));
+        assert!(!BranchExistenceMode::Any.matches(&branches, "nope"));
+    }
+
+    #[test]
+    fn branch_aggregate_counts_and_sorts() {
+        let state = state_named(&["alpha", "beta", "gamma"]);
+        set_branches(&state, 0, {
+            let mut branches = crate::app::RepoBranches::default();
+            branches.local.insert("mf2".to_string());
+            branches.local.insert("main".to_string());
+            branches
+        });
+        set_branches(&state, 1, {
+            let mut branches = crate::app::RepoBranches::default();
+            branches.local.insert("mf2".to_string());
+            branches
+        });
+        // gamma has no branch data yet (still loading) — must not appear in the aggregate.
+        let aggregate = state.branch_aggregate(BranchExistenceMode::Local);
+        assert_eq!(aggregate, vec![("mf2".to_string(), 2), ("main".to_string(), 1)]);
+    }
+
+    #[test]
+    fn visible_indices_composes_branch_filter_with_status_and_name_filter() {
+        let mut state = state_named(&["alpha-repo", "beta-repo", "gamma-repo"]);
+        set_branches(&state, 0, {
+            let mut branches = crate::app::RepoBranches::default();
+            branches.local.insert("mf2".to_string());
+            branches
+        });
+        set_branches(&state, 1, {
+            let mut branches = crate::app::RepoBranches::default();
+            branches.local.insert("mf2".to_string());
+            branches
+        });
+        // gamma-repo has no branch data yet — excluded even though nothing else filters it out.
+        state.branch_filter = Some("mf2".to_string());
+        state.branch_filter_mode = BranchExistenceMode::Local;
+        assert_eq!(state.visible_indices(), vec![0, 1]);
+
+        // Compose with the status filter (AND): only repo 1 is Failed.
+        state.repos[1].lock().unwrap().status = RepoStatus::Failed;
+        state.status_filter = StatusFilter::Failed;
+        assert_eq!(state.visible_indices(), vec![1]);
+        state.status_filter = StatusFilter::All;
+
+        // Compose with the `/` name filter (AND): only "beta-repo" matches both.
+        state.filter = Some("beta".to_string());
+        assert_eq!(state.visible_indices(), vec![1]);
+    }
+
+    #[test]
+    fn active_filter_kinds_and_reset_all_filters() {
+        let mut state = state_named(&["alpha"]);
+        assert!(state.active_filter_kinds().is_empty());
+        state.status_filter = StatusFilter::Failed;
+        state.branch_filter = Some("mf2".to_string());
+        assert_eq!(state.active_filter_kinds(), vec![FilterKind::Status, FilterKind::Branch]);
+        state.reset_all_filters();
+        assert!(state.active_filter_kinds().is_empty());
+        assert_eq!(state.status_filter, StatusFilter::All);
+        assert!(state.branch_filter.is_none());
     }
 
     #[test]

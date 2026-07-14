@@ -192,6 +192,12 @@ impl AppState {
                 }
                 false
             }
+            ScrollKind::BranchFilter => {
+                if let Some(modal) = self.branch_filter_modal.as_mut() {
+                    modal.scroll = value;
+                }
+                false
+            }
         }
     }
 

@@ -414,10 +414,40 @@
           "f"
         ],
         "action": "Status-filter dropdown",
-        "note": "opens the status dropdown: a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues",
+        "note": "opens the status dropdown: a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues. Picking anything but 'all' shows a removable status chip in the filter bar (the list pane's first row); f reopens it to change the value whether or not it's currently active",
         "keywords": [
           "filter",
-          "status"
+          "status",
+          "filter bar"
+        ],
+        "group": "Find & sort"
+      },
+      {
+        "keys": [
+          "Ctrl",
+          "F"
+        ],
+        "action": "Open the branch-existence filter",
+        "note": "aggregates every branch name across every discovered repo. Active/local/remote/any mode chips (Tab/Shift-Tab cycles), a live query narrows the list, ↑↓ move, Enter applies it — filtering the repo list to only those matching, on top of the status/name filters. The top row clears an applied filter. Shows a removable branch chip in the filter bar once applied",
+        "keywords": [
+          "branch",
+          "filter",
+          "exists",
+          "filter bar"
+        ],
+        "group": "Find & sort"
+      },
+      {
+        "keys": [
+          "F"
+        ],
+        "action": "Clear every active filter chip at once",
+        "note": "resets the status and branch filters together (the filter bar's 'reset filters' button); the search text is separate — Esc while typing, or its inline ×, clears that",
+        "keywords": [
+          "filter",
+          "reset",
+          "clear",
+          "filter bar"
         ],
         "group": "Find & sort"
       },
@@ -686,6 +716,11 @@
           "/"
         ],
         "action": "Fuzzy-filter repos by name (subsequence match, ranked by relevance; matched chars underlined; selection follows the first match, Enter keeps it)",
+        "note": "the search box is a real, always-clickable row in the filter bar (the list pane's first content row) — click it any time, not just while / is held; a small × clears non-empty text",
+        "keywords": [
+          "filter bar",
+          "search"
+        ],
         "group": "Find & sort"
       },
       {

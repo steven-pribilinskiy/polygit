@@ -279,10 +279,9 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
     let leader = app.pending_leader;
     let modal_open = app.any_modal_open();
     let leader_active = leader.is_some();
-    // No leader currently owns a footer-chip trigger to pill-highlight (the status filter is a header
-    // dropdown now); kept as a hook for future leaders.
+    // No leader currently owns a footer-chip trigger to pill-highlight (the status filter is a
+    // filter-bar chip now); kept as a hook for future leaders.
     let leader_trigger: Option<Command> = None;
-    let status_filter = app.status_filter;
     let grouping_on = app.grouping_active();
     let tree_on = app.tree_active();
 
@@ -454,30 +453,13 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &mut AppState, area: Rec
     // (row 1 shows the menu then), and dims per-command when an action would be a no-op. Called
     // directly (not via a closure) so it doesn't hold an `&app` borrow across `app.clickable.extend`.
 
-    // Row 2 — find & layout. Each active tag sits right after its hint and is clickable:
-    // `[needle]` clears the name filter, `{status}` resets to all, `⟪column ▲⟫` flips direction.
-    let mut row2_segments: Vec<(String, Style, Option<Command>)> = vec![
-        ("/".to_string(), key, Some(Command::NameFilter)),
-        (" filter".to_string(), hint, Some(Command::NameFilter)),
-    ];
-    if !filter_text.is_empty() {
-        row2_segments.push((" ".to_string(), hint, None));
-        row2_segments.push((format!("[{filter_text}]"), active, Some(Command::ClearNameFilter)));
-    }
-    // The fuzzy finder (jump to any repo) — `^p`; sits right after the name filter.
-    row2_segments.push((" · ".to_string(), hint, None));
+    // Row 2 — find & layout. The name/status/branch filters live in the filter bar now (an
+    // always-visible search box + removable chips, each with its own `×`) — the footer keeps only
+    // the fuzzy finder and the view toggles, whose active tag still flips direction inline.
+    let mut row2_segments: Vec<(String, Style, Option<Command>)> = Vec::new();
+    // The fuzzy finder (jump to any repo) — `^p`.
     row2_segments.push(("^p".to_string(), key, Some(Command::OpenFinder)));
     row2_segments.push((" find".to_string(), hint, Some(Command::OpenFinder)));
-    // The status filter lives on the list-header `f status ⟪…⟫ ▾` trigger now; the footer keeps only
-    // the active `{status}` tag as a one-click reset (shown only while a filter is on).
-    if let Some(tag) = status_filter.tag() {
-        row2_segments.push((" · ".to_string(), hint, None));
-        row2_segments.push((
-            format!("{{{tag}}}"),
-            active,
-            Some(Command::SetFilter(StatusFilter::All)),
-        ));
-    }
     // View toggles: `v g` grouped + `v t` tree, always shown — `style_footer` dims+inerts them when
     // not applicable (no groups.json / no nested folders). Each label brightens while its view is on.
     {

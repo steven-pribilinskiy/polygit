@@ -19,6 +19,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
             | DropdownKind::ListFilter
             | DropdownKind::ExplorerSort
             | DropdownKind::ParallelValue
+            | DropdownKind::FilterAdd
     );
     let title = match dropdown.kind {
         DropdownKind::ListColumns
@@ -28,6 +29,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         DropdownKind::ListSort | DropdownKind::PageSort | DropdownKind::ExplorerSort => " sort ",
         DropdownKind::ListFilter => " filter ",
         DropdownKind::ParallelValue => " parallel pulls ",
+        DropdownKind::FilterAdd => " add filter ",
     };
     // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for a radio (`● `)
     // and 4 for columns (`[x] `), plus the mnemonic key and a space.
@@ -2965,6 +2967,155 @@ pub(crate) fn render_branch_picker(frame: &mut Frame, app: &mut AppState, area: 
         &mut app.hint_click,
     );
     frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(footer), Rect { y: footer_row, height: 1, ..inner });
+}
+
+/// The branch-existence filter modal (`Ctrl+F`): a segmented active/local/remote/any mode row, a
+/// live query narrowing the cross-repo branch-name aggregate, and a scrollable list of
+/// `name (count)` rows — row 0 is a synthetic "clear filter" entry once a filter is applied.
+/// Unlike the branch/base pickers, this list is genuinely unbounded (every branch name across
+/// every discovered repo), so it gets a real draggable `render_scrollbar`, not auto-scroll-only.
+pub(crate) fn render_branch_filter_modal(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    let Some(modal) = app.branch_filter_modal.clone() else {
+        return;
+    };
+    let pad = if app.panel_padding { 2 } else { 0 };
+    let width = 56u16.min(area.width.saturating_sub(2)).max(32) + pad;
+    let height = (20u16 + pad).min(area.height.saturating_sub(2).max(10));
+    let modal_area = centered_rect(width, height, area);
+    let (close_line, close_click) = modal_close_button(modal_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" filter by branch ")
+        .title_top(close_line);
+    let inner = block.inner(modal_area);
+    cast_shadow(frame, modal_area);
+    frame.render_widget(Clear, modal_area);
+    frame.render_widget(block, modal_area);
+    app.branch_filter_modal_area = modal_area;
+    app.branch_filter_modal_close_click = close_click;
+    app.branch_filter_mode_click.clear();
+    app.branch_filter_rows_click.clear();
+
+    let rows = app.branch_filter_modal_rows();
+    let clear_row = app.branch_filter.is_some();
+    let total_rows = usize::from(clear_row) + rows.len();
+    let dim = Style::default().fg(Color::DarkGray);
+    let active_chip_style = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let inactive_chip_style = Style::default().fg(Color::Gray);
+
+    // Segmented mode row: `[ active ] [ local ] [ remote ] [ any ]` (mirrors the diff modal's
+    // status-chip row). `Tab`/`Shift-Tab` cycle it — not letter mnemonics, since typing edits the
+    // query below.
+    let mut mode_spans: Vec<Span> = Vec::new();
+    let mut col = inner.x;
+    for mode in BranchExistenceMode::ALL {
+        let label = format!("[ {} ]", mode.label());
+        let label_w = UnicodeWidthStr::width(label.as_str()) as u16;
+        let style = if mode == modal.mode { active_chip_style } else { inactive_chip_style };
+        app.branch_filter_mode_click.push((inner.y, col, col + label_w, mode));
+        mode_spans.push(Span::styled(label, style));
+        mode_spans.push(Span::raw(" "));
+        col += label_w + 1;
+    }
+    frame.render_widget(Paragraph::new(Line::from(mode_spans)), Rect { height: 1, ..inner });
+
+    // Query line: live-narrows the aggregate (mirrors the branch picker's filter line).
+    let loading = app.repos.iter().any(|repo| repo.lock().unwrap().branches_loading);
+    let count_text = if loading {
+        "   (scanning…)".to_string()
+    } else {
+        format!("   ({} branch{})", rows.len(), if rows.len() == 1 { "" } else { "es" })
+    };
+    let query_line = Line::from(vec![
+        Span::styled("  / ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            if modal.query.is_empty() { "filter…".to_string() } else { modal.query.clone() },
+            if modal.query.is_empty() { dim } else { Style::default().fg(Color::Gray) },
+        ),
+        Span::styled("▏", Style::default().fg(Color::Cyan)),
+        Span::styled(count_text, dim),
+    ]);
+    frame.render_widget(Paragraph::new(query_line), Rect { y: inner.y + 1, height: 1, ..inner });
+
+    // Scrollable branch-name list: mode row + query row + footer row reserved; the rightmost
+    // column is reserved for the scrollbar so the rounded border corners stay intact.
+    let list_area = Rect { y: inner.y + 2, height: inner.height.saturating_sub(3), ..inner };
+    let list_content = Rect { width: list_area.width.saturating_sub(1), ..list_area };
+    let view_rows = list_content.height as usize;
+    let selected = modal.selected.min(total_rows.saturating_sub(1));
+    // Ensure-visible: only nudges `scroll` when `selected` has drifted out of the current window,
+    // so a manual scrollbar drag isn't immediately fought as long as the selection stays in view.
+    let scroll = if view_rows == 0 || total_rows == 0 {
+        0
+    } else if selected < modal.scroll {
+        selected
+    } else if selected >= modal.scroll + view_rows {
+        selected + 1 - view_rows
+    } else {
+        modal.scroll.min(total_rows.saturating_sub(view_rows.min(total_rows)))
+    };
+    if let Some(modal_mut) = app.branch_filter_modal.as_mut() {
+        modal_mut.scroll = scroll;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    for index in scroll..(scroll + view_rows).min(total_rows) {
+        let row_y = list_content.y + lines.len() as u16;
+        app.branch_filter_rows_click.push((row_y, index));
+        let cursor = if index == selected { "> " } else { "  " };
+        let style = if index == selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        if clear_row && index == 0 {
+            lines.push(Line::from(Span::styled(
+                format!("  {cursor}\u{2014} any branch \u{2014} \u{b7} clear filter"),
+                style,
+            )));
+        } else {
+            let row_idx = if clear_row { index - 1 } else { index };
+            if let Some((name, count)) = rows.get(row_idx) {
+                lines.push(Line::from(Span::styled(
+                    format!("  {cursor}{} ({count})", truncate_str(name, 40)),
+                    style,
+                )));
+            }
+        }
+    }
+    if total_rows == 0 {
+        lines.push(Line::from(Span::styled(
+            if loading { "  (scanning repos…)" } else { "  (no matching branches)" },
+            dim,
+        )));
+    }
+    frame.render_widget(Paragraph::new(lines), list_content);
+    render_scrollbar(frame, app, list_area, scroll, total_rows, view_rows, crate::app::ScrollKind::BranchFilter);
+
+    // Footer.
+    let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let footer_hint = Style::default().fg(Color::DarkGray);
+    let footer_row = inner.y + inner.height.saturating_sub(1);
+    let footer = build_hint_footer(
+        vec![
+            ("  ".to_string(), footer_hint, None),
+            ("tab".to_string(), footer_key, None),
+            (" mode · ".to_string(), footer_hint, None),
+            ("↑↓".to_string(), footer_key, None),
+            (" move · ".to_string(), footer_hint, None),
+            ("enter".to_string(), footer_key, Some(HintKey::Enter)),
+            (" apply · ".to_string(), footer_hint, Some(HintKey::Enter)),
+            ("esc".to_string(), footer_key, Some(HintKey::Esc)),
+            (" close".to_string(), footer_hint, Some(HintKey::Esc)),
+        ],
+        inner.x,
+        footer_row,
+        &mut app.hint_click,
+    );
     frame.render_widget(Paragraph::new(footer), Rect { y: footer_row, height: 1, ..inner });
 }
 

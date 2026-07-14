@@ -58,6 +58,14 @@ impl AppState {
                 {
                     return None;
                 }
+                // Branch-existence filter (`Ctrl+F`): a repo passes only once its bulk branch data
+                // has arrived AND matches — `None` (not yet fetched) is "not yet known to match",
+                // not "matches", so results only grow in as the background scan completes.
+                if let Some(name) = self.branch_filter.as_deref() {
+                    if !state.branches.as_ref().is_some_and(|branches| self.branch_filter_mode.matches(branches, name)) {
+                        return None;
+                    }
+                }
                 let score = match filter.as_deref() {
                     None => Some(0),
                     Some(needle) => match needle.strip_prefix('@') {
@@ -92,6 +100,52 @@ impl AppState {
             });
         }
         scored.into_iter().map(|ranked| ranked.index).collect()
+    }
+
+    /// Every branch name across ALL discovered repos (not just `visible_indices()`) that `mode`
+    /// would accept, with how many repos have it — a standalone lookup spanning the whole scan
+    /// regardless of the status/name filter, since "what branches exist here" isn't scoped by
+    /// what's currently shown. Only `hidden` repos are skipped. Sorted by count desc, then name
+    /// asc.
+    pub fn branch_aggregate(&self, mode: BranchExistenceMode) -> Vec<(String, usize)> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for repo in &self.repos {
+            let state = repo.lock().unwrap();
+            if state.hidden {
+                continue;
+            }
+            let Some(branches) = state.branches.as_ref() else {
+                continue;
+            };
+            let names: Box<dyn Iterator<Item = &String>> = match mode {
+                BranchExistenceMode::Active => Box::new(branches.active.iter()),
+                BranchExistenceMode::Local => Box::new(branches.local.iter()),
+                BranchExistenceMode::Remote => Box::new(branches.remote.iter()),
+                BranchExistenceMode::Any => Box::new(branches.local.iter().chain(branches.remote.iter())),
+            };
+            let mut seen_this_repo: HashSet<&str> = HashSet::new();
+            for name in names {
+                if seen_this_repo.insert(name.as_str()) {
+                    *counts.entry(name.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
+        pairs.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+        pairs
+    }
+
+    /// `branch_aggregate` for the open branch-filter modal's mode, further narrowed by its live
+    /// query (case-insensitive substring — matching `BranchPicker::filtered()`'s convention).
+    pub fn branch_filter_modal_rows(&self) -> Vec<(String, usize)> {
+        let Some(modal) = self.branch_filter_modal.as_ref() else {
+            return Vec::new();
+        };
+        let needle = modal.query.to_lowercase();
+        self.branch_aggregate(modal.mode)
+            .into_iter()
+            .filter(|(name, _)| needle.is_empty() || name.to_lowercase().contains(&needle))
+            .collect()
     }
 
     fn repo_sort_key(&self, state: &RepoState) -> RepoSortKey {

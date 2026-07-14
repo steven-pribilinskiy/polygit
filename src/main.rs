@@ -51,6 +51,7 @@ use app::{
     RepoStatus, ResultDiffView, RightView, SharedRepoState,
 };
 use worker::{
+    run_all_branches,
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal, run_load_branches,
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
     run_pin_version, run_prepare_discard,
@@ -733,29 +734,7 @@ fn dispatch_command(
         Cmd::ToggleResultPanel => app.toggle_result_panel(),
         Cmd::Help => app.open_help(),
         Cmd::OpenPage => app.open_repo_page(),
-        Cmd::SetFilter(filter) => {
-            // Picking a filter applies it and closes the leader (unlike the sticky column menu).
-            app.set_status_filter(filter);
-            app.pending_leader = None;
-        }
         Cmd::LeaderCancel => app.pending_leader = None,
-        Cmd::NameFilter => {
-            // Clicking the `/ filter` hint toggles: enter filter input, or exit it when already
-            // filtering (dropping an empty filter so it leaves no dangling tag).
-            if app.filter_input_mode {
-                if app.filter.as_deref() == Some("") {
-                    app.filter = None;
-                }
-                app.commit_filter_input();
-            } else {
-                app.begin_filter_input();
-            }
-        }
-        Cmd::ClearNameFilter => {
-            app.filter = None;
-            app.filter_input_mode = false;
-            app.filter_prev_selection = None;
-        }
         Cmd::ResultOverlay => {
             app.result_overlay = !app.result_overlay;
         }
@@ -2611,6 +2590,43 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Branch-filter modal: click a mode chip to switch modes, a row to apply+close
+                // (matching the branch picker's single-click-to-choose), [x]/outside to close
+                // without changes. Scrollbar drag is handled by the generic scroll-hit dispatch.
+                if app.branch_filter_modal.is_some() {
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        let mode_hit = app
+                            .branch_filter_mode_click
+                            .iter()
+                            .find(|(row, start, end, _)| {
+                                *row == mouse.row && mouse.column >= *start && mouse.column < *end
+                            })
+                            .map(|(_, _, _, mode)| *mode);
+                        let row_idx = app
+                            .branch_filter_rows_click
+                            .iter()
+                            .find(|(row, _)| *row == mouse.row)
+                            .map(|(_, idx)| *idx);
+                        if region_hit(app.branch_filter_modal_close_click, mouse.column, mouse.row)
+                            || !point_in(app.branch_filter_modal_area, mouse.column, mouse.row)
+                        {
+                            app.close_branch_filter();
+                        } else if let Some(mode) = mode_hit {
+                            if let Some(modal) = app.branch_filter_modal.as_mut() {
+                                modal.mode = mode;
+                                modal.selected = 0;
+                                modal.scroll = 0;
+                            }
+                        } else if let Some(idx) = row_idx {
+                            if let Some(modal) = app.branch_filter_modal.as_mut() {
+                                modal.selected = idx;
+                            }
+                            app.branch_filter_apply_selected();
+                        }
+                    }
+                    continue;
+                }
+
                 // Kebab (⋮) row menu: click an item to run it, the checkbox to toggle it, [x] or
                 // outside to close. Scroll/other events are swallowed while it's open.
                 if app.kebab.is_some() {
@@ -3185,13 +3201,45 @@ async fn run_event_loop(
 
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        // The list header's `f by-status` / `s sort ▾` / `t cols ▾` chips open dropdowns.
-                        if let Some((row, _, end)) = app.list_filter_click.filter(|&(r, s, e)| {
+                        // The filter bar: search box, active filter chips (+ their `×`), the
+                        // "+ add filter" menu, and "reset filters".
+                        if app.filter_search_click.is_some_and(|(r, s, e)| {
                             mouse.row == r && mouse.column >= s && mouse.column < e
                         }) {
-                            app.open_dropdown(app::DropdownKind::ListFilter, end, row);
+                            app.begin_filter_input();
                             continue;
                         }
+                        if app.filter_search_clear_click.is_some_and(|(r, s, e)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.filter = None;
+                            continue;
+                        }
+                        if let Some(&(.., kind)) = app.filter_chip_remove_click.iter().find(|&&(r, s, e, _)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.clear_filter_kind(kind);
+                            continue;
+                        }
+                        if let Some(&(row, _, end, kind)) = app.filter_chip_click.iter().find(|&&(r, s, e, _)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.open_filter_kind(kind, (end, row));
+                            continue;
+                        }
+                        if let Some((row, _, end)) = app.filter_add_click.filter(|&(r, s, e)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.open_dropdown(app::DropdownKind::FilterAdd, end, row);
+                            continue;
+                        }
+                        if app.filter_reset_click.is_some_and(|(r, s, e)| {
+                            mouse.row == r && mouse.column >= s && mouse.column < e
+                        }) {
+                            app.reset_all_filters();
+                            continue;
+                        }
+                        // The list header's `s sort ▾` / `t cols ▾` chips open dropdowns.
                         if let Some((row, _, end)) = app.list_cols_click.filter(|&(r, s, e)| {
                             mouse.row == r && mouse.column >= s && mouse.column < e
                         }) {
@@ -4162,6 +4210,40 @@ async fn run_event_loop(
                                 }
                             }
                         }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // Branch-filter modal: Tab/Shift-Tab cycles active/local/remote/any, ↑↓ move, Enter
+                // applies (row 0 clears, when present). Typed chars edit the live query, so nav is
+                // arrows (matching the branch-picker's same typed-filter-vs-arrow-nav rule).
+                if app.branch_filter_modal.is_some() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    match key.code {
+                        KeyCode::Esc => app.close_branch_filter(),
+                        KeyCode::Tab => app.branch_filter_cycle_mode(true),
+                        KeyCode::BackTab => app.branch_filter_cycle_mode(false),
+                        KeyCode::Down => app.branch_filter_move(1),
+                        KeyCode::Up => app.branch_filter_move(-1),
+                        KeyCode::Backspace => {
+                            if let Some(modal) = app.branch_filter_modal.as_mut() {
+                                modal.query.pop();
+                                modal.selected = 0;
+                            }
+                        }
+                        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(modal) = app.branch_filter_modal.as_mut() {
+                                modal.query.push(ch);
+                                modal.selected = 0;
+                            }
+                        }
+                        KeyCode::Enter => app.branch_filter_apply_selected(),
                         _ => {}
                     }
                     continue;
@@ -5146,12 +5228,24 @@ async fn run_event_loop(
                         }
                     }
 
-                    // `f` opens the status-filter dropdown under its header trigger (like `t`/`s`).
+                    // `Ctrl+F` opens/reconfigures the branch-existence filter modal.
+                    (KeyCode::Char('f'), KeyModifiers::CONTROL) => app.open_branch_filter(),
+                    // `f` opens the status-filter dropdown, anchored under its filter-bar chip (or
+                    // the "+ add filter" button when the status filter isn't active yet).
                     (KeyCode::Char('f'), _) => {
-                        if let Some((row, _, end)) = app.list_filter_click {
-                            app.open_dropdown(app::DropdownKind::ListFilter, end, row);
+                        let anchor = app
+                            .filter_chip_click
+                            .iter()
+                            .find(|(_, _, _, kind)| *kind == app::FilterKind::Status)
+                            .map(|&(row, _, end, _)| (end, row))
+                            .or_else(|| app.filter_add_click.map(|(row, _, end)| (end, row)));
+                        if let Some(anchor) = anchor {
+                            app.open_filter_kind(app::FilterKind::Status, anchor);
                         }
                     }
+                    // `F` clears every active filter chip at once (search text is separate — Esc
+                    // while typing, or the inline `×`, clears that).
+                    (KeyCode::Char('F'), _) => app.reset_all_filters(),
 
                     // `,` opens the settings modal.
                     (KeyCode::Char(','), _) => app.open_settings(),
@@ -5435,6 +5529,22 @@ async fn run_event_loop(
                 let max_jobs = app.max_jobs;
                 drop(app);
                 tokio::spawn(run_all_details(repos, max_jobs, false));
+            }
+        }
+
+        // While the branch-existence filter is armed (the modal is open, or a filter is applied),
+        // fetch bulk branch data for any repo that doesn't have it yet. Re-triggerable (unlike the
+        // one-shot `details_pass_spawned` above) — a repo count change re-fires it, so repos that
+        // stream in via append-only discovery after the filter armed still get backfilled.
+        {
+            let mut app = app_state.lock().unwrap();
+            let armed = app.branch_filter_modal.is_some() || app.branch_filter.is_some();
+            if armed && app.repos.len() != app.branch_filter_fetched_count {
+                app.branch_filter_fetched_count = app.repos.len();
+                let repos = app.repos.clone();
+                let max_jobs = app.max_jobs;
+                drop(app);
+                tokio::spawn(run_all_branches(repos, max_jobs, false));
             }
         }
 

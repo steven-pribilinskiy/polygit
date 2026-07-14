@@ -215,6 +215,8 @@ pub enum KeyAction {
     ColumnsDropdown,
     SortDropdown,
     FilterDropdown,
+    OpenBranchFilter,
+    ResetFilters,
     SplitNarrow,
     SplitWiden,
     NameFilter,
@@ -357,6 +359,8 @@ fn build_action_defs() -> Vec<ActionDef> {
         (FilterDropdown,      "filter_dropdown",     "Open the status-filter dropdown", "Find & sort",  List, (C('f'), false, false, false), &["f"]),
         (NameFilter,          "name_filter",         "Fuzzy-filter repos by name",      "Find & sort",  List, (C('/'), false, false, false), &["/"]),
         (OpenFinder,          "open_finder",         "Open the fuzzy finder overlay",   "Find & sort",  List, (C('p'), true,  false, false), &["ctrl+p"]),
+        (OpenBranchFilter,    "open_branch_filter",  "Open the branch-existence filter","Find & sort",  List, (C('f'), true,  false, false), &["ctrl+f"]),
+        (ResetFilters,        "reset_filters",       "Clear every active filter chip",  "Find & sort",  List, (C('F'), false, false, false), &["F"]),
         // List — panes & layout
         (SplitNarrow,         "split_narrow",        "Narrow the left pane",            "Panes & views", List, (C('['), false, false, false), &["["]),
         (SplitWiden,          "split_widen",         "Widen the left pane",             "Panes & views", List, (C(']'), false, false, false), &["]"]),

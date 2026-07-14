@@ -136,6 +136,44 @@ impl AppState {
         self.snap_selection(true);
     }
 
+    /// Which filter kinds are currently narrowing the list, in `FilterKind::ALL` order — the
+    /// filter bar's active chips.
+    pub fn active_filter_kinds(&self) -> Vec<FilterKind> {
+        FilterKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| match kind {
+                FilterKind::Status => self.status_filter != StatusFilter::All,
+                FilterKind::Branch => self.branch_filter.is_some(),
+            })
+            .collect()
+    }
+
+    /// Open (or reopen, to reconfigure) a filter kind's own config UI — the same action whether
+    /// triggered by a direct key (`f`, `Ctrl+F`), a click on an active chip's label, or a pick
+    /// from the "+ add filter" menu. `anchor` is `(right, row)`, mirroring `open_dropdown`'s params.
+    pub fn open_filter_kind(&mut self, kind: FilterKind, anchor: (u16, u16)) {
+        match kind {
+            FilterKind::Status => self.open_dropdown(DropdownKind::ListFilter, anchor.0, anchor.1),
+            FilterKind::Branch => self.open_branch_filter(),
+        }
+    }
+
+    /// Clear one filter kind back to neutral — a filter-bar chip's `×`.
+    pub fn clear_filter_kind(&mut self, kind: FilterKind) {
+        match kind {
+            FilterKind::Status => self.set_status_filter(StatusFilter::All),
+            FilterKind::Branch => self.branch_filter = None,
+        }
+    }
+
+    /// Clear every currently-active filter at once (`F`, the filter bar's "reset filters" button).
+    pub fn reset_all_filters(&mut self) {
+        for kind in self.active_filter_kinds() {
+            self.clear_filter_kind(kind);
+        }
+    }
+
     pub fn toggle_column(&mut self, column: Column) {
         match column {
             Column::Status => self.columns.status = !self.columns.status,

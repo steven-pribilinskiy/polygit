@@ -10,10 +10,10 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
-    AppState, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode, DiffSource, DiffView,
-    DropdownKind, HelpTab, HintClick, HintKey, IconSet, InfoAction, Leader, ListRow, PageRow,
-    PageRowKind, Pane, RepoPageSort, RepoState, RepoStatus, ResultDiffView, RightView, ScrollHit,
-    ScrollKind, SortColumn, SortDir, SplitterMode, StatusFilter,
+    AppState, BranchExistenceMode, ClickRegion, Column, ColumnFlags, Command, DiffFocus, DiffMode,
+    DiffSource, DiffView, DropdownKind, FilterKind, HelpTab, HintClick, HintKey, IconSet,
+    InfoAction, Leader, ListRow, PageRow, PageRowKind, Pane, RepoPageSort, RepoState, RepoStatus,
+    ResultDiffView, RightView, ScrollHit, ScrollKind, SortColumn, SortDir, SplitterMode,
 };
 
 /// The published documentation site (opened by the `D` hotkey and linked in the help modal).
@@ -465,6 +465,24 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         } else if app.branch_picker_click.iter().any(|&(row, _)| row == hrow) {
             hits.push(inner_row(app.branch_picker_area));
         }
+    } else if app.branch_filter_modal.is_some() {
+        if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.branch_filter_modal_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.branch_filter_mode_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if app.branch_filter_rows_click.iter().any(|&(row, _)| row == hrow) {
+            hits.push(inner_row(app.branch_filter_modal_area));
+        } else if let Some(scroll) = scrollbar_col_hit(Some(&[crate::app::ScrollKind::BranchFilter])) {
+            hits.push(scroll);
+        }
     } else if app.show_build_info {
         if let Some((row, start, end)) =
             app.build_info_close_click.filter(|&(r, s, e)| contains(r, s, e))
@@ -642,7 +660,22 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
                 app.list_cols_click
                     .filter(|&(r, s, e)| contains(r, s, e))
                     .or_else(|| app.list_sort_click.filter(|&(r, s, e)| contains(r, s, e)))
-                    .or_else(|| app.list_filter_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| app.filter_search_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| app.filter_search_clear_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| {
+                        app.filter_chip_click
+                            .iter()
+                            .find(|&&(r, s, e, _)| contains(r, s, e))
+                            .map(|&(r, s, e, _)| (r, s, e))
+                    })
+                    .or_else(|| {
+                        app.filter_chip_remove_click
+                            .iter()
+                            .find(|&&(r, s, e, _)| contains(r, s, e))
+                            .map(|&(r, s, e, _)| (r, s, e))
+                    })
+                    .or_else(|| app.filter_add_click.filter(|&(r, s, e)| contains(r, s, e)))
+                    .or_else(|| app.filter_reset_click.filter(|&(r, s, e)| contains(r, s, e)))
             })
             .flatten();
         let header_col = if list_visible { app.header_sort_at(hcol, hrow) } else { None };
@@ -1038,7 +1071,12 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     app.header_area = Rect::default();
     app.list_cols_click = None;
     app.list_sort_click = None;
-    app.list_filter_click = None;
+    app.filter_search_click = None;
+    app.filter_search_clear_click = None;
+    app.filter_chip_click.clear();
+    app.filter_chip_remove_click.clear();
+    app.filter_add_click = None;
+    app.filter_reset_click = None;
     app.header_click.clear();
     app.pr_cell_click.clear();
     app.fav_cell_click.clear();
@@ -1082,6 +1120,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         }
         if app.branch_picker.is_some() {
             render_branch_picker(frame, app, area);
+        }
+        if app.branch_filter_modal.is_some() {
+            render_branch_filter_modal(frame, app, area);
         }
         if app.explorer.is_some() {
             render_explorer(frame, app, area);
@@ -1263,6 +1304,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.branch_picker.is_some() {
         render_branch_picker(frame, app, area);
+    }
+    if app.branch_filter_modal.is_some() {
+        render_branch_filter_modal(frame, app, area);
     }
     // Confirmation dialog overlays all — rendered after the modal it may sit over (settings reset,
     // the pin-version picker) so it's always on top.

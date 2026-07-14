@@ -7,7 +7,7 @@ use tokio::sync::{mpsc, Semaphore};
 
 use crate::app::{
     BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PrState, PulledCommit, PullResult,
-    RepoDetails, StashInfo, TagInfo, WorktreeInfo,
+    RepoBranches, RepoDetails, StashInfo, TagInfo, WorktreeInfo,
 };
 
 /// Result of parsing git pull output to determine status.
@@ -2054,6 +2054,51 @@ pub async fn list_branch_names(dir: &Path) -> Vec<String> {
     names
 }
 
+/// Parse `for-each-ref --format=%(HEAD)%1f%(refname) refs/heads refs/remotes` output into local vs
+/// remote branch existence, plus which local branch (if any) is checked out. Only `origin` remote
+/// refs are recognized (matching this codebase's existing single-remote assumption in
+/// `list_branch_names`/`is_branch_merged`); `refs/remotes/origin/HEAD` (the remote's own symbolic
+/// default-branch pointer) is dropped, not treated as a branch named `HEAD`.
+fn parse_repo_branches(output: &str) -> RepoBranches {
+    let mut branches = RepoBranches::default();
+    for line in output.lines() {
+        let mut fields = line.splitn(2, '\u{1f}');
+        let head_marker = fields.next().unwrap_or("").trim();
+        let refname = fields.next().unwrap_or("").trim();
+        if let Some(name) = refname.strip_prefix("refs/heads/") {
+            if head_marker == "*" {
+                branches.active = Some(name.to_string());
+            }
+            branches.local.insert(name.to_string());
+        } else if let Some(name) = refname.strip_prefix("refs/remotes/origin/") {
+            if name != "HEAD" {
+                branches.remote.insert(name.to_string());
+            }
+        }
+    }
+    branches
+}
+
+/// Local + remote branch existence for the cross-repo branch filter: which branches exist locally,
+/// which exist on `origin`, and which one (if any) is currently checked out. One `for-each-ref`
+/// call, no `git fetch` — this runs across every discovered repo in a scan, so it only looks at
+/// whatever remote-tracking refs are already known locally (offline-safe, fast).
+pub async fn list_repo_branches(dir: &Path) -> RepoBranches {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = match Command::new("git")
+        .args([
+            "-C", dir_str, "for-each-ref", "--format=%(HEAD)%1f%(refname)",
+            "refs/heads", "refs/remotes",
+        ])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return RepoBranches::default(),
+    };
+    parse_repo_branches(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// Delete `branch`: `git branch -d` (safe, refuses unmerged) or `-D` (force) when `force`.
 pub async fn delete_branch(dir: &Path, branch: &str, force: bool) -> Result<(), String> {
     let dir_str = dir.to_str().unwrap_or(".");
@@ -2851,6 +2896,81 @@ detached
         assert_eq!(worktrees.len(), 1);
         assert_eq!(worktrees[0].branch, "feature");
         assert_eq!(worktrees[0].path, std::path::PathBuf::from("/repo.worktrees/feature"));
+    }
+
+    #[test]
+    fn parse_repo_branches_local_only() {
+        let output = "*\u{1f}refs/heads/main\n \u{1f}refs/heads/feature\n";
+        let branches = parse_repo_branches(output);
+        assert_eq!(branches.active.as_deref(), Some("main"));
+        assert!(branches.local.contains("main"));
+        assert!(branches.local.contains("feature"));
+        assert!(branches.remote.is_empty());
+    }
+
+    #[test]
+    fn parse_repo_branches_remote_only() {
+        let output = " \u{1f}refs/remotes/origin/mf2\n";
+        let branches = parse_repo_branches(output);
+        assert!(branches.active.is_none());
+        assert!(branches.local.is_empty());
+        assert!(branches.remote.contains("mf2"));
+    }
+
+    #[test]
+    fn parse_repo_branches_local_and_remote_same_name() {
+        let output = "*\u{1f}refs/heads/mf2\n \u{1f}refs/remotes/origin/mf2\n";
+        let branches = parse_repo_branches(output);
+        assert_eq!(branches.active.as_deref(), Some("mf2"));
+        assert!(branches.local.contains("mf2"));
+        assert!(branches.remote.contains("mf2"));
+    }
+
+    #[test]
+    fn parse_repo_branches_detects_active_head() {
+        let output = " \u{1f}refs/heads/main\n*\u{1f}refs/heads/feature\n";
+        let branches = parse_repo_branches(output);
+        assert_eq!(branches.active.as_deref(), Some("feature"));
+    }
+
+    #[test]
+    fn parse_repo_branches_detached_head_has_no_active() {
+        let output = " \u{1f}refs/heads/main\n \u{1f}refs/heads/feature\n";
+        let branches = parse_repo_branches(output);
+        assert!(branches.active.is_none());
+        assert_eq!(branches.local.len(), 2);
+    }
+
+    #[test]
+    fn parse_repo_branches_strips_origin_prefix() {
+        let output = " \u{1f}refs/remotes/origin/release\n";
+        let branches = parse_repo_branches(output);
+        assert!(branches.remote.contains("release"));
+        assert!(!branches.remote.iter().any(|name| name.contains("origin")));
+    }
+
+    #[test]
+    fn parse_repo_branches_skips_remote_head_symref() {
+        let output = " \u{1f}refs/remotes/origin/HEAD\n \u{1f}refs/remotes/origin/main\n";
+        let branches = parse_repo_branches(output);
+        assert!(!branches.remote.contains("HEAD"));
+        assert!(branches.remote.contains("main"));
+        assert_eq!(branches.remote.len(), 1);
+    }
+
+    #[test]
+    fn parse_repo_branches_preserves_slash_in_name() {
+        let output = "*\u{1f}refs/heads/feature/foo\n";
+        let branches = parse_repo_branches(output);
+        assert_eq!(branches.active.as_deref(), Some("feature/foo"));
+        assert!(branches.local.contains("feature/foo"));
+    }
+
+    #[test]
+    fn parse_repo_branches_ignores_non_origin_remote() {
+        let output = " \u{1f}refs/remotes/upstream/mf2\n";
+        let branches = parse_repo_branches(output);
+        assert!(branches.remote.is_empty());
     }
 
     /// Run a git command in `dir`, asserting success — test plumbing for the detection test.

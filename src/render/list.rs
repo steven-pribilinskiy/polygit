@@ -33,38 +33,26 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     // + direction rides on the sort trigger. Captured for click hit-testing + dropdown anchoring.
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
-    // Top-border triggers, `·`-separated and ordered `filter · sort · columns`. All three open a
-    // dropdown (`f`/`s`/`t` or a click): `f status ⟪filter⟫ ▾`, `s sort ⟪col ▲⟫ ▾`, `t cols ▾`.
-    // The active filter / sort rides on its trigger (mirrors the footer `{status}` reset tag);
-    // when the filter is `all` the tag is omitted. The maximize button is the rightmost element.
-    // (The `/` name filter is left in the status-bar footer where its active needle lives.)
+    // Top-border triggers, `·`-separated: `s sort ⟪col ▲⟫ ▾`, `t cols ▾`, then the maximize button.
+    // The status filter (`f`) and the branch filter (`Ctrl+F`) live in the filter bar now — a real
+    // content row rendered below (`render_filter_bar`), not a border chip — alongside the always-
+    // visible `/` search box.
     let cols_text = "t cols ▾";
     let cols_w = cols_text.chars().count() as u16;
     let sort_tag = format!("⟪{} {}⟫", app.sort_column.label(), app.sort_dir.arrow());
     let sort_label = format!(" sort {sort_tag} ▾");
     let sort_w = (1 + sort_label.chars().count()) as u16;
-    let filter_label = match app.status_filter.tag() {
-        Some(tag) => format!(" status ⟪{tag}⟫ ▾"),
-        None => " status ▾".to_string(),
-    };
-    let filter_w = (1 + filter_label.chars().count()) as u16;
     let sep_w = 3u16; // " · "
     let (max_spans, chips_end) =
         max_button_spans(app, Pane::List, area.y, area.x + area.width.saturating_sub(1));
-    // Place right-to-left from the maximize button: columns (rightmost), then sort, then filter.
+    // Place right-to-left from the maximize button: columns (rightmost), then sort.
     let cols_end = chips_end;
     let cols_start = cols_end.saturating_sub(cols_w);
     let sort_end = cols_start.saturating_sub(sep_w);
     let sort_start = sort_end.saturating_sub(sort_w);
-    let filter_end = sort_start.saturating_sub(sep_w);
-    let filter_start = filter_end.saturating_sub(filter_w);
     app.list_cols_click = Some((area.y, cols_start, cols_end));
     app.list_sort_click = Some((area.y, sort_start, sort_end));
-    app.list_filter_click = Some((area.y, filter_start, filter_end));
     let chips = Line::from(vec![
-        Span::styled("f", key_style),
-        Span::styled(filter_label.clone(), label_style),
-        Span::styled(" · ", label_style),
         Span::styled("s", key_style),
         Span::styled(sort_label.clone(), label_style),
         Span::styled(" · ", label_style),
@@ -87,6 +75,17 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
+
+    // The filter bar (search box + active filter chips + add/reset) is a real content row — the
+    // first line of `inner`, distinct from the border's `title_top` chips above (sort/columns
+    // only now). `content_area` is everything below it (the column header + repo rows).
+    let filter_bar_height: u16 = if inner.height >= 1 { 1 } else { 0 };
+    let content_area = Rect {
+        y: inner.y + filter_bar_height,
+        height: inner.height.saturating_sub(filter_bar_height),
+        ..inner
+    };
+    render_filter_bar(frame, app, Rect { height: filter_bar_height, ..inner });
 
     // Compute column widths (the displayed name is the repo's path relative to the scan root).
     let max_name_len = app
@@ -419,14 +418,14 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     // highlighted in the pinned footer instead.
     let sel_item = (app.selected < rows.len()).then_some(app.selected);
 
-    // Split the inner area into a 2-row column header (titles + sort indicator) and the repo
-    // rows beneath. Too short for a header → use the whole inner area for rows.
-    let header_height: u16 = if inner.height >= 4 { 2 } else { 0 };
+    // Split the content area (below the filter bar) into a 2-row column header (titles + sort
+    // indicator) and the repo rows beneath. Too short for a header → use it all for rows.
+    let header_height: u16 = if content_area.height >= 4 { 2 } else { 0 };
     let rows_and_footer = Rect {
-        x: inner.x,
-        y: inner.y + header_height,
-        width: inner.width,
-        height: inner.height.saturating_sub(header_height),
+        x: content_area.x,
+        y: content_area.y + header_height,
+        width: content_area.width,
+        height: content_area.height.saturating_sub(header_height),
     };
     // Reserve the bottom `footer_h` rows for the pinned summary; the repo list scrolls above it.
     let footer_h = footer_h.min(rows_and_footer.height.saturating_sub(1));
@@ -450,7 +449,7 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         (Vec::new(), Vec::new(), None)
     };
     if header_height > 0 {
-        let header_area = Rect { height: header_height, ..inner };
+        let header_area = Rect { height: header_height, ..content_area };
         frame.render_widget(Paragraph::new(header_lines), header_area);
         app.header_area = header_area;
     } else {
@@ -655,6 +654,91 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
 
     app.list_rows_area = rows_area;
     scroll
+}
+
+/// The filter bar: an always-visible search box (`/`), active filter chips (status/branch, each
+/// with its own `×`), a "+ add filter" trigger, and — once at least one filter is active —
+/// "reset filters". The first content row of the list pane, above the column header/repo rows.
+fn render_filter_bar(frame: &mut Frame, app: &mut AppState, area: Rect) {
+    app.filter_search_click = None;
+    app.filter_search_clear_click = None;
+    app.filter_chip_click.clear();
+    app.filter_chip_remove_click.clear();
+    app.filter_add_click = None;
+    app.filter_reset_click = None;
+    if area.height == 0 {
+        return;
+    }
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let bright = Style::default().fg(Color::Gray);
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let active_style = Style::default().fg(Color::Green);
+
+    let mut spans: Vec<Span> = Vec::new();
+    let mut col = area.x;
+    fn push_span(spans: &mut Vec<Span<'static>>, col: &mut u16, text: String, style: Style) {
+        *col += UnicodeWidthStr::width(text.as_str()) as u16;
+        spans.push(Span::styled(text, style));
+    }
+
+    // Search box: `/ ` + current text (or a dim placeholder while empty) + a cursor block while
+    // editing, then a small `×` to clear non-empty text. `/` still begins/commits/cancels editing
+    // via the same `filter`/`filter_input_mode` state machine — only its rendering moved here from
+    // the footer.
+    let search_start = col;
+    push_span(&mut spans, &mut col, "/ ".to_string(), key_style);
+    let filter_text = app.filter.clone().unwrap_or_default();
+    if filter_text.is_empty() && !app.filter_input_mode {
+        push_span(&mut spans, &mut col, "search repos…".to_string(), dim.add_modifier(Modifier::ITALIC));
+    } else {
+        push_span(&mut spans, &mut col, filter_text.clone(), bright);
+        if app.filter_input_mode {
+            push_span(&mut spans, &mut col, "\u{2588}".to_string(), bright);
+        }
+    }
+    app.filter_search_click = Some((area.y, search_start, col));
+    if !filter_text.is_empty() {
+        push_span(&mut spans, &mut col, " ".to_string(), dim);
+        let clear_start = col;
+        push_span(&mut spans, &mut col, "\u{d7}".to_string(), dim);
+        app.filter_search_clear_click = Some((area.y, clear_start, col));
+    }
+
+    // Active filter chips (status / branch), each `label: value` + a `×` to clear just that one.
+    for kind in app.active_filter_kinds() {
+        push_span(&mut spans, &mut col, "  ".to_string(), dim);
+        let value = match kind {
+            FilterKind::Status => app.status_filter.tag().unwrap_or("").to_string(),
+            FilterKind::Branch => app.branch_filter.clone().unwrap_or_default(),
+        };
+        let chip_start = col;
+        push_span(&mut spans, &mut col, format!("{}: {value}", kind.label()), active_style);
+        app.filter_chip_click.push((area.y, chip_start, col, kind));
+        push_span(&mut spans, &mut col, " ".to_string(), dim);
+        let remove_start = col;
+        push_span(&mut spans, &mut col, "\u{d7}".to_string(), dim);
+        app.filter_chip_remove_click.push((area.y, remove_start, col, kind));
+    }
+
+    // "+ add filter" — dim/inert once every kind is already active (nothing left to add).
+    let active_count = app.active_filter_kinds().len();
+    let any_addable = active_count < FilterKind::ALL.len();
+    push_span(&mut spans, &mut col, "  ".to_string(), dim);
+    let add_start = col;
+    let add_style = if any_addable { dim } else { dim.add_modifier(Modifier::DIM) };
+    push_span(&mut spans, &mut col, "+ add filter \u{25be}".to_string(), add_style);
+    app.filter_add_click = any_addable.then_some((area.y, add_start, col));
+
+    // "reset filters" — only once at least one filter is active.
+    if active_count > 0 {
+        push_span(&mut spans, &mut col, "  ".to_string(), dim);
+        let reset_start = col;
+        push_span(&mut spans, &mut col, "reset filters".to_string(), dim);
+        app.filter_reset_click = Some((area.y, reset_start, col));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// The pinned list footer: a divider, a compact **Last pull** summary line (`✓ Last pull · N · …`),

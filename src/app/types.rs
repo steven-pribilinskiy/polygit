@@ -458,6 +458,98 @@ impl BranchInfo {
     }
 }
 
+/// Bulk local+remote branch existence for one repo — a name-only existence check (not full
+/// `BranchInfo` detail), fetched across every discovered repo for the cross-repo branch filter.
+#[derive(Debug, Clone, Default)]
+pub struct RepoBranches {
+    /// The currently checked-out local branch, if any (`None` when detached).
+    pub active: Option<String>,
+    pub local: BTreeSet<String>,
+    /// Branch names on `origin` (the `origin/` prefix stripped).
+    pub remote: BTreeSet<String>,
+}
+
+/// Which side(s) of a repo's branches the cross-repo branch filter checks. `Any` (not "Both") to
+/// read unambiguously as "exists, local or remote" rather than an intersection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BranchExistenceMode {
+    Active,
+    Local,
+    Remote,
+    #[default]
+    Any,
+}
+
+impl BranchExistenceMode {
+    /// Whether `name` passes this mode against a repo's branch data.
+    pub fn matches(&self, branches: &RepoBranches, name: &str) -> bool {
+        match self {
+            BranchExistenceMode::Active => branches.active.as_deref() == Some(name),
+            BranchExistenceMode::Local => branches.local.contains(name),
+            BranchExistenceMode::Remote => branches.remote.contains(name),
+            BranchExistenceMode::Any => branches.local.contains(name) || branches.remote.contains(name),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            BranchExistenceMode::Active => "active",
+            BranchExistenceMode::Local => "local",
+            BranchExistenceMode::Remote => "remote",
+            BranchExistenceMode::Any => "any",
+        }
+    }
+
+    /// Cycle order for `Tab`/`Shift-Tab` in the branch-filter modal.
+    pub const ALL: [BranchExistenceMode; 4] = [
+        BranchExistenceMode::Active,
+        BranchExistenceMode::Local,
+        BranchExistenceMode::Remote,
+        BranchExistenceMode::Any,
+    ];
+
+    pub fn next(&self) -> Self {
+        let index = Self::ALL.iter().position(|mode| mode == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let index = Self::ALL.iter().position(|mode| mode == self).unwrap_or(0);
+        Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
+/// The open branch-existence filter modal: mode + live query narrowing the cross-repo branch-name
+/// aggregate, plus list nav/scroll state. Mirrors `BranchPicker`'s shape.
+#[derive(Debug, Clone)]
+pub struct BranchFilterModal {
+    pub mode: BranchExistenceMode,
+    pub query: String,
+    /// Highlighted row index (0 is the synthetic "clear filter" row when a filter is applied).
+    pub selected: usize,
+    pub scroll: usize,
+}
+
+/// One pluggable entry in the list pane's filter bar. Adding a new filter kind is one variant here
+/// plus one arm each in `active_filter_kinds`/`open_filter_kind`/`clear_filter_kind` — no layout
+/// rework in the render code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterKind {
+    Status,
+    Branch,
+}
+
+impl FilterKind {
+    pub const ALL: &'static [FilterKind] = &[FilterKind::Status, FilterKind::Branch];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            FilterKind::Status => "status",
+            FilterKind::Branch => "branch",
+        }
+    }
+}
+
 /// One worktree on the repo page.
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
@@ -1098,6 +1190,8 @@ pub enum DropdownKind {
     ExplorerSort,
     /// The Settings "Parallel value" picker — the exact-count ladder or the percentage steps.
     ParallelValue,
+    /// The filter bar's "+ add filter" menu — rows are the `FilterKind`s not currently active.
+    FilterAdd,
 }
 
 impl DropdownKind {
@@ -2296,6 +2390,7 @@ pub enum ScrollKind {
     ExplorerList,
     ExplorerPreview,
     ExplorerPreviewH,
+    BranchFilter,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.
@@ -2321,13 +2416,8 @@ pub enum Command {
     ToggleResultPanel,
     Help,
     OpenPage,
-    SetFilter(StatusFilter),
     /// Close the active leader menu (the clickable `esc` in the filter/view/fold rows).
     LeaderCancel,
-    /// Enter the name-filter input mode (same as `/`).
-    NameFilter,
-    /// Clear the active name filter (the clickable `[needle]` tag).
-    ClearNameFilter,
     /// Toggle the Result overlay (same as Space).
     ResultOverlay,
     /// Cycle focus across the visible panels (same as Tab).
@@ -2417,11 +2507,7 @@ impl Command {
             }
             Command::Help => "Open the help modal (keys, flags, glyphs, about)",
             Command::OpenPage => "Open the selected repo's page: branches, worktrees, stashes",
-            Command::SetFilter(StatusFilter::All) => "Clear the status filter",
-            Command::SetFilter(_) => "Filter by this status",
             Command::LeaderCancel => "Close this menu",
-            Command::NameFilter => "Filter repos by name (type to match)",
-            Command::ClearNameFilter => "Clear the name filter",
             Command::ResultOverlay => "Show the Result / Errors summary",
             Command::FocusToggle => "Cycle focus across the visible panels",
             Command::SplitNarrow => "Narrow the left pane",
@@ -2654,6 +2740,11 @@ pub struct RepoState {
     pub result_branches: Option<Vec<BranchInfo>>,
     /// Guard so the Result-pane branches fetch is spawned at most once.
     pub result_branches_loading: bool,
+    /// Bulk local+remote branch existence for the cross-repo branch filter (`Ctrl+F`) — a
+    /// name-only existence check, not full `BranchInfo` detail. `None` until the bulk fetch runs.
+    pub branches: Option<RepoBranches>,
+    /// Guard so overlapping branch-filter fetch triggers don't double-fetch this repo.
+    pub branches_loading: bool,
     /// True while a repo-page pull (`p`/`P`) is in flight, for the page spinner.
     pub pull_loading: bool,
     /// Which list cells changed in the last refetch (drives the attention flash).
@@ -2798,6 +2889,8 @@ impl RepoState {
             tags_loading: false,
             result_branches: None,
             result_branches_loading: false,
+            branches: None,
+            branches_loading: false,
             pull_loading: false,
             flash: CellFlash::default(),
             flash_until: None,

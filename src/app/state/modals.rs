@@ -170,6 +170,7 @@ impl AppState {
             || self.kebab.is_some()
             || self.base_picker.is_some()
             || self.branch_picker.is_some()
+            || self.branch_filter_modal.is_some()
             || self.show_changelog
             || self.explorer.is_some()
     }
@@ -186,6 +187,7 @@ impl AppState {
         self.kebab = None;
         self.base_picker = None;
         self.branch_picker = None;
+        self.branch_filter_modal = None;
         self.dropdown = None;
         self.finder = None;
         self.picker = None;
@@ -780,5 +782,68 @@ impl AppState {
         }
         let last = (len - 1) as isize;
         picker.selected = (picker.selected as isize + delta).clamp(0, last) as usize;
+    }
+
+    pub fn open_branch_filter(&mut self) {
+        self.branch_filter_modal = Some(BranchFilterModal {
+            mode: self.branch_filter_mode,
+            query: String::new(),
+            selected: 0,
+            scroll: 0,
+        });
+    }
+
+    pub fn close_branch_filter(&mut self) {
+        self.branch_filter_modal = None;
+    }
+
+    /// Row count for the open branch-filter modal: the synthetic "clear filter" row (only when a
+    /// filter is currently applied) plus one row per matching branch name.
+    fn branch_filter_row_count(&self) -> usize {
+        usize::from(self.branch_filter.is_some()) + self.branch_filter_modal_rows().len()
+    }
+
+    pub fn branch_filter_move(&mut self, delta: isize) {
+        let len = self.branch_filter_row_count();
+        if len == 0 {
+            if let Some(modal) = self.branch_filter_modal.as_mut() {
+                modal.selected = 0;
+            }
+            return;
+        }
+        let last = (len - 1) as isize;
+        if let Some(modal) = self.branch_filter_modal.as_mut() {
+            modal.selected = (modal.selected as isize + delta).clamp(0, last) as usize;
+        }
+    }
+
+    /// Cycle the modal's active/local/remote/any mode (`Tab`/`Shift-Tab`); resets the selection
+    /// since the aggregate list can reorder/resize when the mode changes.
+    pub fn branch_filter_cycle_mode(&mut self, forward: bool) {
+        let Some(modal) = self.branch_filter_modal.as_mut() else {
+            return;
+        };
+        modal.mode = if forward { modal.mode.next() } else { modal.mode.prev() };
+        modal.selected = 0;
+        modal.scroll = 0;
+    }
+
+    /// Apply the modal's highlighted row: row 0 (when present) clears the filter; otherwise picks
+    /// that branch name with the modal's current mode. Closes the modal either way.
+    pub fn branch_filter_apply_selected(&mut self) {
+        let Some(modal) = self.branch_filter_modal.clone() else {
+            return;
+        };
+        let clear_row = self.branch_filter.is_some();
+        if clear_row && modal.selected == 0 {
+            self.branch_filter = None;
+        } else {
+            let index = if clear_row { modal.selected - 1 } else { modal.selected };
+            if let Some((name, _count)) = self.branch_filter_modal_rows().get(index) {
+                self.branch_filter = Some(name.clone());
+                self.branch_filter_mode = modal.mode;
+            }
+        }
+        self.close_branch_filter();
     }
 }

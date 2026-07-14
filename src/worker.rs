@@ -19,7 +19,7 @@ use crate::git::{
     diff_stat, discard_changes, discard_status, discover_worktrees, drop_stash, fetch_ff_branch,
     fetch_remote, file_diff_vs, get_branch, get_diff, get_pulled_details, get_remote_url,
     get_repo_details, is_dirty,
-    list_commits, list_local_branches, list_stashes, list_tags, list_worktrees, merge_base_with, pull_all_branches,
+    list_commits, list_local_branches, list_repo_branches, list_stashes, list_tags, list_worktrees, merge_base_with, pull_all_branches,
     pr_diff, pr_view, pull_ff_only, pull_request, remove_worktree, resolve_base, resolve_commit_author_login,
     stash_diff_stats, stash_file_diff,
     stash_file_list, stash_files, switch_branch, uncommitted_file_list, PullOutcome,
@@ -1556,6 +1556,37 @@ pub async fn run_all_details(repos: Vec<SharedRepoState>, max_jobs: usize, force
             let path = { repo.lock().unwrap().path.clone() };
             let details = get_repo_details(&path).await;
             repo.lock().unwrap().details = Some(details);
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
+}
+
+/// Fetch bulk local+remote branch existence for many repos, bounded by `max_jobs` — backs the
+/// cross-repo branch-existence filter (`Ctrl+F`). Unlike `run_all_details`'s one-shot trigger, this
+/// gets re-invoked repeatedly (whenever the filter is armed and new repos have streamed in), so
+/// each task claims `branches_loading` under the lock *before* awaiting — an overlapping trigger
+/// call sees the flag already set and skips that repo, rather than double-fetching it.
+pub async fn run_all_branches(repos: Vec<SharedRepoState>, max_jobs: usize, force: bool) {
+    let semaphore = Arc::new(Semaphore::new(max_jobs.max(1)));
+    let mut handles = Vec::new();
+    for repo in repos {
+        let semaphore = Arc::clone(&semaphore);
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
+            {
+                let mut state = repo.lock().unwrap();
+                if (!force && state.branches.is_some()) || state.branches_loading {
+                    return;
+                }
+                state.branches_loading = true;
+            }
+            let path = { repo.lock().unwrap().path.clone() };
+            let branches = list_repo_branches(&path).await;
+            let mut state = repo.lock().unwrap();
+            state.branches = Some(branches);
+            state.branches_loading = false;
         }));
     }
     for handle in handles {

@@ -3,6 +3,23 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.15.0 — 2026-07-14
+Feat: filter repos by branch existence, and a new extensible filter bar
+The list pane's top border used to carry a status-filter chip, and the `/` name filter only
+showed up in the footer while you were actively typing it. Both are now a single always-visible
+**filter bar** — the first row of the list pane — hosting a persistent search box plus a set of
+removable filter chips.
+- `Ctrl+F` opens the new branch-existence filter: pick active/local/remote/any mode (`Tab` cycles),
+  type to narrow a live aggregate of every branch name across every discovered repo, and apply one
+  to filter the list to just the repos that have it.
+- The status filter (`f`) moved off the pane header and into the filter bar as a removable chip,
+  alongside the new branch chip. Each chip gets its own `×`; `F` clears every active filter at once.
+- `+ add filter ▾` offers whichever filter kinds aren't active yet — a small, extensible mechanism
+  so a future filter type is just a new entry, no layout rework.
+- The `/` search box is now a real, always-clickable row element (with a placeholder and inline
+  `×`) instead of a footer-only mode; the redundant `[needle]`/`{status}` footer reset tags are
+  gone now that the filter bar's chips serve the same purpose.
+
 ## v3.14.2 — 2026-07-14
 Internal: split `app/state1.rs`/`state2.rs`/`state3.rs` into thematic `app/state/` modules
 The three `impl AppState` files were split by size, not by concern, so related methods (the

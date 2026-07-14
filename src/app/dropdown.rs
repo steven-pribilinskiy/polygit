@@ -174,7 +174,24 @@ impl AppState {
                     DropdownItem { label, on: selected, mnemonic, enabled: true }
                 })
                 .collect(),
+            DropdownKind::FilterAdd => self
+                .filter_add_candidates()
+                .into_iter()
+                .map(|kind| {
+                    let label = kind.label().to_string();
+                    let mnemonic = label.chars().next().unwrap_or(' ');
+                    DropdownItem { label, on: false, mnemonic, enabled: true }
+                })
+                .collect(),
         }
+    }
+
+    /// The `FilterKind`s not currently active, in `FilterKind::ALL` order — the "+ add filter"
+    /// menu's rows. Shared by `dropdown_items`/`dropdown_len`/`dropdown_activate` so the rendered
+    /// list and the activated index never drift apart.
+    fn filter_add_candidates(&self) -> Vec<FilterKind> {
+        let active = self.active_filter_kinds();
+        FilterKind::ALL.iter().copied().filter(|kind| !active.contains(kind)).collect()
     }
 
     /// Whether a Stashes-tab column is currently shown.
@@ -241,6 +258,7 @@ impl AppState {
             DropdownKind::ExplorerColumns => crate::explorer::ExplorerColumn::ALL.len(),
             DropdownKind::ExplorerSort => crate::explorer::SortKey::ALL.len(),
             DropdownKind::ParallelValue => self.max_pull_value_choices().len(),
+            DropdownKind::FilterAdd => self.filter_add_candidates().len(),
         })
     }
 
@@ -425,6 +443,13 @@ impl AppState {
             DropdownKind::ParallelValue => {
                 if let Some(&(value, ..)) = self.max_pull_value_choices().get(index) {
                     self.set_max_pull_value(value);
+                }
+                true
+            }
+            DropdownKind::FilterAdd => {
+                let anchor = (dropdown.anchor_right, dropdown.anchor_row);
+                if let Some(kind) = self.filter_add_candidates().get(index).copied() {
+                    self.open_filter_kind(kind, anchor);
                 }
                 true
             }

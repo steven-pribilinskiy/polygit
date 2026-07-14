@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -38,6 +38,14 @@ pub struct AppState {
     pub filter: Option<String>,
     /// Status filter picked via the `f` leader (default: show all).
     pub status_filter: StatusFilter,
+    /// Branch name currently filtering the repo list (`Ctrl+F` branch-filter modal), if any.
+    /// Session-only — mirrors `status_filter`'s own precedent of never persisting.
+    pub branch_filter: Option<String>,
+    /// Which side(s) `branch_filter` checks (active/local/remote/any). Session-only.
+    pub branch_filter_mode: BranchExistenceMode,
+    /// `repos.len()` as of the last branch-data bulk-fetch trigger — re-triggers the fetch when it
+    /// changes while a branch filter is armed, so append-only discovery batches get backfilled.
+    pub branch_filter_fetched_count: usize,
     /// Column the list is sorted by (default: discovery order). Persisted.
     pub sort_column: SortColumn,
     /// Sort direction for `sort_column`. Persisted.
@@ -483,8 +491,19 @@ pub struct AppState {
     /// The clickable `[cols ▾]` / `[sort ▾]` chips on the list header and the repo-page title bar.
     pub list_cols_click: Option<(u16, u16, u16)>,
     pub list_sort_click: Option<(u16, u16, u16)>,
-    /// The list pane's top-border `f by-status` trigger region (opens the status-filter dropdown).
-    pub list_filter_click: Option<(u16, u16, u16)>,
+    // ── Filter bar (the list pane's search box + removable filter chips row) ────────────────────
+    /// Click anywhere in the always-visible search box to focus it (`begin_filter_input`).
+    pub filter_search_click: Option<(u16, u16, u16)>,
+    /// The small `×` after non-empty filter text — clears the name filter.
+    pub filter_search_clear_click: Option<(u16, u16, u16)>,
+    /// Active filter chips' label regions: click to reconfigure that filter kind.
+    pub filter_chip_click: Vec<(u16, u16, u16, FilterKind)>,
+    /// Active filter chips' `×` regions: click to clear that filter kind.
+    pub filter_chip_remove_click: Vec<(u16, u16, u16, FilterKind)>,
+    /// The `+ add filter ▾` trigger — opens `DropdownKind::FilterAdd`.
+    pub filter_add_click: Option<(u16, u16, u16)>,
+    /// The `reset filters` trigger — only rendered while at least one filter is active.
+    pub filter_reset_click: Option<(u16, u16, u16)>,
     pub page_cols_click: Option<(u16, u16, u16)>,
     pub page_sort_click: Option<(u16, u16, u16)>,
     /// Which repo-page branch columns are shown (persisted).
@@ -511,6 +530,15 @@ pub struct AppState {
     pub branch_picker_close_click: Option<(u16, u16, u16)>,
     /// Branch-picker rows: (screen row, index into the *filtered* branch list).
     pub branch_picker_click: Vec<(u16, usize)>,
+    /// The open branch-existence filter modal (`Ctrl+F`), if any.
+    pub branch_filter_modal: Option<BranchFilterModal>,
+    pub branch_filter_modal_area: Rect,
+    pub branch_filter_modal_close_click: Option<(u16, u16, u16)>,
+    /// The 4 segmented mode chips: (row, col_start, col_end, mode).
+    pub branch_filter_mode_click: Vec<(u16, u16, u16, BranchExistenceMode)>,
+    /// Branch-name rows: (screen row, index into the *filtered* aggregate — row 0 is the synthetic
+    /// "clear filter" row shown when a branch filter is applied).
+    pub branch_filter_rows_click: Vec<(u16, usize)>,
     /// The fzf-style finder overlay (`P`), when open. Searches all repos to jump the selection.
     pub finder: Option<tui_pick::finder::FinderState>,
     /// Shared goto-repo usage history, consulted for recent/most-used sort and appended on jump.
@@ -836,6 +864,9 @@ impl AppState {
             focus: Pane::default(),
             filter: None,
             status_filter: StatusFilter::default(),
+            branch_filter: None,
+            branch_filter_mode: BranchExistenceMode::default(),
+            branch_filter_fetched_count: 0,
             sort_column: persisted.lists.sort_column,
             sort_dir: persisted.lists.sort_dir,
             filter_input_mode: false,
@@ -1045,7 +1076,12 @@ impl AppState {
             dropdown_action_click: Vec::new(),
             list_cols_click: None,
             list_sort_click: None,
-            list_filter_click: None,
+            filter_search_click: None,
+            filter_search_clear_click: None,
+            filter_chip_click: Vec::new(),
+            filter_chip_remove_click: Vec::new(),
+            filter_add_click: None,
+            filter_reset_click: None,
             page_cols_click: None,
             page_sort_click: None,
             repo_page_columns: persisted.repo_page.repo_page_columns,
@@ -1062,6 +1098,11 @@ impl AppState {
             branch_picker_area: Rect::default(),
             branch_picker_close_click: None,
             branch_picker_click: Vec::new(),
+            branch_filter_modal: None,
+            branch_filter_modal_area: Rect::default(),
+            branch_filter_modal_close_click: None,
+            branch_filter_mode_click: Vec::new(),
+            branch_filter_rows_click: Vec::new(),
             finder: None,
             finder_history: tui_pick::History::load_default(),
             finder_area: Rect::default(),
