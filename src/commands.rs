@@ -105,6 +105,7 @@ const HELP_SECTIONS: &[(&str, &[HelpRow])] = &[
         ("dirty", "", "Print the names of repos with uncommitted changes"),
         ("branches", "", "Branch + ahead/behind vs upstream, per repo"),
         ("sizes", "", "Disk usage per repo, largest first"),
+        ("coverage", "missing, cov", "Which repos in each GitHub org aren't cloned locally"),
     ]),
     ("Workspaces", &[
         ("ws", "workspace, workspaces", "Manage & open saved workspaces (ws ls to list)"),
@@ -366,6 +367,89 @@ pub async fn run_sizes(roots: Vec<PathBuf>, max_depth: usize) -> Result<i32> {
         println!("{:>9}  {}", crate::explorer::human_size(*bytes), paint(name, CYAN, color));
     }
     println!("{:>9}  {}", crate::explorer::human_size(total), paint("total", DIM, color));
+    Ok(0)
+}
+
+/// Options for `polygit coverage`.
+pub struct CoverageOpts {
+    pub json: bool,
+    pub org: Option<String>,
+    pub include_forks: bool,
+    pub include_archived: bool,
+    pub refresh: bool,
+}
+
+/// `polygit coverage` — for each GitHub owner/org found among the scan roots' remotes, print how
+/// many of its repos are cloned locally and list the ones that aren't. Owner identity comes from the
+/// remotes, so the root folder name is irrelevant.
+pub async fn run_coverage(roots: Vec<PathBuf>, max_depth: usize, opts: CoverageOpts) -> Result<i32> {
+    let coverage =
+        crate::coverage::compute(&roots, max_depth, opts.org.as_deref(), opts.refresh).await?;
+
+    if opts.json {
+        println!("{}", serde_json::to_string_pretty(&coverage)?);
+        return Ok(0);
+    }
+    if coverage.is_empty() {
+        println!("No GitHub repos found under the scan roots.");
+        return Ok(0);
+    }
+
+    let color = stdout_color();
+    let mut total_missing = 0usize;
+    for owner in &coverage {
+        let cloned = owner.cloned_count(opts.include_forks, opts.include_archived);
+        let total = owner.badge_total(opts.include_forks, opts.include_archived);
+        let tag = if owner.kind.is_partial() {
+            paint("  (partial — local slice only)", DIM, color)
+        } else {
+            String::new()
+        };
+        println!();
+        println!(
+            "{}  {}{}",
+            paint(&owner.owner, BOLD_CYAN, color),
+            paint(&format!("{cloned}/{total}"), BOLD, color),
+            tag,
+        );
+
+        let missing = owner.missing(opts.include_forks, opts.include_archived);
+        total_missing += missing.len();
+        if missing.is_empty() {
+            if !owner.kind.is_partial() {
+                println!("  {}", paint("✓ all cloned", GREEN, color));
+            }
+            continue;
+        }
+        for repo in missing {
+            let mut flags = Vec::new();
+            if repo.is_fork {
+                flags.push("fork");
+            }
+            if repo.is_archived {
+                flags.push("archived");
+            }
+            if repo.private {
+                flags.push("private");
+            }
+            let suffix = if flags.is_empty() {
+                String::new()
+            } else {
+                paint(&format!("  [{}]", flags.join(", ")), DIM, color)
+            };
+            println!("  {} {}{}", paint("✗", RED, color), repo.name, suffix);
+        }
+    }
+
+    println!();
+    println!(
+        "{}",
+        paint(
+            &format!("{total_missing} repo(s) missing across {} owner(s)", coverage.len()),
+            DIM,
+            color,
+        ),
+    );
     Ok(0)
 }
 

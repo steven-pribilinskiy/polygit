@@ -3,6 +3,7 @@ mod author_cache;
 mod cache;
 mod changelog;
 mod commands;
+mod coverage;
 mod diffview;
 mod explorer;
 mod git;
@@ -149,6 +150,27 @@ enum Commands {
     Sizes {
         #[command(flatten)]
         scan: commands::ScanArgs,
+    },
+    /// Report which repos in each GitHub org/owner under the scan roots aren't cloned locally
+    #[command(visible_aliases = ["missing", "cov"])]
+    Coverage {
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+        /// Emit JSON instead of the aligned table
+        #[arg(long)]
+        json: bool,
+        /// Restrict the report to a single owner/org
+        #[arg(long, value_name = "NAME")]
+        org: Option<String>,
+        /// Include forks in the missing list (hidden by default)
+        #[arg(long)]
+        include_forks: bool,
+        /// Include archived repos in the missing list (hidden by default)
+        #[arg(long)]
+        include_archived: bool,
+        /// Bypass the cached owner listings and re-query GitHub
+        #[arg(long)]
+        refresh: bool,
     },
     /// Manage saved workspaces — opens an interactive picker; `ws ls` lists them.
     #[command(visible_aliases = ["workspace", "workspaces"])]
@@ -955,6 +977,21 @@ async fn run() -> Result<i32> {
         Some(Commands::Dirty { scan }) => return run_report(scan, commands::run_dirty).await,
         Some(Commands::Branches { scan }) => return run_report(scan, commands::run_branches).await,
         Some(Commands::Sizes { scan }) => return run_report(scan, commands::run_sizes).await,
+        Some(Commands::Coverage { scan, json, org, include_forks, include_archived, refresh }) => {
+            let (roots, _) = resolve_roots(&scan.dirs, scan.workspace.as_deref())?;
+            return commands::run_coverage(
+                roots,
+                scan.max_depth(),
+                commands::CoverageOpts {
+                    json: *json,
+                    org: org.clone(),
+                    include_forks: *include_forks,
+                    include_archived: *include_archived,
+                    refresh: *refresh,
+                },
+            )
+            .await;
+        }
         Some(Commands::Update) => return run_self_update().await,
         Some(Commands::Ws { action }) => match action {
             Some(WsAction::Ls) => return list_workspaces(),

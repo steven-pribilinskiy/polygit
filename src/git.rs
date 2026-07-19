@@ -583,6 +583,20 @@ pub fn normalize_remote_url(raw: &str) -> Option<String> {
     Some(https.strip_suffix(".git").unwrap_or(&https).to_string())
 }
 
+/// Split a normalized GitHub URL (`https://github.com/<owner>/<repo>`, as produced by
+/// `normalize_remote_url`) into `(owner, repo)`. Returns None for non-github.com hosts or malformed
+/// paths — the coverage feature can only enumerate github owners via `gh`.
+pub fn parse_owner_repo(normalized_url: &str) -> Option<(String, String)> {
+    let rest = normalized_url.strip_prefix("https://github.com/")?;
+    let mut parts = rest.trim_matches('/').splitn(3, '/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string()))
+}
+
 /// Look up the open PR whose head is `branch` via the `gh` CLI, for the current repo at `dir`.
 /// Best-effort and network-touching — only ever called for the selected repo. Returns `None`
 /// when `gh` is absent, the repo isn't a GitHub repo, the command fails, or there's no open PR.
