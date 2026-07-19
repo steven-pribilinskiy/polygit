@@ -1124,6 +1124,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
         if app.branch_filter_modal.is_some() {
             render_branch_filter_modal(frame, app, area);
         }
+        if app.coverage_modal.is_some() {
+            render_coverage(frame, app, area, tick);
+        }
         if app.explorer.is_some() {
             render_explorer(frame, app, area);
         }
@@ -1307,6 +1310,9 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     }
     if app.branch_filter_modal.is_some() {
         render_branch_filter_modal(frame, app, area);
+    }
+    if app.coverage_modal.is_some() {
+        render_coverage(frame, app, area, tick);
     }
     // Confirmation dialog overlays all — rendered after the modal it may sit over (settings reset,
     // the pin-version picker) so it's always on top.

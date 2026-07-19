@@ -1061,6 +1061,8 @@ pub enum KebabAction {
     OpenRemote,
     /// Open the file explorer rooted at the repo's directory.
     Explore,
+    /// Open the org-coverage panel (which repos in each GitHub org under the roots aren't cloned).
+    OpenCoverage,
     /// Switch to the base branch carried in `KebabItem.data` and pull (merged/gone-upstream repos).
     SwitchBase,
     /// Copy the suggested `git switch <base> && git pull` command (carried in `KebabItem.data`).
@@ -2401,6 +2403,40 @@ pub struct ScrollHit {
     pub track: Rect,
     pub total: usize,
     pub viewport: usize,
+}
+
+/// The org-coverage panel: which repos in each GitHub owner found under the scan roots are cloned
+/// locally. Populated asynchronously (a worker runs `coverage::compute`), so it opens in a loading
+/// state. Methods (navigation, filtering, selection) live in `app/state/coverage_panel.rs`.
+pub struct CoverageState {
+    /// Per-owner coverage; empty while `loading`.
+    pub owners: Vec<crate::coverage::OwnerCoverage>,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// Active owner tab (index into `owners`).
+    pub active_tab: usize,
+    /// Cursor row within the active tab's visible rows.
+    pub selected: usize,
+    /// First visible row (vertical scroll) within the active tab.
+    pub scroll: usize,
+    /// Live filter query: plain substrings match the repo name; `topic:<t>` / `-topic:<t>` tokens
+    /// match / exclude by GitHub topic.
+    pub filter: String,
+    /// Whether typed characters currently edit the filter (vs. act as nav keys).
+    pub filter_focused: bool,
+    pub include_forks: bool,
+    pub include_archived: bool,
+    /// Checked rows for the clone action, keyed `"owner/repo"`.
+    pub checked: std::collections::HashSet<String>,
+    /// Scan roots (for refresh + clone destinations) and the depth they were discovered at.
+    pub roots: Vec<std::path::PathBuf>,
+    pub max_depth: usize,
+    /// Set while a refresh should re-query GitHub (bypass the listing cache).
+    pub refresh: bool,
+    /// True while the clone action is running.
+    pub cloning: bool,
+    /// Human-readable progress for the running clone (e.g. `cloning 2/5 — foo`).
+    pub clone_status: String,
 }
 
 /// A command dispatchable by key OR by clicking its status-bar hint.

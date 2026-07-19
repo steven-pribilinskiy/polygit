@@ -449,6 +449,8 @@ pub struct AppState {
     pub explorer: Option<crate::explorer::Explorer>,
     /// Persisted explorer preferences (columns, sort, date format), seeding each opened explorer.
     pub explorer_prefs: crate::explorer::ExplorerPrefs,
+    /// Coverage-panel preferences (forks clone subdir); loaded once, echoed back on save.
+    pub coverage_prefs: crate::persist::CoveragePrefs,
     pub copy_menu: Option<usize>,
     /// A transient toast (auto-dismisses after `TOAST_DURATION`).
     pub toast: Option<Toast>,
@@ -530,6 +532,8 @@ pub struct AppState {
     pub branch_picker_close_click: Option<(u16, u16, u16)>,
     /// Branch-picker rows: (screen row, index into the *filtered* branch list).
     pub branch_picker_click: Vec<(u16, usize)>,
+    /// The open org-coverage panel (which repos in each GitHub org aren't cloned), if any.
+    pub coverage_modal: Option<CoverageState>,
     /// The open branch-existence filter modal (`Ctrl+F`), if any.
     pub branch_filter_modal: Option<BranchFilterModal>,
     pub branch_filter_modal_area: Rect,
@@ -1050,6 +1054,7 @@ impl AppState {
             pending_switch: Vec::new(),
             explorer: None,
             explorer_prefs: persisted.explorer,
+            coverage_prefs: persisted.coverage.clone(),
             kebab_session_prefix: persisted.session.kebab_session_prefix,
             copy_menu: None,
             toast: None,
@@ -1098,6 +1103,7 @@ impl AppState {
             branch_picker_area: Rect::default(),
             branch_picker_close_click: None,
             branch_picker_click: Vec::new(),
+            coverage_modal: None,
             branch_filter_modal: None,
             branch_filter_modal_area: Rect::default(),
             branch_filter_modal_close_click: None,

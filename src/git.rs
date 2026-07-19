@@ -583,6 +583,23 @@ pub fn normalize_remote_url(raw: &str) -> Option<String> {
     Some(https.strip_suffix(".git").unwrap_or(&https).to_string())
 }
 
+/// Clone `url` into `dest` (which must not already exist). Creates the parent directory first.
+/// Best-effort quiet clone; on failure returns git's stderr.
+pub async fn clone_repo(url: &str, dest: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+    let output = Command::new("git")
+        .args(["clone", "--quiet", url])
+        .arg(dest)
+        .output()
+        .await?;
+    if !output.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(())
+}
+
 /// Split a normalized GitHub URL (`https://github.com/<owner>/<repo>`, as produced by
 /// `normalize_remote_url`) into `(owner, repo)`. Returns None for non-github.com hosts or malformed
 /// paths — the coverage feature can only enumerate github owners via `gh`.

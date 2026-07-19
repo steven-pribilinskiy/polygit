@@ -57,7 +57,8 @@ use worker::{
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
     run_pin_version, run_prepare_discard,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
-    run_all_prs, run_open_pr_web, run_pr_diff, run_pr_view, run_pull_request, run_remove_worktree,
+    run_all_prs, run_coverage_clone, run_coverage_scan, run_open_pr_web, run_pr_diff, run_pr_view,
+    run_pull_request, run_remove_worktree,
     run_author_lookup, run_pulled_details, run_repo_branches, run_repo_details, run_repo_diff,
     run_repo_page, run_repo_tags, run_switch_and_pull,
 };
@@ -622,6 +623,7 @@ fn kebab_activate(
     retry_queue: &mut Vec<usize>,
     pending_claude: &mut Option<std::path::PathBuf>,
     pending_lazygit: &mut Option<std::path::PathBuf>,
+    pending_coverage: &mut bool,
 ) -> Option<usize> {
     let menu = app.kebab.as_ref()?;
     let idx = menu.repo_idx;
@@ -686,6 +688,13 @@ fn kebab_activate(
         app::KebabAction::Diff => {
             app.close_kebab();
             app.toggle_diff_view();
+        }
+        app::KebabAction::OpenCoverage => {
+            app.close_kebab();
+            let roots = app.root_dirs.clone();
+            let depth = app.discovery_max_depth;
+            app.open_coverage(roots, depth);
+            *pending_coverage = true;
         }
         app::KebabAction::Refetch => {
             if app.repos[idx].lock().unwrap().status.is_terminal() {
@@ -1446,6 +1455,10 @@ async fn run_event_loop(
     // (`pending_pr_view`) or the PR/compare page on GitHub (`pending_pr_web`). Repo index.
     let mut pending_pr_view: Option<usize> = None;
     let mut pending_pr_web: Option<usize> = None;
+    // Set when the coverage panel opens (or refreshes); the loop spawns the async org scan.
+    let mut pending_coverage = false;
+    // Set when `c` is pressed in the coverage panel; the loop spawns the clone worker.
+    let mut pending_coverage_clone = false;
     // Set by `Ctrl+L` (or the `^L repaint` footer chip); consumed at the top of the loop where
     // `terminal` is in scope, to force a full terminal repaint.
     let mut pending_repaint = false;
@@ -1495,6 +1508,14 @@ async fn run_event_loop(
             } else {
                 app.show_toast("No open PR detected for this repo");
             }
+        }
+        // Kick off the org-coverage scan for the just-opened (or refreshed) coverage panel.
+        if std::mem::take(&mut pending_coverage) {
+            tokio::spawn(run_coverage_scan(Arc::clone(&app_state)));
+        }
+        // Clone the coverage panel's checked-missing repos.
+        if std::mem::take(&mut pending_coverage_clone) {
+            tokio::spawn(run_coverage_clone(Arc::clone(&app_state)));
         }
         // Open the PR on GitHub (existing PR, else compare-vs-base). Base resolves off-thread.
         if let Some(idx) = pending_pr_web.take() {
@@ -2686,6 +2707,7 @@ async fn run_event_loop(
                                 &mut retry_queue,
                                 &mut pending_claude,
                                 &mut pending_lazygit,
+                                &mut pending_coverage,
                             ) {
                                 drop(app);
                                 tokio::spawn(run_load_branches(Arc::clone(&app_state), repo_idx));
@@ -4252,6 +4274,76 @@ async fn run_event_loop(
                     continue;
                 }
 
+                // Coverage panel: when the filter is focused (`/`), typed chars edit the query;
+                // otherwise Tab/Shift-Tab switch owner tabs, ↑↓/jk move, space toggles a row's
+                // checkbox, a/A select/clear all, f toggles forks, x toggles archived, r refreshes,
+                // Esc/q closes. (The clone action is wired in a later step.)
+                if app.coverage_modal.is_some() {
+                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        drop(app);
+                        return Ok(130);
+                    }
+                    let filter_focused =
+                        app.coverage_modal.as_ref().is_some_and(|state| state.filter_focused);
+                    if filter_focused {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Enter => {
+                                if let Some(state) = app.coverage_modal.as_mut() {
+                                    state.filter_focused = false;
+                                }
+                            }
+                            KeyCode::Backspace => app.coverage_filter_pop(),
+                            KeyCode::Char(ch)
+                                if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.coverage_filter_push(ch)
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.close_coverage(),
+                        KeyCode::Tab => app.coverage_cycle_tab(true),
+                        KeyCode::BackTab => app.coverage_cycle_tab(false),
+                        KeyCode::Down | KeyCode::Char('j') => app.coverage_move(1),
+                        KeyCode::Up | KeyCode::Char('k') => app.coverage_move(-1),
+                        KeyCode::Char('/') => {
+                            if let Some(state) = app.coverage_modal.as_mut() {
+                                state.filter_focused = true;
+                            }
+                        }
+                        KeyCode::Char(' ') => app.coverage_toggle_check(),
+                        KeyCode::Char('a') => app.coverage_set_all(true),
+                        KeyCode::Char('A') => app.coverage_set_all(false),
+                        KeyCode::Char('f') | KeyCode::Char('F') => app.coverage_toggle_forks(),
+                        KeyCode::Char('x') | KeyCode::Char('X') => app.coverage_toggle_archived(),
+                        KeyCode::Char('r') | KeyCode::Char('R') => {
+                            app.coverage_refresh();
+                            pending_coverage = true;
+                        }
+                        KeyCode::Char('c') | KeyCode::Char('C') => {
+                            let busy =
+                                app.coverage_modal.as_ref().is_some_and(|state| state.cloning);
+                            let count = app
+                                .coverage_modal
+                                .as_ref()
+                                .map(|state| state.checked_missing().len())
+                                .unwrap_or(0);
+                            if busy {
+                                app.show_toast("Clone already in progress");
+                            } else if count == 0 {
+                                app.show_toast("No missing repos selected — press space to select");
+                            } else {
+                                pending_coverage_clone = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // Branch-filter modal: Tab/Shift-Tab cycles active/local/remote/any, ↑↓ move, Enter
                 // applies (row 0 clears, when present). Typed chars edit the live query, so nav is
                 // arrows (matching the branch-picker's same typed-filter-vs-arrow-nav rule).
@@ -4303,6 +4395,7 @@ async fn run_event_loop(
                                 &mut retry_queue,
                                 &mut pending_claude,
                                 &mut pending_lazygit,
+                                &mut pending_coverage,
                             ) {
                                 drop(app);
                                 tokio::spawn(run_load_branches(Arc::clone(&app_state), repo_idx));
@@ -5179,6 +5272,13 @@ async fn run_event_loop(
                     (KeyCode::Char('k'), KeyModifiers::CONTROL) => app.open_keybindings(),
                     // `Ctrl+E` opens the file explorer for the selected repo.
                     (KeyCode::Char('e'), KeyModifiers::CONTROL) => app.open_explorer_selected(),
+                    // `C` opens the org-coverage panel (which repos in each GitHub org aren't cloned).
+                    (KeyCode::Char('C'), _) => {
+                        let roots = app.root_dirs.clone();
+                        let depth = app.discovery_max_depth;
+                        app.open_coverage(roots, depth);
+                        pending_coverage = true;
+                    }
 
                     // Navigation
                     (KeyCode::Char('j'), _) | (KeyCode::Down, _) => {

@@ -25,6 +25,8 @@ pub struct PersistedState {
     /// Schema version (see `SCHEMA_VERSION`). Present ⇒ nested; absent/0 ⇒ legacy flat.
     pub version: u32,
     pub agent: AgentPrefs,
+    /// Org-coverage panel preferences (where forks are cloned).
+    pub coverage: CoveragePrefs,
     /// File-explorer preferences (columns, sort, date format).
     pub explorer: crate::explorer::ExplorerPrefs,
     pub interaction: InteractionPrefs,
@@ -49,6 +51,21 @@ pub struct AgentPrefs {
     pub claude_agent: ClaudeAgent,
     /// Append the agent's "bypass all approval prompts" flag when launching.
     pub claude_skip_permissions: bool,
+}
+
+/// Org-coverage panel (the `C` hotkey): where the clone action places repos.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CoveragePrefs {
+    /// Subdirectory (under the scan root) that forked repos are cloned into — non-forks clone
+    /// directly under the root. Default `forks`.
+    pub forks_subdir: String,
+}
+
+impl Default for CoveragePrefs {
+    fn default() -> Self {
+        Self { forks_subdir: "forks".to_string() }
+    }
 }
 
 /// Mouse / attention interaction.
@@ -442,6 +459,8 @@ impl From<LegacyFlatState> for PersistedState {
                 claude_agent: legacy.claude_agent,
                 claude_skip_permissions: legacy.claude_skip_permissions,
             },
+            // New — no legacy equivalent (forks clone under `<root>/forks/`).
+            coverage: CoveragePrefs::default(),
             // New in v3 — no legacy equivalent (columns off, name-ascending, relative dates).
             explorer: crate::explorer::ExplorerPrefs::default(),
             interaction: InteractionPrefs {

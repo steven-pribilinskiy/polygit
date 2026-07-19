@@ -47,6 +47,7 @@ impl AppState {
                 claude_agent: self.claude_agent,
                 claude_skip_permissions: self.claude_skip_permissions,
             },
+            coverage: self.coverage_prefs.clone(),
             explorer: self.explorer_prefs,
             interaction: p::InteractionPrefs {
                 hover_effects: self.hover_effects,

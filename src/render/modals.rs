@@ -581,6 +581,194 @@ fn pr_comment_section(
     out.push(Line::from(String::new()));
 }
 
+/// Render the org-coverage panel: owner tabs with `N/N` badges, a filtered repo list with
+/// checkboxes (missing repos highlighted), and a keys footer. Keyboard-driven — input is handled by
+/// the coverage block in the event loop.
+pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) {
+    let Some(state) = app.coverage_modal.as_ref() else {
+        return;
+    };
+    let icons = app.icons();
+    let width = (area.width.saturating_mul(9) / 10).max(40);
+    let height = (area.height.saturating_mul(9) / 10).max(12);
+    let modal = centered_rect(width, height, area);
+    let dim = Style::default().fg(Color::DarkGray);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(
+            " Org coverage ",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ))
+        .padding(panel_pad(app));
+    let inner = block.inner(modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    if inner.width < 4 || inner.height < 4 {
+        return;
+    }
+
+    if state.loading {
+        let spin = super::spinner_frame(tick, icons);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("  {spin} scanning GitHub orgs…"),
+                Style::default().fg(Color::Cyan),
+            ))),
+            inner,
+        );
+        return;
+    }
+    if let Some(err) = &state.error {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "  Coverage scan failed",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(format!("  {err}"), dim)),
+                Line::from(Span::styled("  press r to retry · esc to close", dim)),
+            ]),
+            inner,
+        );
+        return;
+    }
+    if state.owners.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  No GitHub repos found under the scan roots.",
+                dim,
+            ))),
+            inner,
+        );
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let (tabs_area, filter_area, list_area, footer_area) = (rows[0], rows[1], rows[2], rows[3]);
+
+    // Tab strip: one chip per owner, active highlighted, badge colored by completeness.
+    let mut tab_spans: Vec<Span> = Vec::new();
+    for (idx, owner) in state.owners.iter().enumerate() {
+        let cloned = owner.cloned_count(state.include_forks, state.include_archived);
+        let total = owner.badge_total(state.include_forks, state.include_archived);
+        let complete = !owner.kind.is_partial() && cloned == total;
+        let badge_color = if owner.kind.is_partial() {
+            Color::Yellow
+        } else if complete {
+            Color::Green
+        } else {
+            Color::Red
+        };
+        let label = format!(" {} {cloned}/{total} ", owner.owner);
+        let style = if idx == state.active_tab {
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(badge_color)
+        };
+        tab_spans.push(Span::styled(label, style));
+        tab_spans.push(Span::raw(" "));
+    }
+    frame.render_widget(Paragraph::new(Line::from(tab_spans)), tabs_area);
+
+    // Filter line + fork/archived toggle state.
+    let filter_span = if state.filter.is_empty() && !state.filter_focused {
+        Span::styled("  (all) — / to filter by name or topic:<t> / -topic:<t>", dim)
+    } else {
+        Span::styled(
+            format!("  / {}{}", state.filter, if state.filter_focused { "▏" } else { "" }),
+            Style::default().fg(if state.filter_focused { Color::Cyan } else { Color::Gray }),
+        )
+    };
+    let toggles = Span::styled(
+        format!(
+            "   [forks:{} · archived:{}]",
+            if state.include_forks { "on" } else { "off" },
+            if state.include_archived { "on" } else { "off" },
+        ),
+        dim,
+    );
+    frame.render_widget(Paragraph::new(Line::from(vec![filter_span, toggles])), filter_area);
+
+    // Repo list for the active owner, windowed to keep the cursor visible.
+    let owner_name = state.owners[state.active_tab].owner.clone();
+    let repos = state.visible_rows();
+    let list_h = (list_area.height as usize).max(1);
+    let start = if state.selected >= list_h { state.selected + 1 - list_h } else { 0 };
+    let mut lines: Vec<Line> = Vec::new();
+    if repos.is_empty() {
+        lines.push(Line::from(Span::styled("  (no repos match the filter)", dim)));
+    }
+    for (idx, repo) in repos.iter().enumerate().skip(start).take(list_h) {
+        let is_cursor = idx == state.selected;
+        let key = format!("{owner_name}/{}", repo.name);
+        let checked = state.checked.contains(&key);
+        let checkbox = if repo.cloned {
+            "   "
+        } else if checked {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let (glyph, glyph_color) =
+            if repo.cloned { ("✓", Color::Green) } else { ("✗", Color::Red) };
+        let mut spans = vec![
+            Span::styled(if is_cursor { "▸ " } else { "  " }, Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{checkbox} "), Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{glyph} "), Style::default().fg(glyph_color)),
+            Span::styled(
+                repo.name.clone(),
+                if is_cursor {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
+        ];
+        let mut flags: Vec<&str> = Vec::new();
+        if repo.is_fork {
+            flags.push("fork");
+        }
+        if repo.is_archived {
+            flags.push("archived");
+        }
+        if repo.private {
+            flags.push("private");
+        }
+        if !flags.is_empty() {
+            spans.push(Span::styled(format!("  [{}]", flags.join(", ")), dim));
+        }
+        if !repo.topics.is_empty() {
+            spans.push(Span::styled(format!("  {}", repo.topics.join(" ")), dim));
+        }
+        lines.push(Line::from(spans));
+    }
+    frame.render_widget(Paragraph::new(lines), list_area);
+
+    let footer = if state.cloning {
+        Line::from(vec![
+            Span::styled(format!("  {} ", super::spinner_frame(tick, icons)), Style::default().fg(Color::Cyan)),
+            Span::styled(state.clone_status.clone(), Style::default().fg(Color::Cyan)),
+        ])
+    } else {
+        Line::from(Span::styled(
+            "  ↑↓ move · space select · a/A all · Tab owner · / filter · f forks · x archived · c clone · r refresh · esc close",
+            dim,
+        ))
+    };
+    frame.render_widget(Paragraph::new(footer), footer_area);
+}
+
 pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
     use unicode_width::UnicodeWidthStr;
     let width = area.width.saturating_mul(9) / 10;

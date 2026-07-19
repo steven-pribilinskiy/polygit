@@ -12,5 +12,6 @@ mod hits;
 mod repo_page;
 mod diff_modal;
 mod modals;
+mod coverage_panel;
 mod keybindings_ui;
 mod session;

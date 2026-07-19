@@ -171,6 +171,7 @@ impl AppState {
             || self.base_picker.is_some()
             || self.branch_picker.is_some()
             || self.branch_filter_modal.is_some()
+            || self.coverage_modal.is_some()
             || self.show_changelog
             || self.explorer.is_some()
     }
@@ -188,6 +189,7 @@ impl AppState {
         self.base_picker = None;
         self.branch_picker = None;
         self.branch_filter_modal = None;
+        self.coverage_modal = None;
         self.dropdown = None;
         self.finder = None;
         self.picker = None;
@@ -618,6 +620,13 @@ impl AppState {
                 action: KebabAction::OpenRemote,
                 enabled: has_remote,
                 hint: Some("o".to_string()),
+                data: None,
+            },
+            KebabItem {
+                label: "Org coverage…".to_string(),
+                action: KebabAction::OpenCoverage,
+                enabled: true,
+                hint: Some("C".to_string()),
                 data: None,
             },
         ]);
