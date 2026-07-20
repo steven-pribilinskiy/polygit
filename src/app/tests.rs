@@ -1395,6 +1395,34 @@
         assert_eq!(state.visible_indices(), vec![1, 2, 0]);
     }
 
+    /// Changing the sort reorders rows under the cursor; the SELECTED REPO must not change with
+    /// them. Regression: `set_sort` held the row index steady and merely clamped it, so `s`+letter
+    /// silently jumped the selection (and the info/result panes) to whichever repo landed there.
+    #[test]
+    fn changing_sort_keeps_the_selected_repo() {
+        let mut state = state_named(&["one", "two", "three"]);
+        state.repos[0].lock().unwrap().branch = Some("main".into());
+        state.repos[1].lock().unwrap().branch = Some("dev".into());
+        state.repos[2].lock().unwrap().branch = Some("feature".into());
+
+        // Starts sorted by name asc: one(0), three(2), two(1). Select "two" — the last row.
+        assert_eq!(state.visible_indices(), vec![0, 2, 1]);
+        state.selected = 2;
+        assert_eq!(state.selected_repo_index(), Some(1), "'two' is selected");
+
+        // By branch asc: dev(1), feature(2), main(0) — "two" moves from row 2 to row 0.
+        state.set_sort(SortColumn::Branch);
+        assert_eq!(state.visible_indices(), vec![1, 2, 0]);
+        assert_eq!(state.selected_repo_index(), Some(1), "still 'two' after re-sorting");
+        assert_eq!(state.selected, 0, "the cursor moved with it");
+
+        // Flipping direction on the active column is the same story in reverse.
+        state.set_sort(SortColumn::Branch);
+        assert_eq!(state.visible_indices(), vec![0, 2, 1]);
+        assert_eq!(state.selected_repo_index(), Some(1), "still 'two' after flipping direction");
+        assert_eq!(state.selected, 2);
+    }
+
     #[test]
     fn set_sort_toggles_direction_on_repeat() {
         let mut state = state_named(&["a", "b"]);

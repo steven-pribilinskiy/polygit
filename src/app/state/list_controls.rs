@@ -103,6 +103,11 @@ impl AppState {
     }
 
     pub fn set_sort(&mut self, column: SortColumn) {
+        // The cursor follows the REPO, not the row position. Re-sorting reorders the rows beneath
+        // it, so holding the index steady would silently move the selection to a different repo —
+        // and the info/result panes with it. Captured before the sort changes, since
+        // `selected_repo_index` reads through the current order.
+        let previous = self.selected_repo_index();
         if self.sort_column == column {
             self.sort_dir = self.sort_dir.flip();
         } else {
@@ -110,11 +115,13 @@ impl AppState {
             self.sort_dir = SortDir::Asc;
         }
         self.result_overlay = false;
-        let max = self.list_len().saturating_sub(1);
-        if self.selected > max {
-            self.selected = max;
+        match previous {
+            Some(repo_idx) => self.reselect_repo(Some(repo_idx)),
+            // A header or the Result row was selected — nothing to follow, so just keep the
+            // selection on a valid row.
+            None => self.snap_selection(true),
         }
-        self.snap_selection(true);
+        // The render loop scrolls the new position back into view (it watches `selected`).
         // Persisted on exit (like the column toggles), not on every keystroke.
     }
 
