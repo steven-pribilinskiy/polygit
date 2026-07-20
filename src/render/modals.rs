@@ -274,37 +274,64 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
         preview_header.push(Span::raw(" "));
         preview_header.push(Span::styled(unfold_all, Style::default().fg(Color::DarkGray)));
     }
-    // The self-update check found a newer published release (Auto-update notify/install).
-    let release_line = app.latest_release.as_ref().and_then(|(version, date)| {
-        (crate::changelog::version_cmp(version, env!("CARGO_PKG_VERSION")) == std::cmp::Ordering::Greater)
-            .then(|| {
-                Line::from(Span::styled(
-                    format!("↑ v{version} available ({date}) — press p to install"),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ))
-            })
+    // The self-update check found a newer published release (Auto-update notify/install). The
+    // version reads as text; the action next to it is a button, so the modal that TELLS you an
+    // update exists is also the one that can apply it.
+    let button = |bg: Color| Style::default().fg(Color::Black).bg(bg).add_modifier(Modifier::BOLD);
+    let install_label = "[install & reload]";
+    let release = app.pending_release().map(|(version, date)| (version.to_string(), date.to_string()));
+    let install_prefix = release
+        .as_ref()
+        .map(|(version, date)| format!("↑ v{version} available ({date})  "))
+        .unwrap_or_default();
+    let release_line = release.as_ref().map(|_| {
+        Line::from(vec![
+            Span::styled(
+                install_prefix.clone(),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(install_label, button(Color::Cyan)),
+        ])
     });
-    let header: Vec<Line> = [
-        Some(field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string())),
-        release_line,
-        Some(field("Built", built_in)),
-        Some(field("Binary", format!("{} ({})", human_size(app.build_info_binary_size), app.exe_path))),
-        Some(field(
+    // A manual check, because the cadence gate is otherwise the only way a release is noticed —
+    // on a daily interval a fresh release can sit unseen for most of a day.
+    let check_label = "[check now]";
+    let check_prefix = format!("{:<10}", "Updates");
+    let check_line = Line::from(vec![
+        Span::styled(check_prefix.clone(), label),
+        Span::styled(check_label, button(Color::Gray)),
+        Span::styled(
+            app.update_check_status
+                .as_deref()
+                .map(|status| format!("  {status}"))
+                .unwrap_or_default(),
+            value,
+        ),
+    ]);
+    let mut header: Vec<Line> =
+        vec![field("Version", concat!("v", env!("CARGO_PKG_VERSION")).to_string())];
+    let install_row = release_line.map(|line| {
+        header.push(line);
+        header.len() as u16 - 1
+    });
+    header.push(check_line);
+    let check_row = header.len() as u16 - 1;
+    header.extend([
+        field("Built", built_in),
+        field("Binary", format!("{} ({})", human_size(app.build_info_binary_size), app.exe_path)),
+        field(
             "Settings",
             format!("{}  ({} files in config)", app.build_info_settings_path, app.build_info_config_count),
-        )),
-        Some(Line::from(status)),
+        ),
+        Line::from(status),
         // How to update from the terminal (distinct from the local make-build reload above).
-        Some(Line::from(Span::styled(
+        Line::from(Span::styled(
             "Run `polygit update` (alias `upgrade`) to self-install the latest release.",
             Style::default().fg(Color::DarkGray),
-        ))),
-        Some(Line::from(String::new())),
-        Some(Line::from(preview_header)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+        )),
+        Line::from(String::new()),
+        Line::from(preview_header),
+    ]);
 
     // A roomy modal: header + a scrollable, collapsible settings tree filling the rest.
     let pad = if app.panel_padding { 2 } else { 0 };
@@ -364,6 +391,17 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let header_h = header.len() as u16;
     let header_area = Rect { height: header_h.min(inner.height), ..inner };
     frame.render_widget(Paragraph::new(header).wrap(Wrap { trim: false }), header_area);
+    // Header buttons: `[check now]` always, `[install & reload]` only when a release is pending.
+    // Both sit on known header rows, so their columns follow from the text rendered before them.
+    let button_region = |row: u16, prefix: &str, text: &str| {
+        let start = inner.x + UnicodeWidthStr::width(prefix) as u16;
+        (inner.y + row, start, start + UnicodeWidthStr::width(text) as u16)
+    };
+    app.build_info_check_click = (check_row < inner.height)
+        .then(|| button_region(check_row, &check_prefix, check_label));
+    app.build_info_install_click = install_row
+        .filter(|row| *row < inner.height)
+        .map(|row| button_region(row, &install_prefix, install_label));
     // Capture the fold-all / unfold-all button regions on the card-header row (last header line).
     app.build_info_fold_all_click = None;
     app.build_info_unfold_all_click = None;
@@ -2314,8 +2352,26 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let section_collapsed: Vec<bool> =
         (0..SETTINGS_TABS.len()).map(|tab_idx| app.settings_section_collapsed(tab_idx)).collect();
     let all_collapsed = app.settings_all_collapsed();
-    // A `>Label  ● value` row plus the optional "no groups" hint, given the row's left edge.
-    let mut push_row = |row_idx: usize, left_x: u16, row_y: u16, out: &mut Vec<Line>| {
+    // The Updates section carries a live "a newer release is available" line whenever the check
+    // found one. Precomputed as an owned string so the row closure never has to borrow `app` again
+    // mid-loop. Uses `pending_release`, not `undismissed_release`: dismissing the corner notice
+    // hides that notice, not the fact — Settings is where you come to look it up.
+    // Kept short deliberately: the tabbed layout gives this line only the content column, and the
+    // Paragraph truncates rather than wraps. The release date and the full wording live in Build
+    // info; the confirm dialog spells out that installing also reloads.
+    let release_hint =
+        app.pending_release().map(|(version, _)| format!("↑ v{version} available — click to install"));
+    let release_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    // Filled by whichever layout rendered the hint, then handed back to `app` after the render.
+    let mut release_click: Option<(u16, u16, u16)> = None;
+    // A `>Label  ● value` row plus the optional "no groups" / "newer release" hints, given the
+    // row's left edge. The hint slot is a parameter rather than a capture so the other layouts
+    // can write it too without contending for the closure's borrow.
+    let mut push_row = |row_idx: usize,
+                        left_x: u16,
+                        row_y: u16,
+                        out: &mut Vec<Line>,
+                        release_click: &mut Option<(u16, u16, u16)>| {
         let (label, options) = &all_rows[row_idx];
         let in_view = row_y < inner.y + inner.height;
         let underline_idx = if *label == "Theme" { theme_underline } else { None };
@@ -2338,6 +2394,17 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 "      no groups defined — ~/.config/polygit/groups.json",
                 Style::default().fg(Color::DarkGray),
             )));
+        }
+        // Sits under the last Updates row, mirroring the groups hint above it.
+        if *label == "Update check"
+            && let Some(text) = release_hint.as_deref()
+        {
+            let hint_y = row_y + 1;
+            let start = left_x + 6;
+            if hint_y < inner.y + inner.height {
+                *release_click = Some((hint_y, start, start + UnicodeWidthStr::width(text) as u16));
+            }
+            out.push(Line::from(Span::styled(format!("      {text}"), release_style)));
         }
     };
 
@@ -2456,7 +2523,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 content_lines.push(Line::from(""));
             }
             let row_y = inner.y + content_lines.len() as u16;
-            push_row(start + offset, content_x, row_y, &mut content_lines);
+            push_row(start + offset, content_x, row_y, &mut content_lines, &mut release_click);
         }
         let content_area = Rect {
             x: content_x,
@@ -2473,6 +2540,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             Header(usize),
             Row(usize),
             GroupsHint,
+            ReleaseHint,
         }
         let groups_empty = app.groups.is_empty();
         let mut items: Vec<AccItem> = vec![AccItem::CollapseAll, AccItem::Blank];
@@ -2489,6 +2557,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     // The "no groups defined" hint sits under the Grouping row (global row 0).
                     if row_idx == 0 && offset == 0 && groups_empty {
                         items.push(AccItem::GroupsHint);
+                    }
+                    if all_rows[row_idx].0 == "Update check" && release_hint.is_some() {
+                        items.push(AccItem::ReleaseHint);
                     }
                 }
                 row_idx += 1;
@@ -2605,6 +2676,17 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     "      no groups defined — ~/.config/polygit/groups.json",
                     Style::default().fg(Color::DarkGray),
                 ))),
+                AccItem::ReleaseHint => {
+                    if let Some(text) = release_hint.as_deref() {
+                        let start = inner.x + 6;
+                        release_click =
+                            Some((screen_y, start, start + UnicodeWidthStr::width(text) as u16));
+                        lines.push(Line::from(Span::styled(
+                            format!("      {text}"),
+                            release_style,
+                        )));
+                    }
+                }
             }
         }
         frame.render_widget(Paragraph::new(lines), inner);
@@ -2623,6 +2705,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             Header(usize),
             Row(usize),
             GroupsHint,
+            ReleaseHint,
         }
         let groups_empty = app.groups.is_empty();
         // The single blank spacer after the search box (the `search_rows` offset below) separates it
@@ -2640,6 +2723,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                 items.push(FlatItem::Row(row_idx));
                 if all_rows[row_idx].0 == "Grouping" && groups_empty {
                     items.push(FlatItem::GroupsHint);
+                }
+                if all_rows[row_idx].0 == "Update check" && release_hint.is_some() {
+                    items.push(FlatItem::ReleaseHint);
                 }
                 row_idx += 1;
             }
@@ -2698,6 +2784,17 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
                     "      no groups defined — ~/.config/polygit/groups.json",
                     Style::default().fg(Color::DarkGray),
                 ))),
+                FlatItem::ReleaseHint => {
+                    if let Some(text) = release_hint.as_deref() {
+                        let start = inner.x + 6;
+                        release_click =
+                            Some((screen_y, start, start + UnicodeWidthStr::width(text) as u16));
+                        lines.push(Line::from(Span::styled(
+                            format!("      {text}"),
+                            release_style,
+                        )));
+                    }
+                }
             }
         }
         frame.render_widget(Paragraph::new(lines), inner);
@@ -2706,6 +2803,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             render_scrollbar(frame, app, track, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
         }
     }
+    app.settings_release_click = release_click;
     // The settings hint footer lives on the bottom border (built above); no in-content row.
 }
 
@@ -2714,16 +2812,35 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
 /// Sits 1 cell in from the top/right (one more with panel padding on), with a glint sweeping
 /// around its border to catch the eye.
 pub(crate) fn render_update_notice(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
-    if !app.update_available || app.update_dismissed {
+    // Two conditions can raise the notice. A staged on-disk build wins: its binary is already in
+    // place, so there is nothing left to download and the reload is immediate.
+    let new_build = app.update_available && !app.update_dismissed;
+    let release = if new_build { None } else { app.undismissed_release().map(|(v, _)| v.to_string()) };
+    if !new_build && release.is_none() {
         app.update_reload_click = None;
         app.update_close_click = None;
         return;
     }
-    let message = " ↺ new build installed · ";
-    let reload = "[^R reload]";
+    // `^R` means one thing in both variants — "put me on the newest build". For a staged binary
+    // that's a plain reload; for a published release it downloads and installs first, then the
+    // same reload. The install state is read from the shared pin fields, so an install started
+    // here, from Settings, or from the version picker all report through this notice.
+    let (message, action) = if new_build {
+        (" ↺ new build installed · ".to_string(), Some("[^R reload]"))
+    } else if let Some(error) = app.pin_error.clone() {
+        (format!(" ✕ update failed: {error} · "), Some("[^R retry]"))
+    } else if let Some(status) = app.pin_status.clone() {
+        (format!(" ↑ {status} "), None)
+    } else {
+        (
+            format!(" ↑ v{} available · ", release.clone().unwrap_or_default()),
+            Some("[^R install & reload]"),
+        )
+    };
+    let message = message.as_str();
     let close = " [^X] ";
     let content_width = (UnicodeWidthStr::width(message)
-        + UnicodeWidthStr::width(reload)
+        + action.map_or(0, UnicodeWidthStr::width)
         + UnicodeWidthStr::width(close)) as u16;
     let width = (content_width + 2).min(area.width);
     let inset = u16::from(app.panel_padding);
@@ -2742,25 +2859,24 @@ pub(crate) fn render_update_notice(frame: &mut Frame, app: &mut AppState, area: 
     frame.render_widget(Clear, notice_area);
     frame.render_widget(block, notice_area);
 
-    let reload_start = inner.x + UnicodeWidthStr::width(message) as u16;
-    let reload_end = reload_start + reload.len() as u16;
+    let action_start = inner.x + UnicodeWidthStr::width(message) as u16;
+    let action_end = action_start + action.map_or(0, UnicodeWidthStr::width) as u16;
     // `close` is " [^X] " — skip the leading space; the bracketed `[^X]` is 4 cells.
-    let close_start = reload_end + 1;
+    let close_start = action_end + 1;
     let close_end = close_start + 4;
-    app.update_reload_click = Some((inner.y, reload_start, reload_end));
+    // No action button while an install is in flight — there is nothing to click yet.
+    app.update_reload_click = action.map(|_| (inner.y, action_start, action_end));
     app.update_close_click = Some((inner.y, close_start, close_end));
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(message, Style::default().fg(Color::Yellow)),
-            Span::styled(
-                reload,
-                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(close, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
-        ])),
-        inner,
-    );
+    let mut spans = vec![Span::styled(message.to_string(), Style::default().fg(Color::Yellow))];
+    if let Some(action) = action {
+        spans.push(Span::styled(
+            action,
+            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.push(Span::styled(close, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)));
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 
     // Border shine: a short accent glint sweeping clockwise around the border, one cell per
     // tick (free under render-every-tick). Skip degenerate boxes.

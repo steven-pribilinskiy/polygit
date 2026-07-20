@@ -236,6 +236,42 @@ impl AppState {
             .collect()
     }
 
+    /// The newest published release, when the check found one genuinely newer than the running
+    /// build. The single source for all three release surfaces (the notice, the Settings > Updates
+    /// line, the Build-info button), so they can never disagree about what's available.
+    pub fn pending_release(&self) -> Option<(&str, &str)> {
+        let (version, date) = self.latest_release.as_ref()?;
+        (crate::changelog::version_cmp(version, env!("CARGO_PKG_VERSION"))
+            == std::cmp::Ordering::Greater)
+            .then_some((version.as_str(), date.as_str()))
+    }
+
+    /// `pending_release` minus what the user dismissed. Dismissal is per-version: a release NEWER
+    /// than the dismissed one re-arms the notice, so dismissing once never silences every future
+    /// release.
+    pub fn undismissed_release(&self) -> Option<(&str, &str)> {
+        let (version, date) = self.pending_release()?;
+        match self.release_dismissed.as_deref() {
+            Some(dismissed)
+                if crate::changelog::version_cmp(version, dismissed)
+                    != std::cmp::Ordering::Greater =>
+            {
+                None
+            }
+            _ => Some((version, date)),
+        }
+    }
+
+    /// The install-and-reload confirm for a published release. Same `PinVersion` action the
+    /// version picker uses, so all install paths converge on one worker.
+    pub fn release_confirm(version: &str) -> ConfirmDialog {
+        ConfirmDialog::simple(
+            format!("Install v{version} — download & replace the running binary, then reload?"),
+            ConfirmAction::PinVersion { version: version.to_string() },
+            false,
+        )
+    }
+
     pub fn pin_confirm_for_selected(&self) -> Option<ConfirmDialog> {
         let visible = self.pin_visible_indices();
         let release = visible.get(self.pin_selected).and_then(|&idx| self.pin_releases.get(idx))?;

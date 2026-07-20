@@ -55,7 +55,7 @@ use worker::{
     run_all_branches,
     run_all_details, run_branch_stats, run_checkout, run_delete, run_diff_modal, run_load_branches,
     run_diff_modal_file, run_discard_changes, run_discovery, run_drop_stash, run_fetch_releases,
-    run_pin_version, run_prepare_discard,
+    run_pin_version, run_prepare_discard, run_update_check,
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
     run_all_prs, run_coverage_clone, run_coverage_scan, run_open_pr_web, run_pr_diff, run_pr_view,
     run_pull_request, run_remove_worktree,
@@ -279,7 +279,6 @@ async fn watch_for_releases(app_state: Arc<Mutex<AppState>>) {
     let Ok(exe_path) = std::env::current_exe().map(|path| path.display().to_string()) else {
         return;
     };
-    let current = env!("CARGO_PKG_VERSION");
     // Wake every 30 min; the real throttle is the cadence gate below.
     let mut interval = tokio::time::interval(Duration::from_secs(30 * 60));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -296,29 +295,18 @@ async fn watch_for_releases(app_state: Arc<Mutex<AppState>>) {
         if now.saturating_sub(last) < cadence {
             continue; // checked recently enough
         }
-        let Ok(releases) = crate::update::fetch_releases().await else {
-            continue; // network/gh hiccup — try again next wake, don't stamp the check
-        };
-        // Stamp the check time now (even when up to date) so the cadence holds.
-        {
-            let mut app = app_state.lock().unwrap();
-            app.last_update_check = now;
-            app.save_state();
-        }
-        let Some((version, date)) = releases.first().cloned() else {
+        // Network/gh hiccup → try again next wake (the helper only stamps on success). `None` =
+        // already on the latest.
+        let Ok(Some((version, _))) = worker::fetch_latest_release(&app_state, now).await else {
             continue;
         };
-        if crate::changelog::version_cmp(&version, current) != std::cmp::Ordering::Greater {
-            continue; // already on the latest (or newer — a local dev build)
-        }
-        {
-            let mut app = app_state.lock().unwrap();
-            app.latest_release = Some((version.clone(), date));
-        }
         match policy {
             crate::app::AutoUpdate::Notify => {
+                // The persistent notice (top-right, `^R install & reload`) is the durable surface
+                // — it stays until acted on or dismissed. The toast is only the nudge for whoever
+                // happens to be looking when the check lands.
                 let mut app = app_state.lock().unwrap();
-                app.show_toast(format!("polygit v{version} available — open Build info (p) to install"));
+                app.show_toast(format!("polygit v{version} available — ^R to install & reload"));
             }
             crate::app::AutoUpdate::Install => {
                 if let Err(error) = crate::update::download_and_install(&version, target, &exe_path).await {
@@ -2153,15 +2141,30 @@ async fn run_event_loop(
                     }
                 }
 
-                // New-build notice buttons work over any view (the notice renders above panes).
+                // Update notice buttons work over any view (the notice renders above panes).
                 if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                    let pending = app.undismissed_release().map(|(version, _)| version.to_string());
                     if region_hit(app.update_close_click, mouse.column, mouse.row) {
-                        app.update_dismissed = true;
+                        // Dismiss whichever notice is showing — the staged build takes precedence
+                        // in the renderer, so match that order here.
+                        match pending {
+                            Some(version) if !app.update_available || app.update_dismissed => {
+                                app.release_dismissed = Some(version)
+                            }
+                            _ => app.update_dismissed = true,
+                        }
                         continue;
                     }
                     if region_hit(app.update_reload_click, mouse.column, mouse.row) {
-                        drop(app);
-                        return Ok(RELOAD_EXIT);
+                        if app.update_available && !app.update_dismissed {
+                            drop(app);
+                            return Ok(RELOAD_EXIT);
+                        }
+                        if let Some(version) = pending.filter(|_| app.pin_status.is_none()) {
+                            drop(app);
+                            spawn_confirm_action(&app_state, ConfirmAction::PinVersion { version });
+                        }
+                        continue;
                     }
                 }
 
@@ -2336,7 +2339,18 @@ async fn run_event_loop(
                             }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if region_hit(app.build_info_fold_all_click, mouse.column, mouse.row) {
+                            if region_hit(app.build_info_check_click, mouse.column, mouse.row) {
+                                let now = now_unix();
+                                drop(app);
+                                tokio::spawn(run_update_check(Arc::clone(&app_state), now));
+                                continue;
+                            } else if region_hit(app.build_info_install_click, mouse.column, mouse.row)
+                            {
+                                if let Some((version, _)) = app.pending_release() {
+                                    let dialog = AppState::release_confirm(version);
+                                    app.confirm = Some(dialog);
+                                }
+                            } else if region_hit(app.build_info_fold_all_click, mouse.column, mouse.row) {
                                 app.build_info_fold_all(false);
                             } else if region_hit(app.build_info_unfold_all_click, mouse.column, mouse.row) {
                                 app.build_info_fold_all(true);
@@ -2517,6 +2531,14 @@ async fn run_event_loop(
                             .map(|&(.., tab)| tab);
                         if region_hit(app.settings_close_click, mouse.column, mouse.row) {
                             app.show_settings = false;
+                        } else if region_hit(app.settings_release_click, mouse.column, mouse.row) {
+                            // The "vX.Y.Z available" line under Updates: confirm before replacing
+                            // the running binary — unlike the corner notice, this one is easy to
+                            // hit while browsing settings, so it asks first.
+                            if let Some((version, _)) = app.pending_release() {
+                                let dialog = AppState::release_confirm(version);
+                                app.confirm = Some(dialog);
+                            }
                         } else if region_hit(app.settings_search_click, mouse.column, mouse.row) {
                             app.settings_begin_search();
                         } else if let Some(tab) = tab_click {
@@ -3518,9 +3540,11 @@ async fn run_event_loop(
             Event::Key(key) => {
                 let mut app = app_state.lock().unwrap();
 
-                // New-build notice: keyboard counterpart to the clickable `[reload]`/`[x]`. Handled
+                // Update notice: keyboard counterpart to the clickable action / `[x]`. Handled
                 // first so it works over any view or modal, mirroring the always-on mouse handler.
-                // `Ctrl-R` reloads into the new build; `Ctrl-X` dismisses the notice.
+                // `Ctrl-R` puts you on the newest build — a staged binary reloads straight away, a
+                // published release downloads and installs first (then auto-reloads via
+                // `pin_auto_reload`). `Ctrl-X` dismisses the notice.
                 if app.update_available && !app.update_dismissed {
                     if key.code == KeyCode::Char('r')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -3532,6 +3556,27 @@ async fn run_event_loop(
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
                         app.update_dismissed = true;
+                        continue;
+                    }
+                } else if let Some(version) =
+                    app.undismissed_release().map(|(version, _)| version.to_string())
+                {
+                    if key.code == KeyCode::Char('r')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        // Already downloading — let it finish instead of racing a second install
+                        // onto the same binary.
+                        let idle = app.pin_status.is_none();
+                        drop(app);
+                        if idle {
+                            spawn_confirm_action(&app_state, ConfirmAction::PinVersion { version });
+                        }
+                        continue;
+                    }
+                    if key.code == KeyCode::Char('x')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        app.release_dismissed = Some(version);
                         continue;
                     }
                 }

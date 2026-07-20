@@ -229,6 +229,93 @@
         }
     }
 
+    /// A one-repo app with a pending release, rendered to a `TestBackend`; returns every visible
+    /// row so a test can assert on what actually reached the screen.
+    fn render_rows(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+        term.draw(|frame| crate::render::render(frame, app, 0)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect()
+    }
+
+    fn app_with_release() -> AppState {
+        let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+            "demo",
+            std::path::PathBuf::from("/tmp/demo"),
+        )))];
+        let mut app = AppState::new(repos, Some(4), true);
+        app.latest_release = Some(("99.0.0".to_string(), "2026-07-14".to_string()));
+        app
+    }
+
+    /// A notified release is actionable in place: the notice names the version and offers the
+    /// install, and the button registers a click region so the mouse path works too.
+    #[test]
+    fn release_notice_offers_install_and_reload() {
+        let mut app = app_with_release();
+        let rows = render_rows(&mut app, 160, 40).join("\n");
+        assert!(rows.contains("v99.0.0 available"), "the notice names the version\n{rows}");
+        assert!(rows.contains("[^R install & reload]"), "and offers the action\n{rows}");
+        assert!(app.update_reload_click.is_some(), "the action registers a click region");
+        assert!(app.update_close_click.is_some(), "so does the dismiss button");
+    }
+
+    /// A binary already staged on disk wins over a published release — its install is done, so the
+    /// reload is immediate and must not be relabelled as a download.
+    #[test]
+    fn staged_build_notice_wins_over_release_notice() {
+        let mut app = app_with_release();
+        app.update_available = true;
+        let rows = render_rows(&mut app, 160, 40).join("\n");
+        assert!(rows.contains("new build installed"), "the staged build takes the notice\n{rows}");
+        assert!(!rows.contains("install & reload"), "and not the download wording\n{rows}");
+    }
+
+    /// Dismissing the notice takes it off screen, but leaves nothing else to act on — the Settings
+    /// line stays (it's the place you go to look one up).
+    #[test]
+    fn dismissed_release_notice_leaves_the_screen() {
+        let mut app = app_with_release();
+        app.release_dismissed = Some("99.0.0".to_string());
+        let rows = render_rows(&mut app, 160, 40).join("\n");
+        assert!(!rows.contains("v99.0.0 available"), "dismissed notices don't render\n{rows}");
+        assert!(app.update_reload_click.is_none(), "and leave no stale click region");
+    }
+
+    /// Settings > Updates surfaces the release under its options, as a clickable line.
+    #[test]
+    fn settings_updates_section_offers_the_release() {
+        use crate::app::SettingsLayout;
+        let mut app = app_with_release();
+        app.show_settings = true;
+        app.settings_layout = SettingsLayout::Tabbed;
+        // Open the tab that owns the Updates rows, so the hint's row is on screen.
+        let updates_tab = AppState::settings_tab_of_row(crate::app::settings_row("Update check"));
+        app.settings_select_tab(updates_tab);
+        let rows = render_rows(&mut app, 160, 40).join("\n");
+        assert!(
+            rows.contains("↑ v99.0.0 available — click to install"),
+            "the Updates section names the release, unclipped\n{rows}"
+        );
+        assert!(app.settings_release_click.is_some(), "and the line is clickable");
+    }
+
+    /// Build info can both find an update (`[check now]`, past the cadence gate) and apply one.
+    #[test]
+    fn build_info_offers_check_and_install_buttons() {
+        let mut app = app_with_release();
+        app.show_build_info = true;
+        let rows = render_rows(&mut app, 160, 40).join("\n");
+        assert!(rows.contains("[check now]"), "a manual check is always offered\n{rows}");
+        assert!(rows.contains("[install & reload]"), "and the pending release is applyable\n{rows}");
+        assert!(app.build_info_check_click.is_some(), "check button is clickable");
+        assert!(app.build_info_install_click.is_some(), "install button is clickable");
+    }
+
     /// Render the PR viewer to a `TestBackend` and return (every visible row, the title-bar row).
     /// The title bar is the modal's top border row (row 1 — the panes' own borders are row 0).
     fn render_pr_modal_rows(app: &mut AppState, width: u16, height: u16) -> (Vec<String>, String) {

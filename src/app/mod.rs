@@ -460,6 +460,9 @@ pub struct AppState {
     pub settings_close_click: Option<(u16, u16, u16)>,
     /// Settings hit map: (row, col_start, col_end, settings row, Some(option) | None = label).
     pub settings_click: Vec<(u16, u16, u16, usize, Option<usize>)>,
+    /// The "a newer version is available" line under the Updates section. Not a settings row (it
+    /// has no options and no keyboard index) — clicking it opens the install-and-reload confirm.
+    pub settings_release_click: Option<(u16, u16, u16)>,
     pub copy_menu_area: Rect,
     pub copy_menu_close_click: Option<(u16, u16, u16)>,
     /// Copy-menu option rows: (screen row, option index).
@@ -578,8 +581,16 @@ pub struct AppState {
     /// Unix seconds of the last GitHub release check (persisted, so the cadence spans launches).
     pub last_update_check: i64,
     /// The newest published release seen by the check, when it's newer than the running build:
-    /// `(version, date)`. Drives the notify toast / the "vX.Y.Z available" Build-info line.
+    /// `(version, date)`. Drives the release notice, the Settings > Updates line, and the
+    /// "vX.Y.Z available" Build-info line.
     pub latest_release: Option<(String, String)>,
+    /// The release notice was dismissed (`^X`). Re-arms when a newer release than the dismissed
+    /// one turns up, so a later release is never silently swallowed.
+    pub release_dismissed: Option<String>,
+    /// A manual "check now" is in flight, or its outcome ("up to date", an error) for the
+    /// Build-info line. Distinct from `pin_status`, which reports the download/install itself.
+    pub update_check_status: Option<String>,
+    pub update_check_running: bool,
     // New-build notice (a newer binary landed at this executable's path while running):
     pub update_available: bool,
     pub update_dismissed: bool,
@@ -598,6 +609,10 @@ pub struct AppState {
     pub show_build_info: bool,
     /// The build-info modal's `[x]` close button region.
     pub build_info_close_click: Option<(u16, u16, u16)>,
+    /// The build-info modal's `[check now]` button — forces a release check past the cadence gate.
+    pub build_info_check_click: Option<(u16, u16, u16)>,
+    /// The build-info modal's `[install & reload]` button, shown once a newer release is known.
+    pub build_info_install_click: Option<(u16, u16, u16)>,
     /// Build-info details, captured when the modal opens: running binary size (bytes), the
     /// settings file path, the count of files in the config dir, the settings JSON as lines (for
     /// the scrollable, syntax-highlighted preview), and the preview's scroll offset.
@@ -1061,6 +1076,7 @@ impl AppState {
             settings_area: Rect::default(),
             settings_close_click: None,
             settings_click: Vec::new(),
+            settings_release_click: None,
             copy_menu_area: Rect::default(),
             copy_menu_close_click: None,
             copy_menu_click: Vec::new(),
@@ -1129,6 +1145,9 @@ impl AppState {
             update_interval: persisted.updates.update_interval,
             last_update_check: persisted.updates.last_update_check,
             latest_release: None,
+            release_dismissed: None,
+            update_check_status: None,
+            update_check_running: false,
             update_available: false,
             update_dismissed: false,
             update_reload_click: None,
@@ -1148,6 +1167,8 @@ impl AppState {
                 .unwrap_or_else(|_| "polygit".to_string()),
             show_build_info: false,
             build_info_close_click: None,
+            build_info_check_click: None,
+            build_info_install_click: None,
             build_info_binary_size: 0,
             build_info_settings_path: String::new(),
             build_info_config_count: 0,

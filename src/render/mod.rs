@@ -243,7 +243,11 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
             button_hits.push(row_rect(row, start, end));
         }
     } else if app.show_settings {
-        if let Some(&(row, start, end, ..)) =
+        if let Some((row, start, end)) =
+            app.settings_release_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, ..)) =
             app.settings_click.iter().find(|&&(r, s, e, ..)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));
@@ -485,6 +489,14 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         }
     } else if app.show_build_info {
         if let Some((row, start, end)) =
+            app.build_info_check_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
+            app.build_info_install_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some((row, start, end)) =
             app.build_info_close_click.filter(|&(r, s, e)| contains(r, s, e))
         {
             button_hits.push(row_rect(row, start, end));

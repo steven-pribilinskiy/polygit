@@ -732,6 +732,45 @@
         normalized(AppState::new(repos, Some(4), true))
     }
 
+    /// A release only counts as available when it actually beats the running build — a local dev
+    /// build sitting ahead of every published tag must not advertise a "downgrade" as an update.
+    #[test]
+    fn only_a_newer_release_is_pending() {
+        let mut state = state_named(&["a"]);
+        assert_eq!(state.pending_release(), None, "no check has run yet");
+
+        state.latest_release = Some(("0.0.1".to_string(), "2020-01-01".to_string()));
+        assert_eq!(state.pending_release(), None, "older than the running build");
+
+        state.latest_release = Some((env!("CARGO_PKG_VERSION").to_string(), "2026-01-01".to_string()));
+        assert_eq!(state.pending_release(), None, "equal to the running build");
+
+        state.latest_release = Some(("99.0.0".to_string(), "2026-07-14".to_string()));
+        assert_eq!(state.pending_release(), Some(("99.0.0", "2026-07-14")));
+    }
+
+    /// Dismissing the notice silences that version only — a later release re-arms it, so one `^X`
+    /// can never mute every future update.
+    #[test]
+    fn dismissing_a_release_does_not_mute_later_ones() {
+        let mut state = state_named(&["a"]);
+        state.latest_release = Some(("99.0.0".to_string(), "2026-07-14".to_string()));
+        assert!(state.undismissed_release().is_some());
+
+        state.release_dismissed = Some("99.0.0".to_string());
+        assert_eq!(state.undismissed_release(), None, "dismissed exactly this version");
+
+        state.latest_release = Some(("99.1.0".to_string(), "2026-07-20".to_string()));
+        assert_eq!(
+            state.undismissed_release(),
+            Some(("99.1.0", "2026-07-20")),
+            "a newer release than the dismissed one re-arms the notice"
+        );
+        // The Settings line is deliberately NOT gated on dismissal — it's the place you go to look.
+        state.release_dismissed = Some("99.1.0".to_string());
+        assert!(state.pending_release().is_some());
+    }
+
     fn set_branches(state: &AppState, index: usize, branches: crate::app::RepoBranches) {
         state.repos[index].lock().unwrap().branches = Some(branches);
     }

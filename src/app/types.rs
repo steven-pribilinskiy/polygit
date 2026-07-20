@@ -2049,10 +2049,10 @@ pub const SETTINGS: [SettingInfo; 35] = [
     // Updates
     SettingInfo { label: "Auto-update", tip: "Check GitHub for a newer published release and act on it. This is SEPARATE from the local-dev flow, where `make build` installs over the binary on your PATH and the `↺ new build installed` notice (Ctrl+R) reloads into it.", option_tips: &[
         "Never check GitHub for releases (local `make build` reloads still work)",
-        "Toast when a newer release exists; install it from Build info (p) when you want",
+        "Raise a `↑ vX.Y.Z available` notice you can act on with Ctrl+R (install & reload) — it stays until you take it or dismiss it (Ctrl+X); nothing is downloaded until you ask",
         "Download + stage the newer release over the binary, then the `↺ new build installed` notice prompts a reload (Ctrl+R) — your session is never interrupted",
     ] },
-    SettingInfo { label: "Update check", tip: "How often the auto-update check polls GitHub (also once at launch when due). Ignored while Auto-update is off.", option_tips: &[] },
+    SettingInfo { label: "Update check", tip: "How often the auto-update check polls GitHub (also once at launch when due). Ignored while Auto-update is off. Build info (p) has a `[check now]` button that skips this gate.", option_tips: &[] },
     // Workers (sorts last → appended here without shifting any existing row index)
     SettingInfo { label: "Parallel pulls", tip: "Cap concurrent git pulls by an exact worker count or a percentage of your CPU cores. Applies live — in-flight pulls ramp within a second. (`-j` / PULL_JOBS overrides at launch.)", option_tips: &[
         "An exact worker count (pick it below)",

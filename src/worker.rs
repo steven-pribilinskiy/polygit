@@ -1742,6 +1742,54 @@ pub async fn run_fetch_releases(app_state: Arc<Mutex<AppState>>) {
     app.pin_selected = 0;
 }
 
+/// Fetch the published release list, stamp the check time, and record the newest release when it
+/// beats the running build. The one place that consults GitHub for releases — the cadence watcher
+/// and the Build-info `[check now]` button both go through it, so they can't drift on what counts
+/// as "newer" or on stamping the cadence. `Ok(None)` = already current.
+pub async fn fetch_latest_release(
+    app_state: &Arc<Mutex<AppState>>,
+    now: i64,
+) -> Result<Option<(String, String)>, String> {
+    let releases = crate::update::fetch_releases().await.map_err(|err| format!("{err}"))?;
+    let mut app = app_state.lock().unwrap();
+    // Stamp even when already up to date, so the cadence holds either way.
+    app.last_update_check = now;
+    app.save_state();
+    let Some((version, date)) = releases.first().cloned() else {
+        return Ok(None);
+    };
+    // A local dev build can sit ahead of every published release — that is not an update.
+    if crate::changelog::version_cmp(&version, env!("CARGO_PKG_VERSION"))
+        != std::cmp::Ordering::Greater
+    {
+        app.latest_release = None;
+        return Ok(None);
+    }
+    app.latest_release = Some((version.clone(), date.clone()));
+    Ok(Some((version, date)))
+}
+
+/// The Build-info `[check now]` button: force a release check past the cadence gate and report the
+/// outcome inline, so pressing it is never an unexplained no-op.
+pub async fn run_update_check(app_state: Arc<Mutex<AppState>>, now: i64) {
+    {
+        let mut app = app_state.lock().unwrap();
+        if app.update_check_running {
+            return;
+        }
+        app.update_check_running = true;
+        app.update_check_status = Some("checking…".to_string());
+    }
+    let result = fetch_latest_release(&app_state, now).await;
+    let mut app = app_state.lock().unwrap();
+    app.update_check_running = false;
+    app.update_check_status = Some(match result {
+        Ok(Some((version, _))) => format!("v{version} available"),
+        Ok(None) => "up to date".to_string(),
+        Err(err) => format!("check failed: {err}"),
+    });
+}
+
 /// Download + install `version` over the running binary, then signal the event loop to re-exec into
 /// it. Reads `exe_path` from state; surfaces a download/install error inline (no reload on failure).
 pub async fn run_pin_version(app_state: Arc<Mutex<AppState>>, version: String) {
