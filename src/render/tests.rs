@@ -470,3 +470,78 @@
         );
     }
 
+
+    /// A one-repo app whose pull brought in tags + branch updates, rendered to a `TestBackend`.
+    fn render_ui(app: &mut AppState, width: u16, height: u16) -> String {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+        term.draw(|frame| crate::render::render(frame, app, 0)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..height).map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
+    }
+
+    fn app_with_pull() -> AppState {
+        let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+            "demo", std::path::PathBuf::from("/tmp/demo"),
+        )))];
+        let mut app = AppState::new(repos, Some(4), true);
+        app.close_all_modals();
+        {
+            let mut state = app.repos[0].lock().unwrap();
+            state.pull_result = Some(crate::app::PullResult {
+                prev_head: "aaa".into(), new_head: "bbb".into(),
+                commits: 3, files: 5, insertions: 10, deletions: 2,
+                new_tags: 2, new_branches: 1,
+                new_tag_names: vec!["v1.152.1".into(), "v1.152.0".into()],
+                fetched_branches: vec![
+                    crate::app::FetchedRef { name: "origin/main".into(), detail: "abc1234..def5678".into() },
+                    crate::app::FetchedRef { name: "origin/feat-x".into(), detail: "new branch".into() },
+                ],
+            });
+            state.status = crate::app::RepoStatus::Updated;
+        }
+        app.selected = 0;
+        app
+    }
+
+    /// The Command log's Tags/Branches tabs list ONLY what the pull fetched (the delta), and the
+    /// pane carries the `D category · d …` mnemonic footer.
+    #[test]
+    fn command_log_tabs_are_scoped_to_the_pull_delta() {
+        let mut app = app_with_pull();
+        app.set_result_category(crate::app::RightView::Tags);
+        let tags = render_ui(&mut app, 150, 30);
+        assert!(tags.contains("+ v1.152.1") && tags.contains("+ v1.152.0"), "Tags tab lists fetched tags\n{tags}");
+        assert!(tags.contains("D category") && tags.contains("d log/raw/unified/split"), "mnemonic footer present\n{tags}");
+
+        app.set_result_category(crate::app::RightView::Branches);
+        let branches = render_ui(&mut app, 150, 30);
+        assert!(branches.contains("origin/main") && branches.contains("abc1234..def5678"), "advanced ref shown\n{branches}");
+        assert!(branches.contains("origin/feat-x") && branches.contains("new branch"), "new branch shown\n{branches}");
+    }
+
+    /// The repo page ([4]) gets a Tags tab listing the full inventory, each row selectable with an
+    /// info panel.
+    #[test]
+    fn repo_page_has_a_tags_tab() {
+        let mut app = app_with_pull();
+        {
+            let mut state = app.repos[0].lock().unwrap();
+            state.page = Some(crate::app::RepoPageData {
+                branches: vec![], worktrees: vec![], stashes: vec![], commits: vec![],
+                tags: vec![
+                    crate::app::TagInfo { name: "v1.152.1".into(), sha: "def5678".into(), subject: "chore(release): 1.152.1".into(), author: "ci-bot".into(), rel_date: "7 hours ago".into() },
+                    crate::app::TagInfo { name: "v1.151.9".into(), sha: "999aaaa".into(), subject: "fix(Tags): portal render".into(), author: "Steven P".into(), rel_date: "3 days ago".into() },
+                ],
+                head_dirty_count: 0, dirty_worktrees: vec![], fetched: true, fetch_error: None,
+                base_branch: Some("origin/main".into()),
+            });
+        }
+        app.repo_page = Some(0);
+        app.repo_page_tab = crate::app::RepoTab::Tags;
+        assert!(app.repo_page_present_tabs().contains(&crate::app::RepoTab::Tags), "Tags is a present tab");
+        let page = render_ui(&mut app, 150, 34);
+        assert!(page.contains("TAGS (2)"), "Tags section renders with its count\n{page}");
+        assert!(page.contains("v1.152.1") && page.contains("def5678") && page.contains("ci-bot"), "tag row shows name/sha/author\n{page}");
+    }

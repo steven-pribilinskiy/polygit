@@ -651,6 +651,19 @@ pub(crate) fn build_repo_page_info_lines(
                 lines.push(pair("subject", truncate_str(&row.subject, 60)));
             }
         }
+        PageRowKind::Tag => {
+            lines.push(pair("tag", row.branch.clone()));
+            lines.push(pair("commit", row.commit_sha.clone()));
+            if !row.author.is_empty() {
+                lines.push(pair("author", row.author.clone()));
+            }
+            if !row.last_commit_rel.is_empty() {
+                lines.push(pair("date", row.last_commit_rel.clone()));
+            }
+            if !row.subject.is_empty() {
+                lines.push(pair("subject", truncate_str(&row.subject, 60)));
+            }
+        }
     }
     lines
 }
@@ -744,8 +757,9 @@ pub(crate) fn repo_page_footer_segments(app: &AppState) -> Vec<(String, Style, O
 pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
     let tabbed = app.repo_page_tabbed();
     let active_tab = app.repo_page_tab;
-    let (full_branches, full_worktrees, full_stashes, full_commits) =
-        app.repo_page_section_counts();
+    let counts = app.repo_page_section_counts();
+    let (full_branches, full_worktrees, full_stashes, full_commits, full_tags) =
+        (counts.branches, counts.worktrees, counts.stashes, counts.commits, counts.tags);
     let rows = app.repo_page_rows();
     let Some(idx) = app.repo_page else {
         return;
@@ -1150,6 +1164,7 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             (crate::app::RepoTab::Worktrees, icons.worktrees, "Worktrees", full_worktrees),
             (crate::app::RepoTab::Stashes, icons.stashes, "Stashes", full_stashes),
             (crate::app::RepoTab::Commits, icons.commits, "Commits", full_commits),
+            (crate::app::RepoTab::Tags, icons.tags, "Tags", full_tags),
         ];
         let mut spans: Vec<Span> = Vec::new();
         let mut col = inner.x;
@@ -1429,6 +1444,57 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
             spans.push(Span::styled(format!("  {:<author_w$}", truncate_str(&row.author, author_w)), cyan));
             spans.push(Span::raw(format!("  {}", truncate_str(&row.subject, subject_w))));
             items.push((Line::from(spans), Some(sel_index), None));
+        }
+    }
+
+    // Tags: name · sha · date · author · subject, rendered through the row machinery so each tag is
+    // selectable / hoverable (like commits) — `Enter` opens the tagged commit's diff. The full
+    // inventory (unlike the Command log's pull-scoped Tags tab), newest first.
+    let tags_collapsed = app.repo_page_section_collapsed(crate::app::RepoTab::Tags);
+    let render_tags = full_tags > 0 && (!tabbed || active_tab == crate::app::RepoTab::Tags);
+    if render_tags {
+        if !tabbed {
+            items.push((Line::from(String::new()), None, None));
+            section_header_items.push((items.len(), crate::app::RepoTab::Tags));
+            items.push(section_header(
+                chevron(tags_collapsed),
+                icons.tags,
+                Color::Magenta,
+                format!("TAGS ({full_tags})"),
+            ));
+        }
+        if tabbed || !tags_collapsed {
+            let tag_width = |get: fn(&PageRow) -> &str| {
+                rows.iter()
+                    .filter(|row| row.kind == PageRowKind::Tag)
+                    .map(|row| UnicodeWidthStr::width(get(row)))
+                    .max()
+                    .unwrap_or(10)
+            };
+            let name_w = tag_width(|row| row.branch.as_str()).clamp(8, 40);
+            let sha_w = 9usize;
+            let age_w = tag_width(|row| row.last_commit_rel.as_str()).clamp(8, 16);
+            let author_w = tag_width(|row| row.author.as_str()).clamp(6, 40);
+            let used = 2 + name_w + 2 + sha_w + 2 + age_w + 2 + author_w + 2;
+            let subject_w = (inner.width as usize).saturating_sub(used).max(10);
+            for (sel_index, row) in rows.iter().enumerate() {
+                if row.kind != PageRowKind::Tag {
+                    continue;
+                }
+                let mut spans: Vec<Span> = vec![Span::raw("  ")];
+                spans.push(Span::styled(
+                    format!("{:<name_w$}", truncate_str(&row.branch, name_w)),
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(
+                    format!("  {:<sha_w$}", truncate_str(&row.commit_sha, sha_w)),
+                    Style::default().fg(Color::Yellow),
+                ));
+                spans.push(Span::styled(format!("  {:<age_w$}", truncate_str(&row.last_commit_rel, age_w)), label));
+                spans.push(Span::styled(format!("  {:<author_w$}", truncate_str(&row.author, author_w)), cyan));
+                spans.push(Span::raw(format!("  {}", truncate_str(&row.subject, subject_w))));
+                items.push((Line::from(spans), Some(sel_index), None));
+            }
         }
     }
 

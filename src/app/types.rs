@@ -377,6 +377,20 @@ pub struct PullResult {
     /// info panel's expandable tag list. May be empty even when `new_tags > 0` if names didn't parse.
     #[serde(default)]
     pub new_tag_names: Vec<String>,
+    /// The branch refs this fetch created or advanced (parsed from the fetch output) — what the
+    /// Result pane's Branches tab lists. Distinct from `new_branches`, which counts only brand-new
+    /// branches; this also includes fast-forwarded and force-updated refs.
+    #[serde(default)]
+    pub fetched_branches: Vec<FetchedRef>,
+}
+
+/// One branch ref a fetch touched: the destination ref name plus a short summary of the change.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchedRef {
+    /// The destination ref, e.g. `origin/main` (the `-> <name>` side of the fetch line).
+    pub name: String,
+    /// What happened: `new branch`, a `abc1234..def5678` range, or `forced abc..def`.
+    pub detail: String,
 }
 
 impl PullResult {
@@ -582,7 +596,7 @@ pub struct CommitInfo {
 }
 
 /// A git tag (`for-each-ref refs/tags`), for the Result pane's Tags tab — mirrors the repo page's
-/// Branches list style (name, tagged commit's subject/author/date).
+/// A tag with its tagged commit's sha, subject, author, and relative date — the repo page's Tags tab.
 #[derive(Debug, Clone)]
 pub struct TagInfo {
     pub name: String,
@@ -590,8 +604,6 @@ pub struct TagInfo {
     pub subject: String,
     /// Tagged commit's author name (`%an`).
     pub author: String,
-    /// Tagged commit's author email (`%ae`) — used to build the GitHub author link.
-    pub author_email: String,
     pub rel_date: String,
 }
 
@@ -782,6 +794,8 @@ pub struct RepoPageData {
     pub stashes: Vec<StashInfo>,
     /// Recent commits on the current branch (read-only Commits tab), newest first.
     pub commits: Vec<CommitInfo>,
+    /// Every tag in the repo (read-only Tags tab), newest first.
+    pub tags: Vec<TagInfo>,
     /// Uncommitted-change count in the main worktree (0 = clean; >0 marks the HEAD row diff-able).
     pub head_dirty_count: u32,
     /// Worktree paths with uncommitted changes + their change count.
@@ -793,6 +807,16 @@ pub struct RepoPageData {
     pub base_branch: Option<String>,
 }
 
+/// Per-section row counts for the repo page, driving which tabs are present and their `(N)` badges.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RepoPageSectionCounts {
+    pub branches: usize,
+    pub worktrees: usize,
+    pub stashes: usize,
+    pub commits: usize,
+    pub tags: usize,
+}
+
 /// A selectable row on the repo page (a branch, a worktree, or a stash).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageRowKind {
@@ -800,6 +824,7 @@ pub enum PageRowKind {
     Worktree,
     Stash,
     Commit,
+    Tag,
 }
 
 /// A flattened, selectable repo-page row carrying everything render + actions need.
@@ -851,7 +876,8 @@ impl PageRow {
             PageRowKind::Worktree => Some("remove"),
             PageRowKind::Branch if self.is_head => self.dirty.then_some("discard"),
             PageRowKind::Branch => Some("delete"),
-            PageRowKind::Commit => None, // commits are read-only — `d` does nothing
+            // Commits and tags are read-only — `d` does nothing.
+            PageRowKind::Commit | PageRowKind::Tag => None,
         }
     }
 
@@ -862,6 +888,7 @@ impl PageRow {
             PageRowKind::Worktree => RepoTab::Worktrees,
             PageRowKind::Stash => RepoTab::Stashes,
             PageRowKind::Commit => RepoTab::Commits,
+            PageRowKind::Tag => RepoTab::Tags,
         }
     }
 }
@@ -1921,6 +1948,7 @@ pub enum RepoTab {
     Worktrees,
     Stashes,
     Commits,
+    Tags,
 }
 
 impl RepoTab {
@@ -1931,6 +1959,7 @@ impl RepoTab {
             RepoTab::Worktrees => Some(PageRowKind::Worktree),
             RepoTab::Stashes => Some(PageRowKind::Stash),
             RepoTab::Commits => Some(PageRowKind::Commit),
+            RepoTab::Tags => Some(PageRowKind::Tag),
         }
     }
 
@@ -1941,6 +1970,7 @@ impl RepoTab {
             RepoTab::Worktrees => "Worktrees",
             RepoTab::Stashes => "Stashes",
             RepoTab::Commits => "Commits",
+            RepoTab::Tags => "Tags",
         }
     }
 }
@@ -2766,16 +2796,6 @@ pub struct RepoState {
     pub page: Option<RepoPageData>,
     /// Guard so the repo-page fetch is spawned at most once per open.
     pub page_loading: bool,
-    /// The repo's tags, newest first (Result pane's Tags tab); filled lazily on first open.
-    pub tags: Option<Vec<TagInfo>>,
-    /// Guard so the tags fetch is spawned at most once.
-    pub tags_loading: bool,
-    /// The repo's local branches (Result pane's Branches tab) — a lighter, network-free fetch than
-    /// the repo page's own `page.branches` (no remote `git fetch`, no worktrees/stashes/commits/
-    /// stats), so opening this tab never triggers a surprise network call.
-    pub result_branches: Option<Vec<BranchInfo>>,
-    /// Guard so the Result-pane branches fetch is spawned at most once.
-    pub result_branches_loading: bool,
     /// Bulk local+remote branch existence for the cross-repo branch filter (`Ctrl+F`) — a
     /// name-only existence check, not full `BranchInfo` detail. `None` until the bulk fetch runs.
     pub branches: Option<RepoBranches>,
@@ -2921,10 +2941,6 @@ impl RepoState {
             pulled_details_loading: false,
             page: None,
             page_loading: false,
-            tags: None,
-            tags_loading: false,
-            result_branches: None,
-            result_branches_loading: false,
             branches: None,
             branches_loading: false,
             pull_loading: false,

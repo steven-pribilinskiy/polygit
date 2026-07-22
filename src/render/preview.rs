@@ -283,6 +283,38 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
                 command: Command::SwitchToBase,
             });
             block = block.title_bottom(Line::from(Span::styled(label, attn)).right_aligned());
+        } else {
+            // The key hints for this pane, on the bottom border (no gone-upstream chip to show):
+            // `D` cycles the category tab, `d` cycles the Diff sub-display. Both are clickable, like
+            // the group view's footer.
+            let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+            let hint = Style::default().fg(Color::DarkGray);
+            let footer: Vec<(&str, Style, Option<Command>)> = vec![
+                ("D", key, Some(Command::CycleResultCategory)),
+                (" category", hint, Some(Command::CycleResultCategory)),
+                (" · ", hint, None),
+                ("d", key, Some(Command::SetResultDiffView(app.pane_diff_view.cycle()))),
+                (" log/raw/unified/split ", hint, Some(Command::SetResultDiffView(app.pane_diff_view.cycle()))),
+            ];
+            let footer_width: u16 =
+                footer.iter().map(|(text, _, _)| UnicodeWidthStr::width(*text) as u16).sum();
+            let footer_row = area.y + area.height.saturating_sub(1);
+            let mut col = area.x + area.width.saturating_sub(footer_width + 1);
+            let mut spans = Vec::new();
+            for (text, style, command) in footer {
+                let text_width = UnicodeWidthStr::width(text) as u16;
+                if let Some(command) = command {
+                    app.clickable.push(ClickRegion {
+                        row: footer_row,
+                        col_start: col,
+                        col_end: col + text_width,
+                        command,
+                    });
+                }
+                col += text_width;
+                spans.push(Span::styled(text, style));
+            }
+            block = block.title_bottom(Line::from(spans).right_aligned());
         }
     }
 
@@ -614,131 +646,65 @@ fn build_pane_files(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'s
 
 /// Build the Result pane's **Tags** tab: every tag, newest first (mirrors the repo page's list
 /// style) — sha → GitHub commit, subject, `rel_date · author` with the author → GitHub.
-fn build_pane_tags(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
+fn build_pane_tags(app: &AppState, repo_idx: usize, _width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
     let state = app.repos[repo_idx].lock().unwrap();
-    let width = width.max(1) as usize;
     let dim = Style::default().fg(Color::DarkGray);
     let value = Style::default();
-    let link = Style::default().fg(Color::Cyan);
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut clicks: Vec<InfoClick> = Vec::new();
 
-    let tags = match &state.tags {
-        None => {
-            lines.push(Line::from(Span::styled("(loading…)", dim)));
-            return (lines, clicks);
-        }
-        Some(tags) => tags,
-    };
+    // Scoped to the last pull: the tags the fetch brought in. The repo page ([4]) lists them all.
+    let tags: &[String] = state.pull_result.as_ref().map_or(&[], |result| &result.new_tag_names);
     if tags.is_empty() {
-        lines.push(Line::from(Span::styled("No tags in this repo.", dim)));
-        return (lines, clicks);
+        lines.push(Line::from(Span::styled("This pull fetched no new tags.", dim)));
+        return (lines, Vec::new());
     }
 
-    let web = state.remote_url.as_deref().and_then(web_remote);
     let count = tags.len();
-    lines.push(Line::from(Span::styled(format!("{count} tag{}", if count == 1 { "" } else { "s" }), dim)));
+    lines.push(Line::from(Span::styled(
+        format!("{count} new tag{}", if count == 1 { "" } else { "s" }),
+        dim,
+    )));
     lines.push(Line::from(""));
-
-    for tag in tags {
-        let commit_url = web.as_ref().map(|base| format!("{base}/commit/{}", tag.sha));
-        let author_action = author_click_action(&state.path, &tag.sha, &tag.author_email);
-
-        let name_w = UnicodeWidthStr::width(tag.name.as_str());
-        let subj_col = name_w + 2;
-        let subj_avail = width.saturating_sub(subj_col);
-        let mut header: Vec<Span<'static>> = vec![Span::styled(tag.name.clone(), value.add_modifier(Modifier::BOLD))];
-        header.push(Span::raw("  "));
-        header.push(Span::styled(truncate_str(&tag.subject, subj_avail), dim));
-        lines.push(Line::from(header));
-
-        let indent = subj_col;
-        let mut meta: Vec<Span<'static>> = vec![Span::raw(" ".repeat(indent))];
-        if let Some(url) = &commit_url {
-            let sha_w = UnicodeWidthStr::width(tag.sha.as_str()) as u16;
-            clicks.push((lines.len(), indent as u16, indent as u16 + sha_w, InfoAction::OpenUrl(url.clone())));
-            meta.push(Span::styled(tag.sha.clone(), link));
-        } else {
-            meta.push(Span::styled(tag.sha.clone(), dim));
-        }
-        meta.push(Span::styled(" · ", dim));
-        meta.push(Span::styled(tag.rel_date.clone(), dim));
-        meta.push(Span::styled(" · ", dim));
-        let author_col =
-            indent + UnicodeWidthStr::width(tag.sha.as_str()) + 3 + UnicodeWidthStr::width(tag.rel_date.as_str()) + 3;
-        let author_w = UnicodeWidthStr::width(tag.author.as_str()) as u16;
-        if let Some(action) = &author_action {
-            clicks.push((lines.len(), author_col as u16, author_col as u16 + author_w, action.clone()));
-            meta.push(Span::styled(tag.author.clone(), link));
-        } else {
-            meta.push(Span::styled(tag.author.clone(), dim));
-        }
-        lines.push(Line::from(meta));
-        lines.push(Line::from(""));
+    for name in tags {
+        lines.push(Line::from(vec![
+            Span::styled("+ ", Style::default().fg(Color::Green)),
+            Span::styled(name.clone(), value.add_modifier(Modifier::BOLD)),
+        ]));
     }
-    (lines, clicks)
+    (lines, Vec::new())
 }
 
-/// Build the Result pane's **Branches** tab: every local branch (mirrors the repo page's Branches
-/// list) — name (HEAD marked), upstream ahead/behind, `rel_date · author`, tip subject.
-fn build_pane_branches(app: &AppState, repo_idx: usize, width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
+/// Build the Result pane's **Branches** tab: the branch refs THIS PULL fetched or advanced (new,
+/// fast-forwarded, or force-updated) — not the repo's full branch list, which lives on the repo
+/// page ([4]). Each row is the destination ref plus a short change summary.
+fn build_pane_branches(app: &AppState, repo_idx: usize, _width: u16) -> (Vec<Line<'static>>, Vec<InfoClick>) {
     let state = app.repos[repo_idx].lock().unwrap();
-    let width = width.max(1) as usize;
     let dim = Style::default().fg(Color::DarkGray);
     let value = Style::default();
-    let head = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    let branches = match &state.result_branches {
-        None => {
-            lines.push(Line::from(Span::styled("(loading…)", dim)));
-            return (lines, Vec::new());
-        }
-        Some(branches) => branches,
-    };
+    let empty = Vec::new();
+    let branches = state.pull_result.as_ref().map_or(&empty, |result| &result.fetched_branches);
     if branches.is_empty() {
-        lines.push(Line::from(Span::styled("No local branches.", dim)));
+        lines.push(Line::from(Span::styled("This pull updated no branches.", dim)));
         return (lines, Vec::new());
     }
 
     let count = branches.len();
     lines.push(Line::from(Span::styled(
-        format!("{count} branch{}", if count == 1 { "" } else { "es" }),
+        format!("{count} branch{} updated", if count == 1 { "" } else { "es" }),
         dim,
     )));
     lines.push(Line::from(""));
-
     for branch in branches {
-        let name_style = if branch.is_head { head } else { value.add_modifier(Modifier::BOLD) };
-        let mut header: Vec<Span<'static>> = Vec::new();
-        if branch.is_head {
-            header.push(Span::styled("* ", head));
-        } else {
-            header.push(Span::raw("  "));
-        }
-        header.push(Span::styled(branch.name.clone(), name_style));
-        let track = match (branch.ahead, branch.behind) {
-            (Some(0), Some(0)) | (None, None) => String::new(),
-            (ahead, behind) => {
-                let ahead = ahead.unwrap_or(0);
-                let behind = behind.unwrap_or(0);
-                format!("  ↑{ahead} ↓{behind}")
-            }
-        };
-        if !track.is_empty() {
-            header.push(Span::styled(track, dim));
-        }
-        lines.push(Line::from(header));
-
-        let indent = 2;
-        let meta = format!("{}{} · {}", " ".repeat(indent), branch.last_commit_rel, branch.author);
-        lines.push(Line::from(Span::styled(meta, dim)));
-        let subj_avail = width.saturating_sub(indent);
+        let new = branch.detail == "new branch";
+        let glyph = if new { "+ " } else { "↑ " };
+        let glyph_style = if new { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Cyan) };
         lines.push(Line::from(vec![
-            Span::raw(" ".repeat(indent)),
-            Span::styled(truncate_str(&branch.subject, subj_avail), dim),
+            Span::styled(glyph, glyph_style),
+            Span::styled(branch.name.clone(), value.add_modifier(Modifier::BOLD)),
+            Span::styled(format!("  {}", branch.detail), dim),
         ]));
-        lines.push(Line::from(""));
     }
     (lines, Vec::new())
 }

@@ -59,8 +59,8 @@ use worker::{
     run_prepare_drop_stash, run_pull_all_branches, run_pull_branch, run_refetch_batch,
     run_all_prs, run_coverage_clone, run_coverage_scan, run_open_pr_web, run_pr_diff, run_pr_view,
     run_pull_request, run_remove_worktree,
-    run_author_lookup, run_pulled_details, run_repo_branches, run_repo_details, run_repo_diff,
-    run_repo_page, run_repo_tags, run_switch_and_pull,
+    run_author_lookup, run_pulled_details, run_repo_details, run_repo_diff,
+    run_repo_page, run_switch_and_pull,
 };
 
 /// Current wall-clock time in Unix seconds (for status-cache timestamps). `0` if the clock is
@@ -864,8 +864,8 @@ fn confirm_for_row(repo_idx: usize, row: &PageRow) -> Option<ConfirmDialog> {
     match row.kind {
         // Stash drops are routed through run_prepare_drop_stash (to list the stash's files).
         PageRowKind::Stash => None,
-        // Commits are read-only — nothing to delete/discard.
-        PageRowKind::Commit => None,
+        // Commits and tags are read-only — nothing to delete/discard.
+        PageRowKind::Commit | PageRowKind::Tag => None,
         PageRowKind::Worktree => {
             let mut message = format!("Remove worktree {}?", row.path.display());
             if row.dirty {
@@ -5791,37 +5791,6 @@ async fn run_event_loop(
                         drop(state);
                         tokio::spawn(run_pulled_details(repo));
                     }
-                }
-            }
-            // Eagerly load the Tags/Branches tab data (both a network-free `for-each-ref`) for the
-            // selected repo, regardless of which category tab is active — unlike Commits/Files
-            // (whose *count* is already known synchronously from `pull_result`, only their
-            // detailed content is lazy), whether Tags/Branches has anything to show at all is only
-            // knowable by actually fetching, so the tab-bar visibility check needs this data ready
-            // before the user could ever switch to it.
-            if let Some(idx) = app.selected_repo_index() {
-                let repo = Arc::clone(&app.repos[idx]);
-                let needs_tags = {
-                    let mut state = repo.lock().unwrap();
-                    let needs = state.tags.is_none() && !state.tags_loading;
-                    if needs {
-                        state.tags_loading = true;
-                    }
-                    needs
-                };
-                if needs_tags {
-                    tokio::spawn(run_repo_tags(Arc::clone(&repo)));
-                }
-                let needs_branches = {
-                    let mut state = repo.lock().unwrap();
-                    let needs = state.result_branches.is_none() && !state.result_branches_loading;
-                    if needs {
-                        state.result_branches_loading = true;
-                    }
-                    needs
-                };
-                if needs_branches {
-                    tokio::spawn(run_repo_branches(repo));
                 }
             }
         }

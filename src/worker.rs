@@ -859,27 +859,6 @@ pub async fn run_pulled_details(repo: SharedRepoState) {
     state.pulled_details_loading = false;
 }
 
-/// Load the Result pane's Tags tab data (every tag, newest first) — a plain local `for-each-ref`,
-/// no network. Fired once per repo the first time the tab is shown.
-pub async fn run_repo_tags(repo: SharedRepoState) {
-    let path = { repo.lock().unwrap().path.clone() };
-    let tags = list_tags(&path).await;
-    let mut state = repo.lock().unwrap();
-    state.tags = Some(tags);
-    state.tags_loading = false;
-}
-
-/// Load the Result pane's Branches tab data (every local branch) — a plain local `for-each-ref`,
-/// no network (unlike the repo page's own branch fetch, which also runs `git fetch`). Fired once
-/// per repo the first time the tab is shown.
-pub async fn run_repo_branches(repo: SharedRepoState) {
-    let path = { repo.lock().unwrap().path.clone() };
-    let branches = list_local_branches(&path).await;
-    let mut state = repo.lock().unwrap();
-    state.result_branches = Some(branches);
-    state.result_branches_loading = false;
-}
-
 /// Populate the dedicated repo page: show branches/worktrees immediately, then `git fetch`
 /// and refresh ahead/behind. Caller sets `page_loading`; this clears it.
 pub async fn run_repo_page(repo: SharedRepoState) {
@@ -891,6 +870,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
     let worktrees = list_worktrees(&path).await;
     let mut stashes = list_stashes(&path).await;
     let commits = list_commits(&path, 50).await;
+    let tags = list_tags(&path).await;
     let head_dirty_count = dirty_count(&path).await;
     let mut dirty_worktrees = Vec::new();
     for worktree in &worktrees {
@@ -906,6 +886,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
             worktrees: worktrees.clone(),
             stashes: stashes.clone(),
             commits: commits.clone(),
+            tags: tags.clone(),
             head_dirty_count,
             dirty_worktrees: dirty_worktrees.clone(),
             fetched: false,
@@ -918,6 +899,8 @@ pub async fn run_repo_page(repo: SharedRepoState) {
     tokio::spawn(run_stash_stats(Arc::clone(&repo)));
 
     let fetch = fetch_remote(&path).await;
+    // Re-list tags after the fetch so any newly-fetched tag shows in the full inventory.
+    let tags = list_tags(&path).await;
     let mut branches = list_local_branches(&path).await;
     // Carry over any stats already computed so the post-fetch rebuild doesn't reset them.
     {
@@ -946,6 +929,7 @@ pub async fn run_repo_page(repo: SharedRepoState) {
             worktrees,
             stashes,
             commits,
+            tags,
             head_dirty_count,
             dirty_worktrees,
             fetched: true,
@@ -1424,6 +1408,7 @@ pub async fn run_pull_branch(app_state: Arc<Mutex<AppState>>, repo_idx: usize, r
     let result = match row.kind {
         PageRowKind::Stash => Err("cannot pull a stash".to_string()),
         PageRowKind::Commit => Err("cannot pull a commit".to_string()),
+        PageRowKind::Tag => Err("cannot pull a tag".to_string()),
         PageRowKind::Worktree => pull_ff_only(&row.path).await,
         PageRowKind::Branch => {
             if row.is_head {

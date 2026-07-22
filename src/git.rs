@@ -6,8 +6,8 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::app::{
-    BranchInfo, BranchStats, CommitInfo, DiffFile, PrInfo, PrState, PulledCommit, PullResult,
-    RepoBranches, RepoDetails, StashInfo, TagInfo, WorktreeInfo,
+    BranchInfo, BranchStats, CommitInfo, DiffFile, FetchedRef, PrInfo, PrState, PulledCommit,
+    PullResult, RepoBranches, RepoDetails, StashInfo, TagInfo, WorktreeInfo,
 };
 
 /// Result of parsing git pull output to determine status.
@@ -279,9 +279,9 @@ pub async fn collect_pull_result(dir: &Path, output: &str) -> PullResult {
         (commits, files, insertions, deletions)
     };
 
-    // The ref-advance count is informative but not surfaced; only tags + new branches are shown.
     let (_refs_updated, new_branches, new_tags) = parse_fetch_summary(output);
     let new_tag_names = parse_fetch_tags(output);
+    let fetched_branches = parse_fetch_branches(output);
 
     PullResult {
         prev_head,
@@ -293,6 +293,7 @@ pub async fn collect_pull_result(dir: &Path, output: &str) -> PullResult {
         new_tags,
         new_branches,
         new_tag_names,
+        fetched_branches,
     }
 }
 
@@ -381,6 +382,40 @@ pub fn parse_fetch_tags(output: &str) -> Vec<String> {
         }
     }
     tags
+}
+
+/// The branch refs a fetch created or advanced, parsed from the fetch output. Recognizes the
+/// English-git lines and captures the destination ref (right of `->`) plus a short change summary:
+///   ` * [new branch]      feature    -> origin/feature`  → (origin/feature, "new branch")
+///   `   abc1234..def5678  main       -> origin/main`     → (origin/main, "abc1234..def5678")
+///   ` + abc1234...def5678 topic      -> origin/topic  (forced update)` → (origin/topic, "forced …")
+/// Tag lines (`[new tag]`) are excluded — those go to `parse_fetch_tags`. Pure.
+pub fn parse_fetch_branches(output: &str) -> Vec<FetchedRef> {
+    let mut branches = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("[new tag]") {
+            continue;
+        }
+        let dest = |rest: &str| rest.split("->").nth(1).map(|name| name.trim().to_string());
+        if trimmed.contains("[new branch]") {
+            if let Some(name) = dest(trimmed).filter(|name| !name.is_empty()) {
+                branches.push(FetchedRef { name, detail: "new branch".to_string() });
+            }
+        } else if trimmed.contains("->") && (trimmed.contains("..") || trimmed.contains("(forced update)")) {
+            // The sha range is the token containing `..` (`abc1234..def5678`), regardless of any
+            // leading `+`/`*` marker git prints as a separate token on forced updates.
+            let range = trimmed.split_whitespace().find(|token| token.contains("..")).unwrap_or("");
+            let forced = trimmed.contains("(forced update)");
+            if let Some(name) = dest(trimmed).map(|full| full.split_whitespace().next().unwrap_or("").to_string())
+                .filter(|name| !name.is_empty())
+            {
+                let detail = if forced { format!("forced {range}") } else { range.to_string() };
+                branches.push(FetchedRef { name, detail });
+            }
+        }
+    }
+    branches
 }
 
 /// Discover worktree entries from `<cwd>/<repo>.worktrees/*/.git`.
@@ -1920,7 +1955,7 @@ pub async fn list_local_branches(dir: &Path) -> Vec<BranchInfo> {
 /// already. Preferring whichever is non-empty covers both.
 fn parse_tag_line(line: &str) -> Option<TagInfo> {
     let fields: Vec<&str> = line.split('\u{1f}').collect();
-    if fields.len() < 11 || fields[0].is_empty() {
+    if fields.len() < 9 || fields[0].is_empty() {
         return None;
     }
     let pick = |direct: &str, deref: &str| -> String {
@@ -1931,19 +1966,18 @@ fn parse_tag_line(line: &str) -> Option<TagInfo> {
         sha: pick(fields[1], fields[2]),
         subject: pick(fields[3], fields[4]),
         author: pick(fields[5], fields[6]),
-        author_email: pick(fields[7], fields[8]),
-        rel_date: pick(fields[9], fields[10]),
+        rel_date: pick(fields[7], fields[8]),
     })
 }
 
-/// List tags (newest tagged-commit first) with sha, subject, author, author email, and relative
-/// date — Result pane's Tags tab. Works for both annotated and lightweight tags (see
-/// `parse_tag_line`).
+/// List tags (newest tagged-commit first) with sha, subject, author, and relative date — the repo
+/// page's Tags tab. Works for both annotated and lightweight tags (the `*`-prefixed fields deref an
+/// annotated tag to its commit; see `parse_tag_line`).
 pub async fn list_tags(dir: &Path) -> Vec<TagInfo> {
     let dir_str = dir.to_str().unwrap_or(".");
     let format = "%(refname:short)%1f%(objectname:short)%1f%(*objectname:short)%1f\
 %(contents:subject)%1f%(*contents:subject)%1f%(authorname)%1f%(*authorname)%1f\
-%(authoremail:trim)%1f%(*authoremail:trim)%1f%(committerdate:relative)%1f%(*committerdate:relative)";
+%(committerdate:relative)%1f%(*committerdate:relative)";
     let output = match Command::new("git")
         .args(["-C", dir_str, "for-each-ref", "--sort=-creatordate", "--format", format, "refs/tags"])
         .output()
@@ -2599,6 +2633,29 @@ From github.com:org/repo
 ";
         assert_eq!(parse_fetch_tags(output), vec!["v1.2.0".to_string(), "v1.2.1".to_string()]);
         assert!(parse_fetch_tags("Already up to date.\n").is_empty());
+    }
+
+    #[test]
+    fn parse_fetch_branches_captures_ref_updates_not_tags() {
+        let output = "\
+From github.com:org/repo
+   abc1234..def5678  main       -> origin/main
+ * [new branch]      feature    -> origin/feature
+ * [new tag]         v1.2.0     -> v1.2.0
+ + aaa1111...bbb2222 wip        -> origin/wip  (forced update)
+";
+        let branches = parse_fetch_branches(output);
+        assert_eq!(
+            branches,
+            vec![
+                FetchedRef { name: "origin/main".into(), detail: "abc1234..def5678".into() },
+                FetchedRef { name: "origin/feature".into(), detail: "new branch".into() },
+                FetchedRef { name: "origin/wip".into(), detail: "forced aaa1111...bbb2222".into() },
+            ],
+            "captures new/advanced/forced branch refs by destination, and skips the tag line"
+        );
+        // An up-to-date pull touches no branches.
+        assert!(parse_fetch_branches("Already up to date.\n").is_empty());
     }
 
     #[test]

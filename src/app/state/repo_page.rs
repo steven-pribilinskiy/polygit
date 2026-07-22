@@ -170,6 +170,33 @@ impl AppState {
                 upstream_gone: false,
             });
         }
+        for tag in &page.tags {
+            rows.push(PageRow {
+                kind: PageRowKind::Tag,
+                // The tag name lives in `branch` (the row's display-name slot, as stashes use it).
+                branch: tag.name.clone(),
+                path: repo_path.clone(),
+                deletable: false,
+                is_head: false,
+                dirty: false,
+                dirty_count: 0,
+                stash_index: None,
+                ahead: None,
+                behind: None,
+                upstream: None,
+                last_commit_rel: tag.rel_date.clone(),
+                last_commit_secs: 0,
+                subject: tag.subject.clone(),
+                stats: None,
+                commit_sha: tag.sha.clone(),
+                author: tag.author.clone(),
+                merge_base_short: None,
+                base: None,
+                base_is_override: false,
+                parents: Vec::new(),
+                upstream_gone: false,
+            });
+        }
         // Sort the branch and worktree sections independently by the active column (stashes +
         // commits keep their natural recency order). `None` leaves git's order (HEAD first).
         if let Some(sort) = self.repo_page_sort {
@@ -190,7 +217,8 @@ impl AppState {
         let present = u8::from(!page.branches.is_empty())
             + u8::from(!page.worktrees.is_empty())
             + u8::from(!page.stashes.is_empty())
-            + u8::from(!page.commits.is_empty());
+            + u8::from(!page.commits.is_empty())
+            + u8::from(!page.tags.is_empty());
         // Mirror `repo_page_tabbed` from the locked `page` (avoid re-locking): maximized opts into
         // tabs only via `repo_page_maximized_tabbed`; restored honors the `v` override over auto.
         let tabbed = if self.maximized == Some(Pane::RepoPage) {
@@ -212,28 +240,35 @@ impl AppState {
         rows
     }
 
-    pub fn repo_page_section_counts(&self) -> (usize, usize, usize, usize) {
-        let Some(idx) = self.repo_page else { return (0, 0, 0, 0) };
+    pub fn repo_page_section_counts(&self) -> RepoPageSectionCounts {
+        let Some(idx) = self.repo_page else { return RepoPageSectionCounts::default() };
         let state = self.repos[idx].lock().unwrap();
-        state.page.as_ref().map_or((0, 0, 0, 0), |page| {
-            (page.branches.len(), page.worktrees.len(), page.stashes.len(), page.commits.len())
+        state.page.as_ref().map_or(RepoPageSectionCounts::default(), |page| RepoPageSectionCounts {
+            branches: page.branches.len(),
+            worktrees: page.worktrees.len(),
+            stashes: page.stashes.len(),
+            commits: page.commits.len(),
+            tags: page.tags.len(),
         })
     }
 
     pub fn repo_page_present_tabs(&self) -> Vec<RepoTab> {
-        let (branches, worktrees, stashes, commits) = self.repo_page_section_counts();
+        let counts = self.repo_page_section_counts();
         let mut tabs = Vec::new();
-        if branches > 0 {
+        if counts.branches > 0 {
             tabs.push(RepoTab::Branches);
         }
-        if worktrees > 0 {
+        if counts.worktrees > 0 {
             tabs.push(RepoTab::Worktrees);
         }
-        if stashes > 0 {
+        if counts.stashes > 0 {
             tabs.push(RepoTab::Stashes);
         }
-        if commits > 0 {
+        if counts.commits > 0 {
             tabs.push(RepoTab::Commits);
+        }
+        if counts.tags > 0 {
+            tabs.push(RepoTab::Tags);
         }
         tabs
     }
@@ -433,7 +468,8 @@ impl AppState {
                 path: row.path,
                 name: row.branch,
             }),
-            PageRowKind::Commit => Some(DiffSource::Commit {
+            // A tag diffs the commit it points at, same as a commit row.
+            PageRowKind::Commit | PageRowKind::Tag => Some(DiffSource::Commit {
                 path: row.path,
                 sha: row.commit_sha,
                 label: row.subject,

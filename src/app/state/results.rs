@@ -52,14 +52,16 @@ impl AppState {
     }
 
     pub fn result_category_count(&self, state: &RepoState, view: RightView) -> usize {
+        // Every category is scoped to the LAST PULL's delta — tags/branches fetched, commits/files
+        // delivered — so all four counts read straight off `pull_result` (no separate fetch, and
+        // an up-to-date pull shows none of them). The repo page (`[4]`) holds the full inventory.
+        let pull = state.pull_result.as_ref();
         match view {
             RightView::Diff => 0,
-            RightView::Tags => state.tags.as_ref().map_or(0, Vec::len),
-            RightView::Branches => state.result_branches.as_ref().map_or(0, Vec::len),
-            RightView::Commits => {
-                state.pull_result.as_ref().map(|result| result.commits as usize).unwrap_or(0)
-            }
-            RightView::Files => state.pull_result.as_ref().map(|result| result.files as usize).unwrap_or(0),
+            RightView::Tags => pull.map_or(0, |result| result.new_tag_names.len()),
+            RightView::Branches => pull.map_or(0, |result| result.fetched_branches.len()),
+            RightView::Commits => pull.map_or(0, |result| result.commits as usize),
+            RightView::Files => pull.map_or(0, |result| result.files as usize),
         }
     }
 
