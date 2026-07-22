@@ -3,6 +3,25 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.16.0 — 2026-07-22
+Actionable update notices, sort keeps your selection, and pull-scoped tags/branches
+Three unrelated improvements land together.
+- **Updates you can act on in place.** When `Auto-update: notify` finds a newer release, a
+  persistent `↑ vX.Y.Z available` notice (top-right) now offers `^R install & reload` — one key
+  that downloads, installs over the running binary, and reloads — plus `^X` to dismiss (per-version,
+  so a later release re-arms it). Settings > Updates gained a clickable "available" line (opens an
+  install-and-reload confirm), and Build info gained `[check now]` (skips the daily cadence gate)
+  and `[install & reload]`.
+- **Changing the sort no longer moves your selection.** `s`+letter (or clicking a column header)
+  reordered the rows but kept the cursor on the same row *position*, silently jumping the selection
+  — and the info/result panes — to a different repo. The cursor now follows the repo it was on.
+- **The Command log's Tags/Branches tabs list only what the pull did.** They used to show the
+  repo's entire tag set and every local branch; now they list just the tags the fetch brought in
+  and the branch refs it created/advanced/force-updated — matching the Commits/Files tabs. The full
+  tag inventory moved to a new **Tags tab on the repo page** (`[4]`), alongside Branches/Worktrees/
+  Stashes/Commits. The Command log pane also shows a `D category · d log/raw/unified/split` hint on
+  its bottom border.
+
 ## v3.15.0 — 2026-07-14
 Feat: filter repos by branch existence, and a new extensible filter bar
 The list pane's top border used to carry a status-filter chip, and the `/` name filter only

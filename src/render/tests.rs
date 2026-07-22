@@ -248,6 +248,9 @@
             std::path::PathBuf::from("/tmp/demo"),
         )))];
         let mut app = AppState::new(repos, Some(4), true);
+        // A fresh state on a version with an unseen changelog auto-pops the What's New modal, which
+        // would overlay the surfaces under test — dismiss it, like the repo/pull test helpers do.
+        app.close_all_modals();
         app.latest_release = Some(("99.0.0".to_string(), "2026-07-14".to_string()));
         app
     }
