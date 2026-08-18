@@ -3,6 +3,28 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.17.0 — 2026-08-18
+Squash-merged branches are now recognised, so the cleanup suggestion offers the delete
+Until now polygit decided whether a merged branch was safe to delete with a single
+`git merge-base --is-ancestor` check. A **squash merge** — GitHub's default, and the very thing
+that leaves a branch with a `gone` upstream — produces a fresh commit that is an ancestor of
+nothing, so the check always said "not merged": the `S` suggestion degraded to
+`git switch <base> && git pull` and left the dead local branch behind.
+- **A six-rung integration ladder replaces the single check**, ordered by cost and short-circuiting
+  on the first match: same commit → ancestor → empty three-dot diff → matching trees → *merging
+  adds nothing* (`git merge-tree --write-tree`) → *patch-id match* against a single commit on the
+  base. The last two are what see a squash merge — the fifth when the base has since advanced on
+  other files, the sixth when the base later touched the **same** files and the merge simulation
+  conflicts.
+- **The suggestion now cleans up.** A squash-merged branch gets `git switch <base> && git pull &&
+  git branch -d <branch>` in the info panel, the result pane, the repo page and the kebab — the
+  same safe `-d` as before, never `-D`, so an unmerged branch still can't be lost.
+- Unchanged where it matters: the ladder still runs **only** for the handful of gone-upstream repos
+  in a scan, never per-branch on the repo page. On git older than 2.38 (no `merge-tree
+  --write-tree`) the expensive rungs are skipped silently rather than erroring.
+- polygit is now dual-licensed **MIT OR Apache-2.0**. The ladder is adapted from
+  [Worktrunk](https://github.com/max-sixty/worktrunk) under the same terms; see `LICENSE`.
+
 ## v3.16.0 — 2026-07-22
 Actionable update notices, sort keeps your selection, and pull-scoped tags/branches
 Three unrelated improvements land together.

@@ -1853,31 +1853,274 @@ pub fn dedupe_switch_targets(candidates: &[String], exclude: &str) -> Vec<String
     targets
 }
 
-/// Whether `branch` is fully merged into `base` — its tip is an ancestor of the base, so a safe
-/// `git branch -d` would delete it. Checks the up-to-date remote base (`origin/<base>`, where a
-/// merge lands first) before the local base, so a not-yet-pulled local base doesn't hide a merge.
-pub async fn is_branch_merged(dir: &Path, branch: &str, base: &str) -> bool {
-    let dir_str = dir.to_str().unwrap_or(".");
-    for base_ref in [format!("origin/{base}"), base.to_string()] {
-        let Ok(output) = Command::new("git")
-            .args(["-C", dir_str, "merge-base", "--is-ancestor", branch, &base_ref])
-            .output()
-            .await
-        else {
-            continue;
-        };
-        match output.status.code() {
-            Some(0) => return true,   // branch is an ancestor of base_ref → fully merged
-            Some(1) => return false,  // base_ref resolved, branch is NOT merged into it
-            _ => continue,            // base_ref didn't resolve (128) → try the next candidate
-        }
-    }
-    false
+/// Why a branch's content is already present in a base branch.
+///
+/// The checks form a ladder ordered by cost, short-circuiting on the first match — so an ancestor
+/// branch never pays for a merge simulation. [`MergeAddsNothing`](Self::MergeAddsNothing) and
+/// [`PatchIdMatch`](Self::PatchIdMatch) are the two that catch a **squash merge** (the GitHub
+/// default), whose commit has a fresh sha and is an ancestor of nothing.
+///
+/// The ladder is adapted from worktrunk (MIT OR Apache-2.0),
+/// <https://github.com/max-sixty/worktrunk>.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegrationReason {
+    /// Branch tip is literally the base's commit. (~1ms)
+    SameCommit,
+    /// Branch tip is an ancestor of the base — a plain merge or fast-forward. (~1ms)
+    Ancestor,
+    /// The three-dot diff against the base is empty: the branch adds no files. (~50-100ms)
+    NoAddedChanges,
+    /// Histories differ but the trees are identical. (~100-300ms)
+    TreesMatch,
+    /// Merging would produce the base's exact tree. Catches a squash merge where the base has
+    /// since advanced on *other* files. (~500ms-2s)
+    MergeAddsNothing,
+    /// The branch's whole diff matches a single commit on the base. Catches a squash merge where
+    /// the base later touched the *same* files, which makes the merge simulation conflict. (~1-3s)
+    PatchIdMatch,
 }
 
-/// The subset of `targets` that `branch` is fully merged into (so switching there can safely
-/// `git branch -d` the merged branch). One `merge-base --is-ancestor` per target — cheap, and
-/// only ever run for the handful of gone-upstream repos in a scan.
+/// The probes behind [`check_integration`], filled cheapest-first.
+///
+/// `None` means "not probed, or the probe failed" and is treated conservatively as *not*
+/// integrated — a git call that errors must never be able to fake a merge and license a delete.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IntegrationSignals {
+    pub is_same_commit: Option<bool>,
+    pub is_ancestor: Option<bool>,
+    pub has_added_changes: Option<bool>,
+    pub trees_match: Option<bool>,
+    pub would_merge_add: Option<bool>,
+    pub is_patch_id_match: Option<bool>,
+}
+
+/// Resolve pre-computed signals to a reason, cheapest criterion first. Pure — the single source
+/// of truth for the ladder's ordering, so the async driver below can just re-ask after each probe.
+pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReason> {
+    if signals.is_same_commit == Some(true) {
+        return Some(IntegrationReason::SameCommit);
+    }
+    if signals.is_ancestor == Some(true) {
+        return Some(IntegrationReason::Ancestor);
+    }
+    if signals.has_added_changes == Some(false) {
+        return Some(IntegrationReason::NoAddedChanges);
+    }
+    if signals.trees_match == Some(true) {
+        return Some(IntegrationReason::TreesMatch);
+    }
+    if signals.would_merge_add == Some(false) {
+        return Some(IntegrationReason::MergeAddsNothing);
+    }
+    if signals.is_patch_id_match == Some(true) {
+        return Some(IntegrationReason::PatchIdMatch);
+    }
+    None
+}
+
+/// Commits on the base side that [`patch_id_match`] will diff. Past this the one-pass `git log -p`
+/// stops being cheap, and a branch whose squash landed thousands of commits ago is long dead.
+const PATCH_ID_SCAN_CAP: usize = 1000;
+
+/// Trimmed stdout of a git command run in `dir`, or `None` when it fails to spawn or exits non-zero.
+async fn git_stdout(dir: &Path, args: &[&str]) -> Option<String> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git").arg("-C").arg(dir_str).args(args).output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Exit code of a git command run in `dir`, or `None` when it couldn't be spawned or was signalled.
+async fn git_code(dir: &Path, args: &[&str]) -> Option<i32> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git").arg("-C").arg(dir_str).args(args).output().await.ok()?;
+    output.status.code()
+}
+
+/// Resolve a rev to a full sha. `None` when the ref doesn't exist.
+async fn rev_parse(dir: &Path, rev: &str) -> Option<String> {
+    let resolved = git_stdout(dir, &["rev-parse", "--verify", "--end-of-options", rev]).await?;
+    (!resolved.is_empty()).then_some(resolved)
+}
+
+/// Simulate merging `branch_sha` into `base_sha` without touching the working tree: `Some(false)`
+/// when the merge would add nothing to the base, `Some(true)` when it would, `None` when the
+/// question can't be answered here (the merge conflicted, or git predates `--write-tree`).
+///
+/// The same invocation's exit code also carries the "would conflict" bit, so a future conflict
+/// column can read it from this one spawn rather than paying for a second.
+async fn merge_probe(dir: &Path, base_sha: &str, branch_sha: &str) -> Option<bool> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let Ok(output) = Command::new("git")
+        .args(["-C", dir_str, "merge-tree", "--write-tree", base_sha, branch_sha])
+        .output()
+        .await
+    else {
+        return None;
+    };
+    match output.status.code() {
+        Some(0) => {
+            // Clean merge: stdout's first line is the resulting tree. Equal to the base's own tree
+            // ⇒ the branch contributes nothing that isn't already there.
+            let merged_tree = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let base_tree = rev_parse(dir, &format!("{base_sha}^{{tree}}")).await;
+            match base_tree {
+                Some(base_tree) if !merged_tree.is_empty() => Some(merged_tree != base_tree),
+                _ => None,
+            }
+        }
+        // 1 = conflicts, 128 = old git without `--write-tree` (or a bad rev). Neither says anything
+        // about integration on its own — that is exactly what the patch-id rung is for.
+        _ => None,
+    }
+}
+
+/// Pipe `input` through `git patch-id --stable` and return its `<patch-id> <commit>` lines.
+async fn patch_ids(dir: &Path, input: Vec<u8>) -> Option<String> {
+    use tokio::io::AsyncWriteExt;
+    let dir_str = dir.to_str().unwrap_or(".");
+    let mut child = Command::new("git")
+        .args(["-C", dir_str, "patch-id", "--stable"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    // Write from a task so a large diff can't deadlock against a full stdout pipe.
+    let writer = tokio::spawn(async move { stdin.write_all(&input).await });
+    let output = child.wait_with_output().await.ok()?;
+    let _ = writer.await;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Whether the branch's whole diff since the merge-base equals the diff of some single commit on
+/// the base — i.e. it was squashed in. Does not detect individual cherry-picks.
+async fn patch_id_match(dir: &Path, base_sha: &str, branch_sha: &str) -> Option<bool> {
+    let merge_base = git_stdout(dir, &["merge-base", base_sha, branch_sha]).await?;
+
+    let range = format!("{merge_base}..{base_sha}");
+    let count: usize =
+        git_stdout(dir, &["rev-list", "--count", &range]).await?.parse().ok()?;
+    if count == 0 || count > PATCH_ID_SCAN_CAP {
+        return None;
+    }
+
+    let branch_diff =
+        git_bytes(dir, &["diff-tree", "-p", "--no-color", &merge_base, branch_sha]).await?;
+    let branch_id = patch_ids(dir, branch_diff)
+        .await?
+        .split_whitespace()
+        .next()?
+        .to_string();
+    if branch_id.is_empty() {
+        return None;
+    }
+
+    // One `git log -p` pass emits every base-side commit's diff, and `patch-id` reduces the whole
+    // stream to one id per commit — two subprocesses regardless of how many commits are in range.
+    let base_log = git_bytes(dir, &["log", "--format=%H", "-p", "--no-color", &range]).await?;
+    let ids = patch_ids(dir, base_log).await?;
+    Some(ids.lines().filter_map(|line| line.split_whitespace().next()).any(|id| id == branch_id))
+}
+
+/// Raw stdout bytes of a git command — diffs are not guaranteed UTF-8, and `patch-id` hashes the
+/// bytes, so decoding here would change the answer.
+async fn git_bytes(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let dir_str = dir.to_str().unwrap_or(".");
+    let output = Command::new("git").arg("-C").arg(dir_str).args(args).output().await.ok()?;
+    output.status.success().then_some(output.stdout)
+}
+
+/// Walk the ladder against an already-resolved base ref, running each probe only if the cheaper
+/// ones didn't settle it.
+async fn compute_integration(
+    dir: &Path,
+    branch_sha: &str,
+    base_sha: &str,
+) -> Option<IntegrationReason> {
+    let mut signals = IntegrationSignals { is_same_commit: Some(branch_sha == base_sha), ..Default::default() };
+    if let Some(reason) = check_integration(&signals) {
+        return Some(reason);
+    }
+
+    signals.is_ancestor = match git_code(dir, &["merge-base", "--is-ancestor", branch_sha, base_sha]).await {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    };
+    if let Some(reason) = check_integration(&signals) {
+        return Some(reason);
+    }
+
+    signals.has_added_changes =
+        match git_code(dir, &["diff", "--quiet", &format!("{base_sha}...{branch_sha}")]).await {
+            Some(0) => Some(false),
+            Some(1) => Some(true),
+            _ => None,
+        };
+    if let Some(reason) = check_integration(&signals) {
+        return Some(reason);
+    }
+
+    let branch_tree = rev_parse(dir, &format!("{branch_sha}^{{tree}}")).await;
+    let base_tree = rev_parse(dir, &format!("{base_sha}^{{tree}}")).await;
+    signals.trees_match = match (branch_tree, base_tree) {
+        (Some(left), Some(right)) => Some(left == right),
+        _ => None,
+    };
+    if let Some(reason) = check_integration(&signals) {
+        return Some(reason);
+    }
+
+    signals.would_merge_add = merge_probe(dir, base_sha, branch_sha).await;
+    if let Some(reason) = check_integration(&signals) {
+        return Some(reason);
+    }
+
+    // Reached when the simulation conflicted OR wasn't available. Both mean criterion 5 couldn't
+    // answer, which is exactly when the patch-id fallback earns its cost.
+    signals.is_patch_id_match = patch_id_match(dir, base_sha, branch_sha).await;
+    check_integration(&signals)
+}
+
+/// Why `branch`'s content is already in `base`, or `None` when it isn't.
+///
+/// Checks the up-to-date remote base (`origin/<base>`, where a merge lands first) before the local
+/// base, so a not-yet-pulled local base can't hide a merge; the first ref that resolves decides.
+pub async fn branch_integration(
+    dir: &Path,
+    branch: &str,
+    base: &str,
+) -> Option<IntegrationReason> {
+    let branch_sha = rev_parse(dir, branch).await?;
+    for base_ref in [format!("origin/{base}"), base.to_string()] {
+        let Some(base_sha) = rev_parse(dir, &base_ref).await else {
+            continue; // ref doesn't exist here → try the next candidate
+        };
+        return compute_integration(dir, &branch_sha, &base_sha).await;
+    }
+    None
+}
+
+/// Whether `branch` is already integrated into `base`, so a safe `git branch -d` would delete it.
+pub async fn is_branch_merged(dir: &Path, branch: &str, base: &str) -> bool {
+    branch_integration(dir, branch, base).await.is_some()
+}
+
+/// The subset of `targets` that `branch` is already integrated into (so switching there can safely
+/// `git branch -d` the merged branch). Only ever run for the handful of gone-upstream repos in a
+/// scan — the ladder's last two rungs cost ~0.5-3s, so this must not reach a per-branch loop.
 pub async fn compute_merged_targets(dir: &Path, branch: &str, targets: &[String]) -> Vec<String> {
     let mut merged = Vec::new();
     for base in targets {
@@ -3103,6 +3346,202 @@ detached
         assert_eq!(detect_base_branch(&dir, "feature").await.as_deref(), Some("stage"));
         // stage itself forked from main.
         assert_eq!(detect_base_branch(&dir, "stage").await.as_deref(), Some("main"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn scratch_repo(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("polygit-{tag}-{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git_in(&dir, &["init", "-q", "-b", "main"]);
+        dir
+    }
+
+    fn write_commit(dir: &Path, name: &str, contents: &str, message: &str) {
+        std::fs::write(dir.join(name), contents).unwrap();
+        git_in(dir, &["add", "-A"]);
+        git_in(dir, &["commit", "-q", "-m", message]);
+    }
+
+    #[test]
+    fn check_integration_resolves_cheapest_criterion_first() {
+        // (same_commit, ancestor, has_added, trees_match, would_merge_add, patch_id) → reason.
+        let cases: [(IntegrationSignals, Option<IntegrationReason>); 8] = [
+            (
+                IntegrationSignals { is_same_commit: Some(true), ..Default::default() },
+                Some(IntegrationReason::SameCommit),
+            ),
+            (
+                IntegrationSignals {
+                    is_same_commit: Some(false),
+                    is_ancestor: Some(true),
+                    ..Default::default()
+                },
+                Some(IntegrationReason::Ancestor),
+            ),
+            (
+                IntegrationSignals {
+                    is_same_commit: Some(false),
+                    is_ancestor: Some(false),
+                    has_added_changes: Some(false),
+                    ..Default::default()
+                },
+                Some(IntegrationReason::NoAddedChanges),
+            ),
+            (
+                IntegrationSignals {
+                    is_same_commit: Some(false),
+                    is_ancestor: Some(false),
+                    has_added_changes: Some(true),
+                    trees_match: Some(true),
+                    ..Default::default()
+                },
+                Some(IntegrationReason::TreesMatch),
+            ),
+            (
+                IntegrationSignals {
+                    is_same_commit: Some(false),
+                    is_ancestor: Some(false),
+                    has_added_changes: Some(true),
+                    trees_match: Some(false),
+                    would_merge_add: Some(false),
+                    ..Default::default()
+                },
+                Some(IntegrationReason::MergeAddsNothing),
+            ),
+            (
+                IntegrationSignals {
+                    is_same_commit: Some(false),
+                    is_ancestor: Some(false),
+                    has_added_changes: Some(true),
+                    trees_match: Some(false),
+                    would_merge_add: Some(true),
+                    is_patch_id_match: Some(true),
+                },
+                Some(IntegrationReason::PatchIdMatch),
+            ),
+            // Every probe ran and every one said "not integrated".
+            (
+                IntegrationSignals {
+                    is_same_commit: Some(false),
+                    is_ancestor: Some(false),
+                    has_added_changes: Some(true),
+                    trees_match: Some(false),
+                    would_merge_add: Some(true),
+                    is_patch_id_match: Some(false),
+                },
+                None,
+            ),
+            // Nothing probed at all → no reason. A failed git call must never license a delete.
+            (IntegrationSignals::default(), None),
+        ];
+        for (signals, expected) in cases {
+            assert_eq!(check_integration(&signals), expected, "signals: {signals:?}");
+        }
+    }
+
+    #[test]
+    fn check_integration_treats_unknown_probes_conservatively() {
+        // A cheap probe that errored (`None`) must not be read as a match, and must not stop a
+        // later probe from supplying the answer.
+        let signals = IntegrationSignals {
+            is_same_commit: None,
+            is_ancestor: None,
+            has_added_changes: None,
+            trees_match: None,
+            would_merge_add: Some(false),
+            is_patch_id_match: None,
+        };
+        assert_eq!(check_integration(&signals), Some(IntegrationReason::MergeAddsNothing));
+    }
+
+    #[tokio::test]
+    async fn squash_merged_branch_detected_by_merge_simulation() {
+        // The case a plain `merge-base --is-ancestor` cannot see: `feat` was squash-merged into
+        // main (fresh sha, so not an ancestor) and main then advanced on an unrelated file.
+        let dir = scratch_repo("squash-clean");
+        write_commit(&dir, "a.txt", "base\n", "initial");
+        git_in(&dir, &["switch", "-qc", "feat"]);
+        write_commit(&dir, "f1.txt", "one\n", "feat: one");
+        write_commit(&dir, "f2.txt", "two\n", "feat: two");
+        git_in(&dir, &["switch", "-q", "main"]);
+        write_commit(&dir, "other.txt", "other\n", "main: unrelated work");
+        git_in(&dir, &["merge", "--squash", "-q", "feat"]);
+        git_in(&dir, &["commit", "-q", "-m", "squash: feat (#123)"]);
+
+        // The old single-criterion check: still says "not merged".
+        assert_eq!(
+            git_code(&dir, &["merge-base", "--is-ancestor", "feat", "main"]).await,
+            Some(1),
+            "fixture must be a genuine squash merge, not a fast-forward"
+        );
+        assert_eq!(
+            branch_integration(&dir, "feat", "main").await,
+            Some(IntegrationReason::MergeAddsNothing)
+        );
+        assert!(is_branch_merged(&dir, "feat", "main").await);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn squash_merged_branch_detected_by_patch_id_when_merge_conflicts() {
+        // main later edits the same file the branch touched, so the merge simulation conflicts
+        // and only the patch-id fallback can see that the content already landed.
+        let dir = scratch_repo("squash-conflict");
+        write_commit(&dir, "f.txt", "line1\n", "initial");
+        git_in(&dir, &["switch", "-qc", "feat"]);
+        write_commit(&dir, "f.txt", "line1\nfeat-change\n", "feat: edit f");
+        git_in(&dir, &["switch", "-q", "main"]);
+        git_in(&dir, &["merge", "--squash", "-q", "feat"]);
+        git_in(&dir, &["commit", "-q", "-m", "squash: feat (#7)"]);
+        write_commit(&dir, "f.txt", "line1\nfeat-change\nlater\n", "main: later edit to f");
+
+        assert_eq!(
+            branch_integration(&dir, "feat", "main").await,
+            Some(IntegrationReason::PatchIdMatch)
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn genuinely_unmerged_branch_is_not_integrated() {
+        // The control the other two need: a ladder that answered `Some` for everything would pass
+        // both squash tests and still be worthless.
+        let dir = scratch_repo("unmerged");
+        write_commit(&dir, "a.txt", "base\n", "initial");
+        git_in(&dir, &["switch", "-qc", "feat"]);
+        write_commit(&dir, "only-on-feat.txt", "never merged\n", "feat: unique work");
+        git_in(&dir, &["switch", "-q", "main"]);
+        write_commit(&dir, "other.txt", "other\n", "main: unrelated work");
+
+        assert_eq!(branch_integration(&dir, "feat", "main").await, None);
+        assert!(!is_branch_merged(&dir, "feat", "main").await);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn ancestor_branch_short_circuits_before_the_expensive_rungs() {
+        // A plain (non-squash) merge must settle at rung 2 — proving the ladder short-circuits
+        // rather than always walking to merge-tree.
+        let dir = scratch_repo("ancestor");
+        write_commit(&dir, "a.txt", "base\n", "initial");
+        git_in(&dir, &["switch", "-qc", "feat"]);
+        write_commit(&dir, "f1.txt", "one\n", "feat: one");
+        git_in(&dir, &["switch", "-q", "main"]);
+        git_in(&dir, &["merge", "--no-ff", "-q", "-m", "merge feat", "feat"]);
+
+        assert_eq!(
+            branch_integration(&dir, "feat", "main").await,
+            Some(IntegrationReason::Ancestor)
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

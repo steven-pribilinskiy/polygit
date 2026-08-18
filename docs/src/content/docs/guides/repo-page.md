@@ -70,12 +70,31 @@ instead of truncating. A branch whose tracked upstream's remote ref was deleted 
 
 **Merged/gone-upstream → switch (& delete).** When the HEAD branch's upstream is *gone* (it was
 merged and its remote branch deleted), the info panel adds a **`suggest`** line — `git switch
-<base> && git pull`, extended with `&& git branch -d <branch>` when the branch is **fully merged**
-— and the footer offers **`S` switch & pull** (or **switch & delete**). `S` (or clicking the hint)
-switches the repo to its top suggested base (the branch it was cut from / the merged PR's target /
-the repo default), pulls, and — when the dead branch is fully merged — safely `git branch -d`s it
-(never `-D`, so an unmerged branch is never lost) in the background; the suggestion clears once the
-new branch's live upstream is picked up.
+<base> && git pull`, extended with `&& git branch -d <branch>` when the branch's content is
+**already in the base** — and the footer offers **`S` switch & pull** (or **switch & delete**). `S`
+(or clicking the hint) switches the repo to its top suggested base (the branch it was cut from /
+the merged PR's target / the repo default), pulls, and — when the branch is already integrated —
+safely `git branch -d`s it (never `-D`, so an unmerged branch is never lost) in the background; the
+suggestion clears once the new branch's live upstream is picked up.
+
+**How "already in the base" is decided.** A six-rung ladder, ordered by cost and short-circuiting
+on the first match:
+
+| # | Criterion | Probe |
+|---|-----------|-------|
+| 1 | Same commit | branch tip == base tip |
+| 2 | Ancestor | `git merge-base --is-ancestor` |
+| 3 | No added changes | `git diff --quiet <base>...<branch>` |
+| 4 | Trees match | `<branch>^{tree}` == `<base>^{tree}` |
+| 5 | Merging adds nothing | `git merge-tree --write-tree` produces the base's own tree |
+| 6 | Patch-id match | the branch's whole diff equals one commit on the base |
+
+Rungs 5 and 6 are what recognise a **squash merge** — GitHub's default, and the usual reason an
+upstream goes away. A squash commit has a fresh sha, so it is an ancestor of nothing and rungs 1–4
+miss it: rung 5 catches it when the base has since advanced on *other* files, and rung 6 catches it
+when the base later touched the **same** files (which makes the merge simulation conflict). The
+ladder runs only for repos whose upstream is gone, never per-branch; on git older than 2.38 (no
+`merge-tree --write-tree`) rungs 5 and 6 are skipped silently.
 
 **Base branch resolution.** A branch's base (what its change stats diff against) resolves in this
 order: an explicit **override** (set via the base picker) → the **open PR's target** branch (so it
