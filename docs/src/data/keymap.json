@@ -861,6 +861,27 @@
       },
       {
         "keys": [
+          "Ctrl",
+          "T"
+        ],
+        "action": "Toggle the performance overlay",
+        "note": "live frame/input timings — hover lag, frame build, terminal flush, state-lock wait, and how many mouse-motion reports were superseded before they could be drawn, each as p95/p50; ends with a one-line verdict naming which of those is responsible. Also the clickable `[x]` on the overlay; works from any view or modal. `--perf` starts collecting from launch and prints the full report on exit.",
+        "keywords": [
+          "performance",
+          "perf",
+          "profiling",
+          "fps",
+          "latency",
+          "lag",
+          "slow",
+          "hover",
+          "overlay",
+          "diagnostics"
+        ],
+        "group": "App & modals"
+      },
+      {
+        "keys": [
           ".",
           "⋮ on hover"
         ],
@@ -1499,7 +1520,15 @@
         ],
         "action": "Pin (dock as a panel) ⇄ float (a draggable/resizable window)",
         "note": "also the `[p float]`/`[p pin]` title-bar button. While floating: drag the title bar to move, drag the bottom-right ◢ grip to resize, or Alt+arrows to nudge / Alt+Shift+arrows to resize by keyboard. Persisted",
-        "keywords": ["pin", "float", "floating", "window", "dock", "drag", "resize"],
+        "keywords": [
+          "pin",
+          "float",
+          "floating",
+          "window",
+          "dock",
+          "drag",
+          "resize"
+        ],
         "group": "Other"
       },
       {

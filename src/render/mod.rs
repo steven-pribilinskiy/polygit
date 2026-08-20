@@ -1,4 +1,6 @@
 
+use std::time::Instant;
+
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -207,6 +209,12 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let mut hits: Vec<Rect> = Vec::new();
     let mut strong_hits: Vec<Rect> = Vec::new();
     let mut button_hits: Vec<Rect> = Vec::new();
+    // The perf overlay floats above every pane AND every modal, so its `[x]` is checked before the
+    // dropdown/modal chain below — otherwise a modal's own branch would claim the cursor and the
+    // button would be clickable but dead on hover.
+    if let Some((row, start, end)) = app.perf_close_click.filter(|&(r, s, e)| contains(r, s, e)) {
+        button_hits.push(row_rect(row, start, end));
+    }
     // An open header dropdown floats above every pane, so its rows win the hover first — the item
     // under the cursor (and the `[x]` close button) get the standard soft button tint.
     if app.dropdown.is_some() {
@@ -989,14 +997,246 @@ fn truncate_left(s: &str, max_width: usize) -> String {
     result
 }
 
+/// The live perf overlay (`Ctrl+T`). Drawn last — after the palette pass — so it uses the
+/// palette's RGB values directly rather than semantic ANSI, which would no longer be remapped.
+///
+/// Deliberately compact and top-right anchored: it has to be readable WHILE the mouse is moving
+/// over the list, so it must not sit under the cursor or cover the rows being hovered.
+fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
+    app.perf_close_click = None;
+    if !app.perf.overlay {
+        return;
+    }
+    let area = frame.area();
+    let palette = app.palette();
+    let now = Instant::now();
+
+    // `ms` renders a microsecond channel reading; a blank cell reads better than "0.00m" for a
+    // channel that has never been sampled, so an unsampled row is honestly empty.
+    let ms = |value: f64, sampled: bool| -> String {
+        if !sampled {
+            "   –".to_string()
+        } else if value >= 1000.0 {
+            format!("{:>6.1}", value / 1000.0)
+        } else {
+            format!("{:>6.2}", value / 1000.0)
+        }
+    };
+
+    let perf = &mut app.perf;
+    let motion_per_sec = perf.motion_rate.per_sec(now);
+    let frames_per_sec = perf.frame_rate.per_sec(now);
+    let events_per_sec = perf.event_rate.per_sec(now);
+    let verdict = perf.verdict();
+
+    let mut rows: Vec<(String, String, Color)> = Vec::new();
+    // Hover lag leads: it is the symptom the user actually reports, and its color is the alarm.
+    let lag_p95 = perf.lag.p95();
+    let lag_color = if perf.lag.is_empty() {
+        palette.faint
+    } else if lag_p95 > 100_000.0 {
+        palette.error
+    } else if lag_p95 > 33_000.0 {
+        palette.warn
+    } else {
+        palette.ok
+    };
+    rows.push((
+        "hover lag".into(),
+        format!("{} {}", ms(lag_p95, !perf.lag.is_empty()), ms(perf.lag.p50(), !perf.lag.is_empty())),
+        lag_color,
+    ));
+    rows.push((
+        "  build".into(),
+        format!("{} {}", ms(perf.build.p95(), !perf.build.is_empty()), ms(perf.build.p50(), !perf.build.is_empty())),
+        palette.fg,
+    ));
+    rows.push((
+        "  flush".into(),
+        format!("{} {}", ms(perf.flush.p95(), !perf.flush.is_empty()), ms(perf.flush.p50(), !perf.flush.is_empty())),
+        palette.fg,
+    ));
+    rows.push((
+        "  upkeep".into(),
+        format!("{} {}", ms(perf.upkeep.p95(), !perf.upkeep.is_empty()), ms(perf.upkeep.p50(), !perf.upkeep.is_empty())),
+        palette.muted,
+    ));
+    rows.push((
+        "  lock".into(),
+        format!("{} {}", ms(perf.lock_wait.p95(), !perf.lock_wait.is_empty()), ms(perf.lock_wait.p50(), !perf.lock_wait.is_empty())),
+        palette.muted,
+    ));
+
+    // A backlog is the tell that the loop is structurally behind, so it gets the same alarm colors
+    // as the lag rather than being buried with the rates.
+    let backlog_p95 = perf.backlog.p95();
+    let backlog_color = if perf.backlog.is_empty() {
+        palette.faint
+    } else if backlog_p95 >= 8.0 {
+        palette.error
+    } else if backlog_p95 >= 2.0 {
+        palette.warn
+    } else {
+        palette.ok
+    };
+    rows.push((
+        "backlog".into(),
+        format!("{:>6.0} {:>6.0}", backlog_p95, perf.backlog.p50()),
+        backlog_color,
+    ));
+    rows.push((
+        "dropped".into(),
+        format!("{:>6.0} {:>6.0}", perf.coalesced.p95(), perf.coalesced.p50()),
+        palette.muted,
+    ));
+    rows.push((
+        "motion/s".into(),
+        format!("{motion_per_sec:>6} /s{:>4}", ""),
+        palette.fg,
+    ));
+    rows.push((
+        "event/s".into(),
+        format!("{events_per_sec:>6} /s{:>4}", ""),
+        palette.muted,
+    ));
+    rows.push((
+        "frame/s".into(),
+        format!("{frames_per_sec:>6} /s{:>4}", ""),
+        palette.fg,
+    ));
+    if let Some(rtt) = perf.terminal_rtt {
+        rows.push((
+            "term rtt".into(),
+            format!("{:>6.2} ms{:>4}", rtt.as_secs_f64() * 1e3, ""),
+            palette.muted,
+        ));
+    }
+
+    // Width is driven by the widest row plus the verdict, so a long verdict never truncates into
+    // uselessness — the verdict IS the deliverable of this overlay.
+    let label_width = 9;
+    let value_width = 13;
+    let body_width = label_width + 1 + value_width;
+    let verdict_lines = wrap_plain(verdict, body_width);
+    let inner_width = body_width;
+    let width = (inner_width + 2) as u16;
+    // rows + the column header + the rule + the verdict, plus the two border rows. Getting this
+    // one short silently clips the LAST line, which is the verdict — the one line the overlay
+    // exists to show.
+    let height = (rows.len() + verdict_lines.len() + 4) as u16;
+    if area.width < width + 2 || area.height < height + 1 {
+        return;
+    }
+    // Top-right, one column in from the edge so it never collides with a pane scrollbar.
+    let rect = Rect { x: area.width - width - 1, y: 1, width, height };
+    frame.render_widget(Clear, rect);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<label_width$}", "channel"), Style::default().fg(palette.faint)),
+        Span::styled(format!(" {:>6} {:>6}", "p95", "p50"), Style::default().fg(palette.faint)),
+    ]));
+    for (label, value, color) in rows {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{label:<label_width$}"), Style::default().fg(palette.muted)),
+            Span::styled(value, Style::default().fg(color)),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        "─".repeat(inner_width),
+        Style::default().fg(palette.faint),
+    )));
+    for line in verdict_lines {
+        lines.push(Line::from(Span::styled(
+            line,
+            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(palette.accent))
+        .style(Style::default().bg(palette.base_bg))
+        .title(Span::styled(" perf ^T ", Style::default().fg(palette.accent)));
+    frame.render_widget(Paragraph::new(lines).block(block), rect);
+
+    // The `[x]` closes the overlay by mouse, mirroring `Ctrl+T`. Captured, not recomputed, so it
+    // stays correct if the box moves or resizes.
+    let (close_line, close_region) = modal_close_button(rect);
+    frame.render_widget(
+        Paragraph::new(close_line),
+        Rect { x: rect.x, y: rect.y, width: rect.width, height: 1 },
+    );
+    app.perf_close_click = close_region;
+}
+
+/// Greedy word wrap to `width`, used by the perf overlay's verdict line. Falls back to a hard
+/// split for a single word longer than the box.
+fn wrap_plain(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.chars().count() + 1 + word.chars().count() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+        while current.chars().count() > width {
+            let head: String = current.chars().take(width).collect();
+            let tail: String = current.chars().skip(width).collect();
+            lines.push(head);
+            current = tail;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
 /// Render a single frame into `frame`: draw every widget with semantic ANSI colors, then
 /// remap the whole buffer to the active theme + contrast palette.
 pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
+    // Instrumented only while the perf overlay/report is on: an `Instant::now()` per pass is cheap,
+    // but a disabled session should pay nothing beyond the branch.
+    if !app.perf.enabled {
+        render_widgets(frame, app, tick);
+        render_tooltip(frame, app);
+        let palette = app.palette();
+        apply_palette(frame, &palette);
+        apply_hover(frame, app, &palette);
+        return;
+    }
+
+    let build_started = Instant::now();
     render_widgets(frame, app, tick);
     render_tooltip(frame, app);
     let palette = app.palette();
+
+    let palette_started = Instant::now();
     apply_palette(frame, &palette);
+    let palette_took = palette_started.elapsed();
+
+    let hover_started = Instant::now();
     apply_hover(frame, app, &palette);
+    let hover_took = hover_started.elapsed();
+
+    let area = frame.area();
+    app.perf.cells = u32::from(area.width) * u32::from(area.height);
+    app.perf.palette.record(palette_took);
+    app.perf.hover.record(hover_took);
+    let build_took = build_started.elapsed();
+    app.perf.last_build = build_took;
+    app.perf.build.record(build_took);
+
+    // The overlay is painted last, over the finished frame, so its own cost is excluded from every
+    // channel above — an overlay that inflated the numbers it reports would be worse than useless.
+    render_perf_overlay(frame, app);
 }
 
 /// Render the active dwell tooltip (a small bordered popup), placed by the floating engine relative

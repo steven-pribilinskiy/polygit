@@ -736,6 +736,13 @@ pub struct AppState {
     /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). Persisted,
     /// all default on. Tooltips still require `hover_effects` (for cursor tracking).
     pub tooltips: TooltipPrefs,
+    /// The perf overlay's `[x]` close button region `(row, col_start, col_end)`, captured each
+    /// frame it is drawn. The overlay floats above every pane, so this is hit-tested before the
+    /// pane/modal dispatch — mirroring how its `Ctrl+T` key is handled before the per-view gates.
+    pub perf_close_click: Option<(u16, u16, u16)>,
+    /// Frame/input timings, collected only while `perf.enabled`. Separates a slow frame from a
+    /// slow terminal from an input backlog — the three causes that all look like "hover lags".
+    pub perf: crate::perf::Perf,
     /// Current mouse position `(col, row)` while `hover_effects` is on, else `None`. Drives the
     /// post-render hover highlight; never persisted.
     pub hover: Option<(u16, u16)>,
@@ -1224,6 +1231,8 @@ impl AppState {
             splitter_mode: persisted.layout.splitter_mode,
             changed_row_effect: persisted.interaction.changed_row_effect,
             tooltips: persisted.tooltips,
+            perf: crate::perf::Perf::default(),
+            perf_close_click: None,
             hover: None,
             hover_tooltip: None,
             hover_tooltips: Vec::new(),

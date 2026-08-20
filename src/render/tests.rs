@@ -692,3 +692,60 @@
         }
     }
 
+
+/// The perf overlay's LAST line is its verdict — the one line it exists to show. A height computed
+/// one row short clips exactly that line while leaving a box that still looks complete, so assert
+/// the verdict text reached the screen rather than that the box rendered.
+#[test]
+fn perf_overlay_shows_its_verdict_and_close_button() {
+    let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+        "demo",
+        std::path::PathBuf::from("/tmp/demo"),
+    )))];
+    let mut app = AppState::new(repos, Some(4), true);
+    app.perf.toggle_overlay();
+    // A sampled lag well under the alarm thresholds, so the verdict is the quiet one.
+    for _ in 0..8 {
+        app.perf.lag.record_us(500.0);
+        app.perf.backlog.record_us(0.0);
+    }
+
+    let rows = render_rows(&mut app, 150, 44);
+    let screen = rows.join("\n");
+    assert!(screen.contains("perf ^T"), "the overlay renders its title");
+    assert!(
+        screen.contains("hover is keeping up"),
+        "the verdict line must not be clipped off the bottom of the box:\n{screen}"
+    );
+    assert!(screen.contains("hover lag"), "the lag channel is listed");
+    // Every clickable needs its region captured, or the `[x]` is drawn but dead.
+    assert!(app.perf_close_click.is_some(), "the close button registers a click region");
+
+    // Toggling off must clear the region, or a stale rect keeps swallowing clicks.
+    app.perf.toggle_overlay();
+    let rows = render_rows(&mut app, 150, 44);
+    assert!(!rows.join("\n").contains("perf ^T"), "overlay is gone when toggled off");
+    assert!(app.perf_close_click.is_none(), "the stale click region is cleared");
+}
+
+/// A terminal too short for the overlay must simply not draw it — never panic, and never leave a
+/// click region pointing at a box that was not rendered.
+#[test]
+fn perf_overlay_declines_to_draw_when_the_terminal_is_too_small() {
+    let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+        "demo",
+        std::path::PathBuf::from("/tmp/demo"),
+    )))];
+    let mut app = AppState::new(repos, Some(4), true);
+    app.perf.toggle_overlay();
+    app.perf.lag.record_us(500.0);
+
+    for (width, height) in [(40_u16, 10_u16), (20, 40), (150, 8)] {
+        let rows = render_rows(&mut app, width, height);
+        assert!(
+            !rows.join("\n").contains("perf ^T"),
+            "overlay must be suppressed at {width}x{height}"
+        );
+        assert!(app.perf_close_click.is_none(), "no click region at {width}x{height}");
+    }
+}

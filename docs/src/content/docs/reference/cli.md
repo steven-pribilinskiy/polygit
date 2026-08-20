@@ -54,6 +54,7 @@ polygit sizes --no-recursive         # disk usage, immediate subdirs only
 | `--no-worktrees` | | off | Skip `.worktrees/*/.git` discovery. |
 | `--profile` | | off | Emit a per-repo timing report (slowest first) after the run. |
 | `--profile-out <FILE>` | | stderr | Write the profile report to a file instead of stderr. |
+| `--perf` | | off | Collect frame/input timings from launch and print the report on exit. `Ctrl+T` toggles the live overlay at any time; this flag only preloads collection so the first frames are covered, and measures the terminal's own round-trip once at startup. |
 | `--version` | | | Print the version and exit. |
 | `--help` | | | Print help and exit. |
 

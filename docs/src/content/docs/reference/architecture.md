@@ -21,6 +21,7 @@ description: How the polygit Rust crate is organized.
 | `src/theme.rs` | Color palettes composed from two independent axes — **background** (surface tones) × **contrast** (text/accent saturation), each dark/light — the per-frame ANSI→RGB remap, and terminal background detection for the auto theme. |
 | `src/pr_cache.rs` | Persisted PR cache (`~/.config/polygit/pr-cache.json`): repo+branch → PR (open/merged/closed) + timestamp, with a 5-minute TTL, so the PR column/info panel don't re-hit `gh` every frame or launch. |
 | `src/profile.rs` | The optional `--profile` per-repo timing report. |
+| `src/perf.rs` | Frame/input instrumentation (`Ctrl+T` overlay, `--perf` report): rolling p50/p95/p99 channels for frame build, terminal flush, upkeep and state-lock wait, plus hover lag, input backlog and a terminal round-trip probe — and the verdict that names which one is responsible. |
 
 ## How a pull flows
 

@@ -12,6 +12,7 @@ mod groups;
 mod highlight;
 mod keybindings;
 mod keymap;
+mod perf;
 mod persist;
 mod plain;
 mod pr_cache;
@@ -33,7 +34,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
+    KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind,
+    PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
@@ -121,6 +123,11 @@ struct Cli {
     /// Write the profile report to this file instead of stderr
     #[arg(long, value_name = "FILE")]
     profile_out: Option<PathBuf>,
+
+    /// Collect frame/input timings from launch and print the report on exit. `Ctrl+T` toggles the
+    /// live overlay at any time; this flag only preloads collection so the first frames are covered.
+    #[arg(long)]
+    perf: bool,
 }
 
 /// Top-level subcommands. New commands slot in here; each gets its own `--help`/`help`.
@@ -1008,6 +1015,7 @@ async fn run() -> Result<i32> {
                             cli.no_worktrees,
                             profiling,
                             cli.profile_out,
+                            cli.perf,
                         )
                         .await
                     }
@@ -1043,6 +1051,7 @@ async fn run() -> Result<i32> {
         cli.no_worktrees,
         profiling,
         cli.profile_out,
+        cli.perf,
     )
     .await
 }
@@ -1234,6 +1243,7 @@ async fn run_tui(
     no_worktrees: bool,
     profiling: bool,
     profile_out: Option<PathBuf>,
+    perf_from_launch: bool,
 ) -> Result<i32> {
     // Repos stream in from the recursive walker (see `run_discovery` below); the list starts
     // empty and grows as the scan progresses, so there's no up-front discovery wait.
@@ -1271,6 +1281,18 @@ async fn run_tui(
 
     // Set up terminal
     enable_raw_mode()?;
+
+    // Measure the terminal's own round-trip BEFORE the alternate screen and before any other
+    // reader touches stdin — a DSR reply arriving after the event loop starts would be swallowed
+    // by it. This is the floor on how fast this emulator can acknowledge anything, so it tells a
+    // slow terminal apart from slow rendering.
+    if perf_from_launch {
+        let rtt = perf::probe_terminal_rtt(Duration::from_millis(250));
+        let mut app = app_state.lock().unwrap();
+        app.perf.enable();
+        app.perf.terminal_rtt = rtt;
+    }
+
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
@@ -1351,6 +1373,15 @@ async fn run_tui(
         return Ok(1);
     }
 
+    // Same placement rule as the profile report below: after the alternate screen is gone, or the
+    // report would be painted onto a buffer that is about to be discarded.
+    {
+        let app = app_state.lock().unwrap();
+        if app.perf.enabled {
+            eprintln!("{}", app.perf.report());
+        }
+    }
+
     // Emit the profile report only after the alternate screen is left so it
     // doesn't corrupt the display.
     if profiling {
@@ -1408,6 +1439,11 @@ fn emit_report(report: &str, profile_out: Option<&std::path::Path>) -> Result<()
 }
 
 /// Main event loop: renders UI and handles keyboard input.
+/// Upper bound on how many superseded mouse-motion reports one poll may drain before rendering.
+/// Without a cap, a terminal producing motion faster than we render could keep the loop draining
+/// forever and never draw — the highlight would stop moving entirely, which is worse than lag.
+const MOTION_COALESCE_CAP: usize = 128;
+
 async fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app_state: Arc<Mutex<AppState>>,
@@ -1458,6 +1494,11 @@ async fn run_event_loop(
     // hint runs through the exact same key handler as a real keypress.
     let mut synthetic_keys: std::collections::VecDeque<KeyEvent> = std::collections::VecDeque::new();
 
+    // Instrumentation, read once per iteration from `AppState` so the hot path branches on a local
+    // rather than taking the lock. `coalesce_motion` is the A/B switch: `--no-coalesce` restores the
+    // old one-frame-per-motion-report behaviour so the fix can be measured against it.
+    let coalesce_motion = !std::env::var("POLYGIT_NO_COALESCE").is_ok_and(|v| v == "1");
+
     // Whether all-motion mouse tracking (DEC 1003) is currently enabled in the terminal; kept in
     // sync with the `hover_effects` setting each render.
     let mut hover_tracking_on = false;
@@ -1467,6 +1508,8 @@ async fn run_event_loop(
     let mut hover_dwell_since = Instant::now();
 
     loop {
+        let iter_started = Instant::now();
+
         // Suspend the TUI and run claude code when requested (set by a key/click last iteration).
         if let Some(path) = pending_claude.take() {
             let (agent, skip) = {
@@ -1652,7 +1695,14 @@ async fn run_event_loop(
 
         // Render
         {
+            // Time the lock acquisition itself: the render holds `AppState` while a dozen worker
+            // tasks want it too, so contention here shows up as hover lag with no slow frame to
+            // blame it on — exactly the case the other channels cannot explain.
+            let lock_started = Instant::now();
             let mut app = app_state.lock().unwrap();
+            if app.perf.enabled {
+                app.perf.lock_wait.record(lock_started.elapsed());
+            }
             // Keep the selection in view whenever it moved this frame (keyboard / Alt+wheel nav,
             // filter preview, reselect after a layout change). A plain wheel scroll leaves the
             // selection unchanged, so this is skipped and the view stays where the wheel left it.
@@ -1823,16 +1873,59 @@ async fn run_event_loop(
             // Master-detail: while the restored panel [4] is open and the list ([1]) has focus, keep
             // the panel pointed at the selected repo (cheap no-op when it's already on that repo).
             maybe_follow_repo_page(&mut app);
+
+            // `terminal.draw` = our render closure, then ratatui's buffer diff and the escape-
+            // sequence write to the tty. Timing the closure separately is what separates "our
+            // layout is slow" from "this terminal is slow to accept output" — the render channels
+            // are recorded inside `render::render`, so `flush` here is the remainder.
+            let perf_on = app.perf.enabled;
+            let draw_started = Instant::now();
             terminal.draw(|frame| render::render(frame, &mut app, tick))?;
+            if perf_on {
+                let whole = draw_started.elapsed();
+                // `render::render` recorded THIS frame's build time into `last_build`; the rest of
+                // the `draw` call is ratatui's diff plus the write to the tty.
+                let build = app.perf.last_build;
+                app.perf.frame.record(whole);
+                app.perf.flush.record(whole.saturating_sub(build));
+                app.perf.frame_done(Instant::now());
+                let iter = iter_started.elapsed();
+                app.perf.upkeep.record(iter.saturating_sub(whole));
+                app.perf.iter.record(iter);
+            }
         }
 
         // Handle events with a short timeout for animation. A clicked footer hint queues a
         // synthetic key, drained here before polling real input so it dispatches identically.
         let poll_timeout = Duration::from_millis(50);
+        // How many superseded motion reports the poll below discarded. Recorded by the mouse
+        // handler, which already holds the `AppState` lock — taking it again here just to write a
+        // counter would add lock contention to the very path being measured.
+        let mut coalesced_motion = 0_usize;
         let next_event = if let Some(key) = synthetic_keys.pop_front() {
             Some(Event::Key(key))
         } else if event::poll(poll_timeout)? {
-            Some(event::read()?)
+            let mut event = event::read()?;
+            // Bare cursor motion is the one input where only the NEWEST report can matter: every
+            // earlier position is superseded before its highlight could reach the screen. Left
+            // uncoalesced, the loop draws one full frame per report, so the highlight trails the
+            // cursor by (queued reports x frame time) — the sluggishness this instrumentation was
+            // added to find. Drain the run and keep the last, counting what was dropped.
+            //
+            // Only `Moved` is coalesced: a click, wheel or drag in the queue ends the run and is
+            // handled normally, so no action is ever lost. The cap bounds a pathological burst so
+            // draining can't starve the render.
+            let mut dropped = 0_usize;
+            while coalesce_motion
+                && dropped < MOTION_COALESCE_CAP
+                && matches!(event, Event::Mouse(MouseEvent { kind: MouseEventKind::Moved, .. }))
+                && event::poll(Duration::ZERO)?
+            {
+                event = event::read()?;
+                dropped += 1;
+            }
+            coalesced_motion = dropped;
+            Some(event)
         } else {
             None
         };
@@ -1846,8 +1939,23 @@ async fn run_event_loop(
                 if app.hover_effects {
                     app.hover = Some((mouse.column, mouse.row));
                 }
-                // Bare cursor motion carries no action.
+                // Bare cursor motion carries no action beyond the hover position recorded above.
                 if matches!(mouse.kind, MouseEventKind::Moved) {
+                    if app.perf.enabled {
+                        let now = Instant::now();
+                        app.perf.event_read(now, coalesced_motion);
+                        app.perf.motion_read(now);
+                    }
+                    continue;
+                }
+
+                // The perf overlay floats above every pane and modal, so its `[x]` is hit-tested
+                // before anything underneath it can claim the click.
+                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                    && region_hit(app.perf_close_click, mouse.column, mouse.row)
+                {
+                    app.perf.toggle_overlay();
+                    app.show_toast("perf overlay off");
                     continue;
                 }
 
@@ -3586,6 +3694,17 @@ async fn run_event_loop(
                 // modal/leader/filter-input gate, so it always works no matter what's open.
                 if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     pending_repaint = true;
+                    continue;
+                }
+
+                // Perf overlay. Fixed like the repaint above, and global on purpose: the frames
+                // worth measuring are often the ones with a modal or the repo page open, so a
+                // toggle gated behind the list view could not reach them. `Ctrl+T` (timing) —
+                // `Ctrl+P` is the fuzzy finder and handling it here would shadow it everywhere.
+                if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.perf.toggle_overlay();
+                    let state = if app.perf.overlay { "on" } else { "off" };
+                    app.show_toast(format!("perf overlay {state}"));
                     continue;
                 }
 

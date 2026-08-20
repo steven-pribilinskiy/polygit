@@ -3,6 +3,30 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.18.0 — 2026-08-20
+`Ctrl+T` perf overlay + `--perf` report: find out WHY the UI feels slow
+Hover sluggishness has three possible causes that all feel identical, and no way to tell them apart
+from the outside: our own widget layout, the terminal emulator being slow to accept output, or the
+event loop falling behind the flood of mouse-motion reports. The new instrumentation separates them
+and then says which one it is.
+- **`Ctrl+T` toggles a live overlay** (also a clickable `[x]`, and it works from any view or modal).
+  It reports **hover lag** — the wall time from a mouse-motion report to the end of the frame that
+  acted on it, which is the number you actually feel — split against **frame build** (widget layout,
+  our code), **terminal flush** (ratatui's diff plus the escape-sequence write, the emulator's
+  speed), **upkeep**, **state-lock wait**, and **backlog** (motion reports superseded before they
+  could be drawn), each as p95/p50, plus live motion/event/frame rates.
+- **A one-line verdict names the culprit** rather than leaving you to read the table: input backlog,
+  terminal flush, or frame build. Lag colours amber past 33 ms and red past 100 ms.
+- **`--perf`** collects from launch and prints the full report on exit — p50/p95/p99, window-max,
+  all-time peak, totals, and a one-shot measurement of the terminal's own round-trip (a DSR query
+  and its reply), which is the floor on how fast that emulator can acknowledge anything.
+- **The event loop now coalesces consecutive bare motion reports.** Only the newest cursor position
+  can matter — every earlier one is superseded before its highlight could reach the screen — so
+  drawing one full frame per report is what makes the highlight trail the cursor. Clicks, wheel and
+  drag end a run and are never dropped. Measured on a 40-repo fixture at 200x50 through a real pty,
+  this lifts motion throughput from ~2,080/s to ~57,400/s (27x) while holding hover-lag p95 at
+  0.9 ms; `POLYGIT_NO_COALESCE=1` restores the old behaviour to A/B it.
+
 ## v3.17.1 — 2026-08-20
 Release notes re-flow to the modal width instead of re-breaking where CHANGELOG.md wraps
 The Changelog / What's New / pin-version modals wrapped each SOURCE line of a release on its own, so
