@@ -73,7 +73,10 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         .padding(panel_pad(app))
         .border_style(pane_border_style(app.active_pane() == Pane::List, modal_open));
 
-    let inner = block.inner(area);
+    // The scrollbar's column comes out of the content BEFORE the column budget is computed, so a
+    // row that fills the width ends where the bar begins instead of underneath it.
+    let region = scroll_on_border(area, block.inner(area));
+    let inner = region.content();
     frame.render_widget(block, area);
 
     // The filter bar (search box + active filter chips + add/reset) is a real content row — the
@@ -551,15 +554,11 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
         frame.render_widget(Paragraph::new(rendered), footer_area);
     }
     app.list_footer_area = footer_area;
-    // Scrollbar on the pane's right border, aligned to the rows region (below the header).
-    let scrollbar_area = Rect {
-        x: area.x,
-        y: rows_area.y,
-        width: area.width,
-        height: rows_area.height,
-    };
-    // Registers a draggable List hit (so a grab scrolls the list instead of the divider beside it).
-    render_scrollbar(frame, app, scrollbar_area, scroll, total_items, viewport, ScrollKind::List);
+    // The bar runs down the pane's border, clamped to the rows region (below the filter bar and the
+    // column header) rather than the whole pane. Registers a draggable List hit, so a grab scrolls
+    // the list instead of the divider beside it.
+    let rows_region = scroll_on_border(area, rows_area);
+    render_scrollbar(frame, app, &rows_region, scroll, total_items, viewport, ScrollKind::List);
 
     // Capture clickable PR-cell regions: for each visible repo with an open PR, the `#N` cell's
     // screen row + the PR column's x-range (taken from the header) opens the PR in the browser.

@@ -939,60 +939,12 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     let modal_area = centered_rect(modal_width, modal_height, area);
     app.help_area = modal_area;
 
-    // Clickable hint footer on the bottom border (tab + esc inject their keys; ↑/↓ and "click a
-    // link" are informational).
-    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let hint = Style::default().fg(Color::DarkGray);
-    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
-    footer.extend(footer_chip("tab", " switch", HintKey::Tab));
-    footer.push(footer_sep());
-    footer.push(("↑/↓".to_string(), key, None));
-    footer.push((" scroll".to_string(), hint, None));
-    footer.push(footer_sep());
-    // On the Design System tab: `v` cycles flat/tabbed; in tabbed, `[`/`]` move between sections.
-    if app.help_tab == HelpTab::DesignSystem {
-        footer.extend(footer_chip("v", app.design_layout.next_label(), HintKey::Char('v')));
-        if app.design_layout == crate::app::DesignLayout::Tabbed {
-            footer.push(footer_sep());
-            footer.push(("[/]".to_string(), key, None));
-            footer.push((" section".to_string(), hint, None));
-        }
-        footer.push(footer_sep());
-    } else {
-        footer.push(("click a link".to_string(), hint, None));
-        footer.push(footer_sep());
-    }
-    footer.extend(footer_chip("?/esc", " close", HintKey::Esc));
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .padding(panel_pad(app))
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(format!(" polygit — help · {} ", view.label()))
-        .title_bottom(modal_border_footer(footer, modal_area, &mut app.hint_click));
-    // Browser-style: while hovering a link, show its URL at the bottom-right of the modal.
-    if let Some(url) = app.status_hint.as_deref().filter(|_| app.help_tab == HelpTab::About) {
-        block = block.title_bottom(
-            Line::from(Span::styled(format!(" {url} "), Style::default().fg(Color::DarkGray)))
-                .right_aligned(),
-        );
-    }
-    // Search prompt at the bottom-right (browser-style; on Hotkeys the `@` prefix matches keys).
-    if let Some(query) = app.help_filter.as_deref() {
-        let hint = if app.help_tab == HelpTab::Hotkeys {
-            "  (prepend @ to match keys, esc clears) "
-        } else {
-            "  (esc clears) "
-        };
-        block = block.title_bottom(
-            Line::from(Span::styled(
-                format!(" search: {query}\u{2588}{hint}"),
-                Style::default().fg(Color::Cyan),
-            ))
-            .right_aligned(),
-        );
-    }
-    let inner = block.inner(modal_area);
+    // The bar rides the modal's border; the content gives up a column only if the modal has no
+    // padding of its own — so nothing here wraps into the column the bar draws in. Probed from the
+    // border + padding, because the block itself is built below: its footer needs to know whether
+    // the active tab overflows, which is only settled once the layout is.
+    let region = scroll_on_border(modal_area, modal_content_rect(app, modal_area));
+    let inner = region.content();
 
     // Reserve the top inner row for a fixed (non-scrolling) tab bar, then a blank row, then the
     // scrolling content beneath.
@@ -1202,6 +1154,64 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
         lines.push(line.clone());
     }
 
+    // Clickable hint footer on the bottom border (tab + esc inject their keys; ↑/↓ and "click a
+    // link" are informational).
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint = Style::default().fg(Color::DarkGray);
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("tab", " switch", HintKey::Tab));
+    // The scroll hint only exists while the active tab actually overflows: a hint for keys that do
+    // nothing teaches the reader to stop reading the footer.
+    if region.bar(items.len(), app.help_scroll).viewport(content_height).overflows() {
+        footer.push(footer_sep());
+        footer.push(("↑/↓".to_string(), key, None));
+        footer.push((" scroll".to_string(), hint, None));
+    }
+    footer.push(footer_sep());
+    // On the Design System tab: `v` cycles flat/tabbed; in tabbed, `[`/`]` move between sections.
+    if app.help_tab == HelpTab::DesignSystem {
+        footer.extend(footer_chip("v", app.design_layout.next_label(), HintKey::Char('v')));
+        if app.design_layout == crate::app::DesignLayout::Tabbed {
+            footer.push(footer_sep());
+            footer.push(("[/]".to_string(), key, None));
+            footer.push((" section".to_string(), hint, None));
+        }
+        footer.push(footer_sep());
+    } else {
+        footer.push(("click a link".to_string(), hint, None));
+        footer.push(footer_sep());
+    }
+    footer.extend(footer_chip("?/esc", " close", HintKey::Esc));
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(format!(" polygit — help · {} ", view.label()))
+        .title_bottom(modal_border_footer(footer, modal_area, &mut app.hint_click));
+    debug_assert_eq!(block.inner(modal_area), modal_content_rect(app, modal_area), "the probed content rect drifted");
+    // Browser-style: while hovering a link, show its URL at the bottom-right of the modal.
+    if let Some(url) = app.status_hint.as_deref().filter(|_| app.help_tab == HelpTab::About) {
+        block = block.title_bottom(
+            Line::from(Span::styled(format!(" {url} "), Style::default().fg(Color::DarkGray)))
+                .right_aligned(),
+        );
+    }
+    // Search prompt at the bottom-right (browser-style; on Hotkeys the `@` prefix matches keys).
+    if let Some(query) = app.help_filter.as_deref() {
+        let hint = if app.help_tab == HelpTab::Hotkeys {
+            "  (prepend @ to match keys, esc clears) "
+        } else {
+            "  (esc clears) "
+        };
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                format!(" search: {query}\u{2588}{hint}"),
+                Style::default().fg(Color::Cyan),
+            ))
+            .right_aligned(),
+        );
+    }
     cast_shadow(frame, modal_area);
     frame.render_widget(Clear, modal_area);
     frame.render_widget(block, modal_area);
@@ -1210,8 +1220,8 @@ pub(crate) fn render_help(frame: &mut Frame, app: &mut AppState, area: Rect) {
     if design_tabbed {
         frame.render_widget(Paragraph::new(design_tab_lines), design_tab_area);
     }
-    let track = scrollbar_track(modal_area, content_area);
-    render_scrollbar(frame, app, track, app.help_scroll, items.len(), content_height, ScrollKind::Help);
+    let content_region = scroll_on_border(modal_area, content_area);
+    render_scrollbar(frame, app, &content_region, app.help_scroll, items.len(), content_height, ScrollKind::Help);
 }
 
 /// Pad `label` with spaces so it occupies exactly `width` display cells, centered.
@@ -1252,7 +1262,9 @@ pub(crate) fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area:
         .border_style(Style::default().fg(Color::Cyan))
         .title(" keyboard — press any key to inspect it ")
         .title_bottom(modal_border_footer(footer, modal_area, &mut app.hint_click));
-    let inner = block.inner(modal_area);
+    // Same carve as the help modal: the panel below the board scrolls, so its column comes out here
+    // and every rect derived from `inner` inherits the narrower width.
+    let inner = scroll_on_border(modal_area, block.inner(modal_area)).content();
 
     cast_shadow(frame, modal_area);
     frame.render_widget(Clear, modal_area);
@@ -1514,7 +1526,7 @@ pub(crate) fn render_keyboard_modal(frame: &mut Frame, app: &mut AppState, area:
     let windowed: Vec<Line> = panel_lines[start..end].to_vec();
     frame.render_widget(Paragraph::new(windowed), panel_area);
 
-    let track = scrollbar_track(modal_area, panel_area);
-    render_scrollbar(frame, app, track, app.keyboard_scroll, panel_lines.len(), panel_height, ScrollKind::Keyboard);
+    let panel_region = scroll_on_border(modal_area, panel_area);
+    render_scrollbar(frame, app, &panel_region, app.keyboard_scroll, panel_lines.len(), panel_height, ScrollKind::Keyboard);
 }
 

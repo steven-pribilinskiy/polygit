@@ -19,35 +19,50 @@ pub(crate) fn diff_modal_footer(
     focus: DiffFocus,
     chips: bool,
     view: crate::app::DiffView,
+    overflows: bool,
 ) -> Vec<(String, Style, Option<HintKey>)> {
     let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let hint = Style::default().fg(Color::DarkGray);
     let mut seg: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     let sep = (" · ".to_string(), hint, None);
     // Navigation hints aren't single keys, so they're shown but not clickable.
+    // The paging and scrolling hints only exist while the focused pane actually overflows — `j/k`
+    // still picks a file in the list, so that half of the Files hint stays either way.
     match focus {
-        DiffFocus::Files => seg.extend([
-            ("j/k".to_string(), key, None),
-            (" pick · ".to_string(), hint, None),
-            ("⇧PgUp/PgDn".to_string(), key, None),
-            (" page · ".to_string(), hint, None),
-            ("⌥/⇧wheel".to_string(), key, None),
-            (" scroll".to_string(), hint, None),
-            sep.clone(),
-            ("tab".to_string(), key, Some(HintKey::Tab)),
-            (" → diff".to_string(), hint, Some(HintKey::Tab)),
-        ]),
-        DiffFocus::Diff => seg.extend([
-            ("j/k".to_string(), key, None),
-            (" scroll · ".to_string(), hint, None),
-            ("PgUp/PgDn".to_string(), key, None),
-            (" page · ".to_string(), hint, None),
-            ("g/G".to_string(), key, None),
-            (" top/end".to_string(), hint, None),
-            sep.clone(),
-            ("tab".to_string(), key, Some(HintKey::Tab)),
-            (" → files".to_string(), hint, Some(HintKey::Tab)),
-        ]),
+        DiffFocus::Files => {
+            seg.extend([("j/k".to_string(), key, None), (" pick".to_string(), hint, None)]);
+            if overflows {
+                seg.extend([
+                    (" · ".to_string(), hint, None),
+                    ("⇧PgUp/PgDn".to_string(), key, None),
+                    (" page · ".to_string(), hint, None),
+                    ("⌥/⇧wheel".to_string(), key, None),
+                    (" scroll".to_string(), hint, None),
+                ]);
+            }
+            seg.extend([
+                sep.clone(),
+                ("tab".to_string(), key, Some(HintKey::Tab)),
+                (" → diff".to_string(), hint, Some(HintKey::Tab)),
+            ]);
+        }
+        DiffFocus::Diff => {
+            if overflows {
+                seg.extend([
+                    ("j/k".to_string(), key, None),
+                    (" scroll · ".to_string(), hint, None),
+                    ("PgUp/PgDn".to_string(), key, None),
+                    (" page · ".to_string(), hint, None),
+                    ("g/G".to_string(), key, None),
+                    (" top/end".to_string(), hint, None),
+                    sep.clone(),
+                ]);
+            }
+            seg.extend([
+                ("tab".to_string(), key, Some(HintKey::Tab)),
+                (" → files".to_string(), hint, Some(HintKey::Tab)),
+            ]);
+        }
     }
     if chips {
         seg.push(sep.clone());
@@ -275,7 +290,7 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     // Owned snapshot so the immutable borrow ends before we write scroll/areas back.
     let (
         title,
-        footer,
+        source,
         files,
         selected,
         diff_lines,
@@ -306,10 +321,9 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
                 format!(" {} · {} ", &sha[..sha.len().min(9)], truncate_str(label, 50))
             }
         };
-        let footer = diff_modal_footer(&modal.source, modal.focus, modal.chips_active(), modal.view);
         (
             title,
-            footer,
+            modal.source.clone(),
             modal.files.clone(),
             modal.selected,
             modal.lines.clone(),
@@ -324,17 +338,13 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     };
 
     let (close_line, close_click) = modal_close_button(modal_area);
-    // Styled, clickable footer on the bottom border (left-aligned so its click columns line up).
-    let footer_row = modal_area.y + modal_area.height.saturating_sub(1);
-    let footer_line = build_hint_footer(footer, modal_area.x + 1, footer_row, &mut app.hint_click);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(Style::default().fg(Color::Cyan))
         .title(title)
-        .title_top(close_line)
-        .title_bottom(footer_line);
+        .title_top(close_line);
     let inner = block.inner(modal_area);
     cast_shadow(frame, modal_area);
     frame.render_widget(Clear, modal_area);
@@ -413,8 +423,10 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     } else {
         file_inner
     };
-    // Reserve the inner's right column for the scrollbar so the rounded border corners stay intact.
-    let file_content = Rect { width: list_inner.width.saturating_sub(1), ..list_inner };
+    // The bar sits inside the panel (keeping the rounded border corners intact), so the track and a
+    // gap column both come out of the content here.
+    let list_region = scroll_inside(list_inner);
+    let file_content = list_region.content();
 
     let view_rows = file_content.height as usize;
     // File-list scroll is independent of the selection — just clamp it to the valid range.
@@ -451,8 +463,7 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
             })
             .collect();
         frame.render_widget(Paragraph::new(rows), file_content);
-        // Scrollbar inside the panel (on the inner's right column), not on the border.
-        render_scrollbar(frame, app, list_inner, file_scroll, visible.len(), view_rows, ScrollKind::DiffFiles);
+        render_scrollbar(frame, app, &list_region, file_scroll, visible.len(), view_rows, ScrollKind::DiffFiles);
     }
 
     // ---- Diff panel ----
@@ -475,8 +486,10 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
         .title(diff_title);
     let diff_inner = diff_panel.inner(diff_box);
     frame.render_widget(diff_panel, diff_box);
-    // Reserve the inner's right column for the scrollbar (keeps the rounded border corners).
-    let diff_content = Rect { width: diff_inner.width.saturating_sub(1), ..diff_inner };
+    // Same here: the bar is inside the panel, so it and its gap come off the diff's own width — which
+    // is also the width the diff body is rendered to, so a full-width line ends before the bar.
+    let diff_region = scroll_inside(diff_inner);
+    let diff_content = diff_region.content();
 
     let diff_view_h = diff_content.height as usize;
     // Build the full rendered lines for the active view, then window by scroll. Unified/split parse
@@ -488,7 +501,22 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     let diff_view: Vec<Line> =
         rendered[diff_scroll..(diff_scroll + diff_view_h).min(diff_total)].to_vec();
     frame.render_widget(Paragraph::new(diff_view), diff_content);
-    render_scrollbar(frame, app, diff_inner, diff_scroll, diff_total, diff_view_h, ScrollKind::DiffBody);
+    render_scrollbar(frame, app, &diff_region, diff_scroll, diff_total, diff_view_h, ScrollKind::DiffBody);
+
+    // Styled, clickable footer on the bottom border (left-aligned so its click columns line up).
+    // Drawn last, over the border row the block already painted, because whether either pane scrolls
+    // is only settled by the layout above — and a hint for keys that do nothing is noise.
+    let overflows = match focus {
+        DiffFocus::Files => list_region.bar(visible.len(), file_scroll).overflows(),
+        DiffFocus::Diff => diff_region.bar(diff_total, diff_scroll).overflows(),
+    };
+    let footer = diff_modal_footer(&source, focus, chips_active, view, overflows);
+    let footer_row = modal_area.y + modal_area.height.saturating_sub(1);
+    let footer_line = build_hint_footer(footer, modal_area.x + 1, footer_row, &mut app.hint_click);
+    frame.render_widget(
+        Paragraph::new(footer_line),
+        Rect { x: modal_area.x + 1, y: footer_row, width: modal_area.width.saturating_sub(2), height: 1 },
+    );
 
     if let Some(modal) = app.diff_modal.as_mut() {
         modal.scroll = diff_scroll;
@@ -895,7 +923,10 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
     if let Some(footer_line) = footer_line {
         block = block.title_bottom(footer_line);
     }
-    let inner = block.inner(area);
+    // The page's rows scroll, so the bar's column leaves the content before any column budget is
+    // computed from `inner.width` — the subject column is the one that grows into what's left.
+    let page_region = scroll_on_border(area, block.inner(area));
+    let inner = page_region.content();
     frame.render_widget(block, area);
 
     let label = Style::default().fg(Color::DarkGray);
@@ -1608,8 +1639,8 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         lines.push(line);
     }
     frame.render_widget(Paragraph::new(lines), inner);
-    let track = scrollbar_track(area, inner);
-    render_scrollbar(frame, app, track, app.repo_page_scroll, items.len(), inner_height, ScrollKind::RepoPage);
+    let rows_region = scroll_on_border(area, inner);
+    render_scrollbar(frame, app, &rows_region, app.repo_page_scroll, items.len(), inner_height, ScrollKind::RepoPage);
 
     // Info panel: a bordered box showing details of the selected row.
     if let (Some(area), Some(info_lines)) = (info_area, info_lines) {

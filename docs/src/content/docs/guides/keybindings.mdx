@@ -117,3 +117,10 @@ keymap above (`open_finder`, `nav_down`, `retry`, `page_pull_branch`, …).
   page all show a scrollbar when their content overflows; click or drag it to scroll (the
   wheel scrolls whichever pane is under the cursor). The list's scrollbar sits right beside
   the pane divider, and a grab on it scrolls the list rather than starting a splitter drag.
+  A bar gets a **column of its own** — on the surrounding frame's border where there is one,
+  otherwise carved out of the content — with a blank column between it and the text, so a line
+  that fills the width is never painted over by it.
+- **Scroll hints appear only when there is something to scroll.** A footer says `j/k scroll`
+  while the surface overflows and drops it when the content fits, because there the keys do
+  nothing. Collapsible surfaces are the exception: the Changelog accordion and the Build-info
+  tree keep the hint, since `j/k` moves the selection whatever fits.

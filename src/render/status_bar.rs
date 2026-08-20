@@ -72,20 +72,27 @@ pub(crate) fn footer_chip(key_text: &str, label: &str, key: HintKey) -> [(String
     ]
 }
 
-/// Like [`footer_chip`], but renders **disabled** (dim + inert: no key, so it's neither clickable
-/// nor hover-highlighted) when `enabled` is false — e.g. a scroll hint when nothing overflows.
-pub(crate) fn footer_chip_state(
+/// A scroll hint that only exists while the surface can actually scroll — chip plus its leading
+/// separator, so nothing is left dangling when it's absent.
+///
+/// Hints for keys that do nothing are noise, and a footer that cries scroll on a surface which fits
+/// teaches the reader to stop reading footers. `overflows` comes from the same
+/// `tuilith::scroll::Bar` the bar itself is drawn from, so the hint and the bar can never disagree.
+///
+/// The exception is a **collapsible** surface — a tree, an accordion — where the same keys move the
+/// selection whether or not anything overflows. There the hint is always true, so it stays put and
+/// this helper is the wrong tool.
+pub(crate) fn scroll_hint(
     key_text: &str,
-    label: &str,
+    overflows: bool,
     key: HintKey,
-    enabled: bool,
-) -> [(String, Style, Option<HintKey>); 2] {
-    if enabled {
-        footer_chip(key_text, label, key)
-    } else {
-        let dim = Style::default().fg(Color::DarkGray);
-        [(key_text.to_string(), dim, None), (label.to_string(), dim, None)]
+) -> Vec<(String, Style, Option<HintKey>)> {
+    if !overflows {
+        return Vec::new();
     }
+    let mut out = vec![footer_sep()];
+    out.extend(footer_chip(key_text, " scroll", key));
+    out
 }
 
 /// A non-clickable ` · ` separator segment for footer chips.

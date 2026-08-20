@@ -5,10 +5,10 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
 use ratatui::Frame;
+use tuilith::scroll;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{
@@ -1876,20 +1876,32 @@ fn cast_shadow(frame: &mut Frame, area: Rect) {
     }
 }
 
-/// The track rect for a panel's scrollbar: the panel's right border column, vertically clamped
-/// to the inner content area (inside the border AND any panel padding), so the bar stays within
-/// the scrollable region and off the rounded corners — like a web scrollbar inside its box.
-fn scrollbar_track(outer: Rect, inner: Rect) -> Rect {
-    Rect { x: outer.x, y: inner.y, width: outer.width, height: inner.height }
+/// A pane's scrollable region: the bar rides the pane's right border, and the content keeps every
+/// column the border and padding leave it (minus a gap column when the pane has no padding of its own).
+///
+/// Vertically clamped to the inner content area, so the bar stays within the scrollable region and off
+/// the rounded corners — like a web scrollbar inside its box.
+fn scroll_on_border(outer: Rect, inner: Rect) -> scroll::Area {
+    scroll::Area::on_border(outer, inner)
 }
 
-/// Draw a vertical scrollbar on the right border of `area` when content overflows. `position` is
-/// the scroll offset (0..=total-viewport). `highlighted` brightens the thumb (handle) while it's
+/// A scrollable region with no border to ride: the last column of `area` becomes the track, the one
+/// before it a gap. For a surface drawn inside someone else's frame (a modal's body, a split panel).
+fn scroll_inside(area: Rect) -> scroll::Area {
+    scroll::Area::inside(area)
+}
+
+/// Draw a scrollbar in `region`'s track when the content overflows, and register its draggable
+/// `ScrollHit`. `position` is the scroll offset (0..=total-viewport); the thumb brightens while it's
 /// being dragged, like the divider.
+///
+/// **The only way to draw a scrollbar.** It takes a [`scroll::Area`] rather than a rect, so the track
+/// is a column carved out by the same call that handed the caller its content rect — a bar can no
+/// longer be pointed at the text's own last column, which is how it came to paint over it.
 fn render_scrollbar(
     frame: &mut Frame,
     app: &mut AppState,
-    area: Rect,
+    region: &scroll::Area,
     position: usize,
     total: usize,
     viewport: usize,
@@ -1899,33 +1911,13 @@ fn render_scrollbar(
     // they can't drift apart (a scrollbar that's drawn but not registered is decorative: not
     // draggable, wheel can't target it). Register first so the geometry is always captured;
     // `scrollbar_at` guards `total > viewport`, so a non-overflowing hit simply never matches.
-    app.scroll_hits.push(ScrollHit { kind, track: area, total, viewport });
-    if total <= viewport {
-        return;
-    }
-    // ratatui maps `position` over `content_length - 1` (its model = top-line index, max when the
-    // last line is at the top). Our `position` maxes at `total - viewport` (last line at the
-    // bottom), so set content_length accordingly for the thumb to reach the very bottom.
-    let content = total - viewport + 1;
-    let mut state = ScrollbarState::new(content)
-        .position(position)
-        .viewport_content_length(viewport);
-    let thumb_style = if app.scrollbar_dragging == Some(kind) {
+    app.scroll_hits.push(ScrollHit { kind, track: region.track(), total, viewport });
+    let thumb = if app.scrollbar_dragging == Some(kind) {
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
-    // A 1-row track is a horizontal scrollbar (pinned to the bottom of its pane); otherwise vertical.
-    let orientation = if area.height == 1 && area.width > 1 {
-        ScrollbarOrientation::HorizontalBottom
-    } else {
-        ScrollbarOrientation::VerticalRight
-    };
-    let scrollbar = Scrollbar::new(orientation)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .thumb_style(thumb_style);
-    frame.render_stateful_widget(scrollbar, area, &mut state);
+    region.bar(total, position).viewport(viewport).thumb(thumb).draw(frame);
 }
 
 /// Repo-name spans for the list, underlining the chars that fuzzy-match the active filter (the same

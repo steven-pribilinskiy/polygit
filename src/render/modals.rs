@@ -351,16 +351,22 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let can_scroll = row_total > viewport_est;
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     if has_tree {
-        footer.extend(footer_chip_state("j/k", " move", HintKey::Char('j'), can_scroll));
+        // The tree is collapsible: `j/k` moves the selection whether or not anything overflows, so
+        // the hint stays live — the exception to hiding a scroll hint on a surface that fits.
+        footer.extend(footer_chip("j/k", " move", HintKey::Char('j')));
         footer.push(footer_sep());
         footer.push(("space".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Char(' '))));
         footer.push(("/".to_string(), Style::default().fg(Color::DarkGray), None));
         footer.push(("enter".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Enter)));
         footer.push((" fold".to_string(), Style::default().fg(Color::DarkGray), Some(HintKey::Enter)));
+        footer.push(footer_sep());
     } else {
-        footer.extend(footer_chip_state("j/k", " scroll", HintKey::Char('j'), can_scroll));
+        // The raw fallback only scrolls, so its hint goes when there is nothing to scroll.
+        if can_scroll {
+            footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+            footer.push(footer_sep());
+        }
     }
-    footer.push(footer_sep());
     // Pin a specific released version (opens the picker) — only where self-install is supported.
     if crate::update::current_target().is_some() {
         footer.extend(footer_chip("p", " pin version", HintKey::Char('p')));
@@ -417,13 +423,11 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     if inner.height <= header_h + 1 {
         return;
     }
-    let preview = Rect {
-        y: inner.y + header_h,
-        height: inner.height - header_h,
-        // Leave the last column for a scrollbar.
-        width: inner.width.saturating_sub(1),
-        ..inner
-    };
+    let body = Rect { y: inner.y + header_h, height: inner.height - header_h, ..inner };
+    // The bar rides the modal's border, so the tree keeps the body's full width (a padded modal
+    // already separates the two; an unpadded one gives up its last column for the gap).
+    let region = scroll_on_border(modal, body);
+    let preview = region.content();
     let viewport = preview.height as usize;
     // Capture the viewport so keyboard nav can keep the selection in view (see
     // `ensure_build_info_visible`); scroll is decoupled from selection, web-app style.
@@ -498,8 +502,7 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
             let bg = app.palette().subtle_selection_bg();
             frame.buffer_mut().set_style(rect, Style::default().bg(bg));
         }
-        let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
-        render_scrollbar(frame, app, track, scroll, total, viewport, crate::app::ScrollKind::BuildInfo);
+        render_scrollbar(frame, app, &region, scroll, total, viewport, crate::app::ScrollKind::BuildInfo);
     } else {
         // Fallback: the raw lines (not valid JSON), syntax-highlighted, scrolled.
         let total = app.build_info_settings_preview.len();
@@ -513,8 +516,7 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
             .map(|line| highlight_json_line(line))
             .collect();
         frame.render_widget(Paragraph::new(visible), preview);
-        let track = Rect { x: preview.x + preview.width, width: 1, ..preview };
-        render_scrollbar(frame, app, track, app.build_info_scroll, total, viewport, crate::app::ScrollKind::BuildInfo);
+        render_scrollbar(frame, app, &region, app.build_info_scroll, total, viewport, crate::app::ScrollKind::BuildInfo);
     }
     let _ = pad;
 }
@@ -523,14 +525,24 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
 /// so a bullet's continuation lines align with its text.
 const NOTE_HANGING_INDENT: usize = 6;
 
-/// The width release-note text wraps to inside a changelog-style modal `width` columns wide: the
-/// borders and optional panel padding come off the content area, then the deepest hanging indent
-/// and one column for the scrollbar — the bar is drawn OVER the content area's last column, so a
-/// row that fills the width loses its final character to it.
-pub(super) fn note_wrap_width(modal_width: u16, panel_padding: bool) -> usize {
-    let pad = if panel_padding { 2 } else { 0 };
-    let inner = modal_width.saturating_sub(2 + pad) as usize;
-    inner.saturating_sub(NOTE_HANGING_INDENT + 1).max(8)
+/// A modal's content rect, probed from the border + padding alone.
+///
+/// For a modal whose block can only be built late — because its title depends on what the body turns
+/// out to be — while the body has to be wrapped to the content width first. The real block repeats the
+/// same borders and padding, and a `debug_assert` at each call holds the two together.
+pub(super) fn modal_content_rect(app: &AppState, modal: Rect) -> Rect {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(panel_pad(app))
+        .inner(modal)
+}
+
+/// The width release-note text wraps to, given the columns the surface actually hands the notes:
+/// the deepest hanging indent comes off, so a bullet's continuation rows fit the same box its first
+/// row does. The scrollbar's own column is already gone — [`scroll_inside`] took it.
+pub(super) fn note_wrap_width(content_width: u16) -> usize {
+    (content_width as usize).saturating_sub(NOTE_HANGING_INDENT).max(8)
 }
 
 /// One coalesced release-note block: what a run of source lines means once re-joined.
@@ -899,7 +911,10 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
         .padding(panel_pad(app))
         .inner(modal);
 
-    let body_w = (inner.width as usize).saturating_sub(1).max(8); // -1 for the scrollbar gutter
+    // The bar and its gap come off the content width up-front, because the body's markdown is wrapped
+    // to `body_w` long before the body rect is laid out below.
+    let content_w = scroll_on_border(modal, inner).content().width;
+    let body_w = (content_w as usize).max(8);
     let icons = app.icons();
     let dim = Style::default().fg(Color::DarkGray);
     let label = Style::default().fg(Color::Gray);
@@ -1204,12 +1219,16 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
 
     // Layout: pinned header rows at the top of `inner`, the per-tab body scrolls below.
     let header_h = header.len() as u16;
-    let body_area = Rect {
-        x: inner.x,
-        y: inner.y + header_h,
-        width: inner.width.saturating_sub(1), // -1 for the scrollbar gutter
-        height: inner.height.saturating_sub(header_h),
-    };
+    let region = scroll_on_border(
+        modal,
+        Rect {
+            x: inner.x,
+            y: inner.y + header_h,
+            width: inner.width,
+            height: inner.height.saturating_sub(header_h),
+        },
+    );
+    let body_area = region.content();
     let viewport = body_area.height as usize;
     let max_scroll = body.len().saturating_sub(viewport);
     let scroll = app.pr_modal.as_ref().map_or(0, |pr| pr.scroll).min(max_scroll);
@@ -1224,8 +1243,7 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
     let (close_line, close_click) = modal_close_button(modal);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     footer.extend(footer_chip("tab", " tabs", HintKey::Tab));
-    footer.push(footer_sep());
-    footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    footer.extend(scroll_hint("j/k", region.bar(body.len(), scroll).overflows(), HintKey::Char('j')));
     if tab.is_text() {
         footer.push(footer_sep());
         footer.extend(footer_chip("/", " search", HintKey::Char('/')));
@@ -1304,10 +1322,7 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
             }
         }
     }
-    if body.len() > viewport {
-        let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..body_area };
-        super::render_scrollbar(frame, app, track, scroll, body.len(), viewport, crate::app::ScrollKind::PrModal);
-    }
+    super::render_scrollbar(frame, app, &region, scroll, body.len(), viewport, crate::app::ScrollKind::PrModal);
 }
 
 pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect) {
@@ -1342,7 +1357,12 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     } else {
         (area.width.saturating_sub(8).clamp(40, 96), area.height.saturating_sub(4).clamp(10, 40))
     };
-    let wrap_avail = note_wrap_width(width, app.panel_padding);
+    // The row model has to be built before the block (its title depends on the scroll position), and
+    // wrapping it needs the width the notes actually get — so probe the content rect here. It depends
+    // only on the border and the padding, both of which the real block below repeats.
+    let modal = centered_rect(width, height, area);
+    let region = scroll_on_border(modal, modal_content_rect(app, modal));
+    let wrap_avail = note_wrap_width(region.content().width);
 
     let mut items: Vec<Item> = Vec::new();
     for &idx in &visible {
@@ -1358,17 +1378,23 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         }
     }
 
-    let modal = centered_rect(width, height, area);
     let (title_buttons, close_click, max_click) = modal_window_buttons(modal, app.changelog_maximized);
     let title = if whats_new {
         format!(" What's New in v{} ", env!("CARGO_PKG_VERSION"))
     } else {
         " Changelog ".to_string()
     };
-    // Dim the scroll hint when the content fits (inner height = modal height minus border+padding).
-    let can_scroll = items.len() > (height as usize).saturating_sub(2 + pad as usize);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
-    footer.extend(footer_chip_state("j/k", " scroll", HintKey::Char('j'), can_scroll));
+    if whats_new {
+        // Nothing to fold and no selection here: `j/k` only scrolls, so the hint goes when it can't.
+        if region.bar(items.len(), 0).overflows() {
+            footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+        }
+    } else {
+        // The accordion's `j/k` moves the release selection whether or not anything overflows, so
+        // the hint is always true here — the collapsible exception to hiding it.
+        footer.extend(footer_chip("j/k", " scroll", HintKey::Char('j')));
+    }
     if !whats_new {
         footer.push(footer_sep());
         footer.push(("space".to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), Some(HintKey::Char(' '))));
@@ -1391,7 +1417,8 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         .title(title)
         .title_top(title_buttons)
         .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
-    let inner = block.inner(modal);
+    debug_assert_eq!(block.inner(modal), modal_content_rect(app, modal), "the probed content rect drifted");
+    let inner = region.content();
     cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
@@ -1451,10 +1478,7 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
         }
     }
     frame.render_widget(Paragraph::new(lines), inner);
-    if total > viewport {
-        let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
-        render_scrollbar(frame, app, track, scroll, total, viewport, crate::app::ScrollKind::Changelog);
-    }
+    render_scrollbar(frame, app, &region, scroll, total, viewport, crate::app::ScrollKind::Changelog);
     let _ = pad;
 }
 
@@ -1481,7 +1505,9 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     } else {
         (area.width.saturating_sub(8).clamp(44, 96), area.height.saturating_sub(4).clamp(10, 40))
     };
-    let wrap_avail = note_wrap_width(width, app.panel_padding);
+    let modal = centered_rect(width, height, area);
+    let region = scroll_on_border(modal, modal_content_rect(app, modal));
+    let wrap_avail = note_wrap_width(region.content().width);
 
     // Build the row model: every visible release header, with the selected one's notes expanded.
     let mut items: Vec<Item> = Vec::new();
@@ -1498,7 +1524,6 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
             }
         }
     }
-    let modal = centered_rect(width, height, area);
     let (title_buttons, close_click, max_click) = modal_window_buttons(modal, app.changelog_maximized);
     let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
     footer.extend(footer_chip("↑↓", " select", HintKey::Char('j')));
@@ -1517,7 +1542,8 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
         .title(" Pin a version ")
         .title_top(title_buttons)
         .title_bottom(modal_border_footer(footer, modal, &mut app.hint_click));
-    let inner = block.inner(modal);
+    debug_assert_eq!(block.inner(modal), modal_content_rect(app, modal), "the probed content rect drifted");
+    let inner = region.content();
     cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
@@ -1645,10 +1671,9 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
         }
     }
     frame.render_widget(Paragraph::new(lines), body);
-    if total > viewport {
-        let track = Rect { x: body.x + body.width.saturating_sub(1), width: 1, ..body };
-        render_scrollbar(frame, app, track, scroll, total, viewport, crate::app::ScrollKind::Changelog);
-    }
+    // The track spans the body, which is the inner minus any transient status line at the top.
+    let body_region = scroll_on_border(modal, body);
+    render_scrollbar(frame, app, &body_region, scroll, total, viewport, crate::app::ScrollKind::Changelog);
     let _ = pad;
 }
 
@@ -2401,12 +2426,17 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     }
     frame.render_widget(Paragraph::new(Line::from(search_spans)), Rect { height: 1, ..full_inner });
     app.settings_search_click = Some((full_inner.y, full_inner.x, full_inner.x + full_inner.width));
-    // The body sits below the search box (+ a blank spacer row).
-    let inner = Rect {
-        y: full_inner.y + search_rows,
-        height: full_inner.height.saturating_sub(search_rows),
-        ..full_inner
-    };
+    // The body sits below the search box (+ a blank spacer row). Its scrollbar's column comes out
+    // here, so every branch below lays its rows out in the width they are actually given.
+    let region = scroll_on_border(
+        modal,
+        Rect {
+            y: full_inner.y + search_rows,
+            height: full_inner.height.saturating_sub(search_rows),
+            ..full_inner
+        },
+    );
+    let inner = region.content();
     // Snap the view to the selected setting only when a keyboard nav / value change (or an open /
     // layout switch) asked for it — consumed once per render. The wheel never sets this, so wheel
     // scrolling moves the container freely (web-app style) without snapping back to the selection.
@@ -2546,23 +2576,20 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             }
         }
         frame.render_widget(Paragraph::new(lines), inner);
-        if search_items.len() > viewport {
-            let track = Rect {
-                x: inner.x + inner.width.saturating_sub(1),
-                y: inner.y + 1,
-                width: 1,
-                height: inner.height.saturating_sub(1),
-            };
-            render_scrollbar(
-                frame,
-                app,
-                track,
-                scroll,
-                search_items.len(),
-                viewport,
-                crate::app::ScrollKind::Settings,
-            );
-        }
+        // The results start one row down (the count line above them), so the track does too.
+        let results_region = scroll_on_border(
+            modal,
+            Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner },
+        );
+        render_scrollbar(
+            frame,
+            app,
+            &results_region,
+            scroll,
+            search_items.len(),
+            viewport,
+            crate::app::ScrollKind::Settings,
+        );
     } else if tabbed {
         // Left: clickable vertical tab list. Right: the active tab's rows.
         let mut tab_lines: Vec<Line> = Vec::new();
@@ -2760,12 +2787,9 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             }
         }
         frame.render_widget(Paragraph::new(lines), inner);
-        // A scrollbar when the content overflows the modal — render_scrollbar registers it as a
-        // ScrollHit so it's mouse-draggable (the generic handler maps a grab to `ScrollKind::Settings`).
-        if items.len() > viewport {
-            let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
-            render_scrollbar(frame, app, track, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
-        }
+        // render_scrollbar registers the bar as a ScrollHit so it's mouse-draggable (the generic
+        // handler maps a grab to `ScrollKind::Settings`), and draws it only when the content overflows.
+        render_scrollbar(frame, app, &region, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
     } else {
         // Flat: every section's header + rows in one list. Scroll it (offset + ensure-selected-
         // visible + a draggable Settings scrollbar) so the content isn't clipped when it overflows a
@@ -2868,10 +2892,7 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
             }
         }
         frame.render_widget(Paragraph::new(lines), inner);
-        if items.len() > viewport {
-            let track = Rect { x: inner.x + inner.width.saturating_sub(1), width: 1, ..inner };
-            render_scrollbar(frame, app, track, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
-        }
+        render_scrollbar(frame, app, &region, scroll, items.len(), viewport, crate::app::ScrollKind::Settings);
     }
     app.settings_release_click = release_click;
     // The settings hint footer lives on the bottom border (built above); no in-content row.
@@ -3415,10 +3436,10 @@ pub(crate) fn render_branch_filter_modal(frame: &mut Frame, app: &mut AppState, 
     ]);
     frame.render_widget(Paragraph::new(query_line), Rect { y: inner.y + 1, height: 1, ..inner });
 
-    // Scrollable branch-name list: mode row + query row + footer row reserved; the rightmost
-    // column is reserved for the scrollbar so the rounded border corners stay intact.
-    let list_area = Rect { y: inner.y + 2, height: inner.height.saturating_sub(3), ..inner };
-    let list_content = Rect { width: list_area.width.saturating_sub(1), ..list_area };
+    // Scrollable branch-name list: mode row + query row + footer row reserved. The bar sits inside
+    // the modal's border, so the list keeps its width.
+    let list_region = scroll_on_border(modal_area, Rect { y: inner.y + 2, height: inner.height.saturating_sub(3), ..inner });
+    let list_content = list_region.content();
     let view_rows = list_content.height as usize;
     let selected = modal.selected.min(total_rows.saturating_sub(1));
     // Ensure-visible: only nudges `scroll` when `selected` has drifted out of the current window,
@@ -3468,7 +3489,7 @@ pub(crate) fn render_branch_filter_modal(frame: &mut Frame, app: &mut AppState, 
         )));
     }
     frame.render_widget(Paragraph::new(lines), list_content);
-    render_scrollbar(frame, app, list_area, scroll, total_rows, view_rows, crate::app::ScrollKind::BranchFilter);
+    render_scrollbar(frame, app, &list_region, scroll, total_rows, view_rows, crate::app::ScrollKind::BranchFilter);
 
     // Footer.
     let footer_key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
@@ -3692,7 +3713,8 @@ pub(crate) fn render_keybindings_modal(frame: &mut Frame, app: &mut AppState, ar
     };
     frame.render_widget(Paragraph::new(status_line), Rect { height: 1, ..inner });
 
-    let list = Rect { y: inner.y + 1, height: inner.height - 1, ..inner };
+    let list_region = scroll_on_border(modal, Rect { y: inner.y + 1, height: inner.height - 1, ..inner });
+    let list = list_region.content();
     let viewport = list.height as usize;
 
     // Keep the selected action visible.
@@ -3791,8 +3813,7 @@ pub(crate) fn render_keybindings_modal(frame: &mut Frame, app: &mut AppState, ar
     }
     frame.render_widget(Paragraph::new(lines), list);
 
-    let track = Rect { x: list.x, y: list.y, width: list.width, height: list.height };
-    render_scrollbar(frame, app, track, scroll, flat.len(), viewport, crate::app::ScrollKind::Keybindings);
+    render_scrollbar(frame, app, &list_region, scroll, flat.len(), viewport, crate::app::ScrollKind::Keybindings);
 }
 
 /// Pad `text` with trailing spaces to `width` display cells (truncating if longer).
@@ -4077,7 +4098,8 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         Some(finder) => (finder.matches.clone(), finder.selected),
         None => ((0..rows.len()).collect(), selected),
     };
-    let rows_area = Rect { y: list_area.y + 1, height: list_area.height.saturating_sub(1), ..list_area };
+    let rows_region = scroll_inside(Rect { y: list_area.y + 1, height: list_area.height.saturating_sub(1), ..list_area });
+    let rows_area = rows_region.content();
     let viewport = rows_area.height as usize;
     let list_scroll = if display_selected >= list_scroll + viewport {
         display_selected + 1 - viewport
@@ -4144,11 +4166,11 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         let bg = if focus == ExplorerFocus::List { selection_bg } else { hover_bg };
         frame.buffer_mut().set_style(Rect { x: rows_area.x, y: row_y, width: rows_area.width, height: 1 }, Style::default().bg(bg));
     }
-    let list_track = Rect { x: rows_area.x + rows_area.width.saturating_sub(1), width: 1, ..rows_area };
-    render_scrollbar(frame, app, list_track, list_scroll, display.len(), viewport, crate::app::ScrollKind::ExplorerList);
+    render_scrollbar(frame, app, &rows_region, list_scroll, display.len(), viewport, crate::app::ScrollKind::ExplorerList);
 
     // ── Preview pane (virtualized: only the visible window is highlighted) ──
-    let preview_inner = Rect { width: preview_area.width.saturating_sub(1), ..preview_area };
+    let preview_region = scroll_inside(preview_area);
+    let preview_inner = preview_region.content();
     match &preview {
         Some((raw, file_name, highlight, scroll)) if !raw.is_empty() => {
             let total = raw.len();
@@ -4170,11 +4192,14 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
                 visible.iter().map(|line| Line::from((*line).to_string())).collect()
             };
             frame.render_widget(Paragraph::new(lines).scroll((0, hscroll as u16)), body);
-            let pv_track = Rect { x: body.x + body.width, width: 1, ..body };
-            render_scrollbar(frame, app, pv_track, scroll, total, pv_viewport, crate::app::ScrollKind::ExplorerPreview);
+            // The vertical bar's track is the column `preview_inner` already gave up, clamped to the
+            // body's rows; the horizontal one takes the row under it. `preview_area`'s last column
+            // plays the part of a border here, so the body keeps every column it was handed.
+            let body_region = scroll_on_border(preview_area, body);
+            render_scrollbar(frame, app, &body_region, scroll, total, pv_viewport, crate::app::ScrollKind::ExplorerPreview);
             if needs_h {
-                let h_track = Rect { x: body.x, y: body.y + body.height, width: body.width, height: 1 };
-                render_scrollbar(frame, app, h_track, hscroll, widest, body.width as usize, crate::app::ScrollKind::ExplorerPreviewH);
+                let h_region = scroll::Area::under(Rect { height: body.height + 1, ..body });
+                render_scrollbar(frame, app, &h_region, hscroll, widest, body.width as usize, crate::app::ScrollKind::ExplorerPreviewH);
             }
         }
         _ => {

@@ -10,8 +10,8 @@ name = "tui_pick"
 path = "src/lib.rs"
 
 [dependencies]
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30"
+crossterm = "0.29"
 unicode-width = "0.2"
 nucleo-matcher = "0.3"
 dirs = "6"

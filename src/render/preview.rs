@@ -322,6 +322,10 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
     }
 
     let inner = block.inner(area);
+    // Carve the scrollbar's column out before anything measures the content: the tab chips, the
+    // pre-wrapped rows and the click rects all have to fit the width the text actually gets.
+    let region = scroll_on_border(area, inner);
+    let inner = region.content();
     frame.render_widget(block, area);
 
     // The category tab bar (diff / tags / branches / commits / files): one row at the top of the
@@ -400,11 +404,10 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
                 ));
             }
         }
-        let track = scrollbar_track(area, inner);
         app.preview_total = total_lines;
         app.preview_viewport = inner_height;
-        app.preview_scroll_area = track;
-        render_scrollbar(frame, app, track, effective_scroll, total_lines, inner_height, ScrollKind::Preview);
+        app.preview_scroll_area = region.track();
+        render_scrollbar(frame, app, &region, effective_scroll, total_lines, inner_height, ScrollKind::Preview);
         return;
     }
 
@@ -427,13 +430,12 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
         .scroll((effective_scroll as u16, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(para, inner);
-    let track = scrollbar_track(area, inner);
     // Capture scroll geometry for the event loop's wheel hit-testing; render_scrollbar registers the
     // draggable Preview hit.
     app.preview_total = total_lines;
     app.preview_viewport = inner_height;
-    app.preview_scroll_area = track;
-    render_scrollbar(frame, app, track, effective_scroll, total_lines, inner_height, ScrollKind::Preview);
+    app.preview_scroll_area = region.track();
+    render_scrollbar(frame, app, &region, effective_scroll, total_lines, inner_height, ScrollKind::Preview);
 }
 
 /// Cap on file rows rendered in the Result pane's Files tab (a 10k-file pull would otherwise build
@@ -1409,13 +1411,22 @@ pub(crate) fn build_info_lines(
     (lines, clicks, tooltips)
 }
 
+/// The width info lines wrap to: the pane's content width once its border, its padding and the
+/// scrollbar's own column are taken out. Built from the same block [`render_info_block`] draws, so a
+/// change to the pane's borders or padding moves both — the previous hand-rolled `width - 4` drifted
+/// the moment either changed, and a line wrapped one column too wide is a line the bar paints over.
+pub(crate) fn info_content_width(app: &AppState, area: Rect) -> u16 {
+    let block = Block::default().borders(pane_borders(app)).padding(panel_pad(app));
+    scroll_on_border(area, block.inner(area)).content().width
+}
+
 /// Render an info block (border + pre-wrapped lines + scrollbar) into `area`, and translate each
 /// clickable region's in-line columns into absolute screen rects on `app.info_click`.
 /// Render the pinned info panel for `repo_idx` into `area` (sized by the caller — full pane or the
 /// top half of a split). Clips to fit; the info content is short.
 pub(crate) fn render_info_panel(frame: &mut Frame, app: &mut AppState, area: Rect, repo_idx: usize) {
     let name = app.repos[repo_idx].lock().unwrap().name.clone();
-    let info_width = area.width.saturating_sub(if app.panel_padding { 4 } else { 2 }) as usize;
+    let info_width = info_content_width(app, area) as usize;
     let (lines, clicks, tooltips) = build_info_lines(app, repo_idx, info_width);
     let scroll = app.repos[repo_idx].lock().unwrap().info_scroll;
     let scroll =
@@ -1472,7 +1483,13 @@ pub(crate) fn render_info_block(
         .border_type(BorderType::Rounded)
         .padding(panel_pad(app))
         .border_style(pane_border_style(app.active_pane() == Pane::Info, modal_open));
-    let inner = block.inner(area);
+    let region = scroll_on_border(area, block.inner(area));
+    let inner = region.content();
+    debug_assert_eq!(
+        inner.width,
+        info_content_width(app, area),
+        "the lines were wrapped to a different width than the pane gives them"
+    );
     let total = lines.len();
     let viewport = inner.height as usize;
     let scroll = scroll.min(total.saturating_sub(viewport));
@@ -1509,13 +1526,12 @@ pub(crate) fn render_info_block(
             });
         }
     }
-    let track = scrollbar_track(area, inner);
     // Capture geometry for the wheel; render_scrollbar registers the draggable Info hit (it was
     // decorative before — scroll hardcoded to 0 and overflow clipped unreachably).
     app.info_area = area;
     app.info_total = total;
     app.info_viewport = viewport;
-    render_scrollbar(frame, app, track, scroll, total, viewport, ScrollKind::Info);
+    render_scrollbar(frame, app, &region, scroll, total, viewport, ScrollKind::Info);
     scroll
 }
 

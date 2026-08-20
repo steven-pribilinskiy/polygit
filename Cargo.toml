@@ -7,7 +7,7 @@ resolver = "2"
 
 [package]
 name = "polygit"
-version = "3.18.1"
+version = "3.19.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -20,8 +20,8 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 two-face = "0.4"
 ignore = "0.4"
 tokio = { version = "1", features = ["full"] }
-ratatui = "0.29"
-crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
 clap = { version = "4", features = ["derive", "env"] }
 num_cpus = "1"
 anyhow = "1"
@@ -35,6 +35,11 @@ dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 terminal-colorsaurus = "1.0.3"
 tui-pick = { path = "tui-pick" }
+# The scrollbar geometry lives here rather than in this repo, because the bug it prevents — a bar drawn
+# over the last column of the text — is one every ratatui surface can have, and it was fixed here per
+# call site four times before that stopped being a strategy. A git dependency rather than crates.io: the
+# crate is unpublished, and the lockfile pins the revision either way.
+tuilith = { git = "https://github.com/aylith-labs/tuilith", default-features = false }
 
 [profile.release]
 lto = true

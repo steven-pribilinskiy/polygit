@@ -237,11 +237,27 @@
     fn diff_modal_footer_depends_on_focus_and_source() {
         // Flatten the footer's segment texts so the content assertions read naturally.
         let joined = |source: &DiffSource, focus: DiffFocus, chips: bool| -> String {
-            diff_modal_footer(source, focus, chips, crate::app::DiffView::Raw)
+            diff_modal_footer(source, focus, chips, crate::app::DiffView::Raw, true)
                 .iter()
                 .map(|(text, _, _)| text.as_str())
                 .collect()
         };
+        // A pane that fits advertises no scrolling or paging: the keys do nothing there.
+        let fits = |focus: DiffFocus| -> String {
+            let source = DiffSource::Branch { path: "/tmp".into(), name: "b".into() };
+            diff_modal_footer(&source, focus, false, crate::app::DiffView::Raw, false)
+                .iter()
+                .map(|(text, _, _)| text.as_str())
+                .collect()
+        };
+        for focus in [DiffFocus::Files, DiffFocus::Diff] {
+            let footer = fits(focus);
+            assert!(!footer.contains("scroll"), "{focus:?} fits, so no scroll hint: {footer:?}");
+            assert!(!footer.contains("page"), "{focus:?} fits, so no paging hint: {footer:?}");
+            // `tab` still switches panes, and in the file list `j/k` still picks.
+            assert!(footer.contains("tab"), "{focus:?}: {footer:?}");
+        }
+        assert!(fits(DiffFocus::Files).contains("j/k pick"), "picking survives a list that fits");
         let stash = DiffSource::Stash { path: "/tmp".into(), index: 0, label: "x".into() };
         let files = joined(&stash, DiffFocus::Files, false);
         assert!(files.contains("tab → diff"));
@@ -571,6 +587,22 @@
         )))];
         let mut app = AppState::new(repos, Some(4), true);
         app.close_all_modals();
+        // `AppState::new` reads the real `state-v3.json`, so anything a manual TUI session left
+        // behind lands in these tests. Pin the prefs the render assertions depend on — driving the
+        // app under a pty to verify a change persisted `help_tab` and the repo page's maximized flag,
+        // and a test that asserted a flat section header started failing on a tabbed page.
+        app.repo_page_tabbed_override = Some(false);
+        app.maximized = None;
+        app.help_tab = crate::app::HelpTab::Hotkeys;
+        app.help_maximized = false;
+        app.help_scroll = 0;
+        app.settings_tab = 0;
+        app.settings_search.clear();
+        // The layout decides whether the settings body scrolls at all, and it is persisted.
+        app.settings_layout = crate::app::SettingsLayout::Flat;
+        // The accordion's fold state is persisted too — an unfolded release changes the row count.
+        app.changelog_collapsed.clear();
+        app.changelog_maximized = false;
         {
             let mut state = app.repos[0].lock().unwrap();
             state.pull_result = Some(crate::app::PullResult {
@@ -624,6 +656,9 @@
         }
         app.repo_page = Some(0);
         app.repo_page_tab = crate::app::RepoTab::Tags;
+        // Full-screen page: this used to come from the user's persisted `maximized`, so the test
+        // passed or failed depending on how the app was last left.
+        app.maximized = Some(crate::app::Pane::RepoPage);
         assert!(app.repo_page_present_tabs().contains(&crate::app::RepoTab::Tags), "Tags is a present tab");
         let page = render_ui(&mut app, 150, 34);
         assert!(page.contains("TAGS (2)"), "Tags section renders with its count\n{page}");
@@ -713,51 +748,71 @@
     /// The changelog modal's scrollbar is drawn OVER the last column of the content area, so the
     /// note wrap width has to reserve that column. Regression: once notes re-flowed to fill the
     /// width, a bullet's continuation row ran to the very edge and the bar painted over its last
-    /// character ("…so an unmerged branch still can't b║"). Asserts on the rendered buffer with the
-    /// bars erased: every word of the release's notes must survive, in order.
+    /// character ("…so an unmerged branch still can't b║").
+    ///
+    /// Checked per rendered row, with the bars erased: each row's words must appear as a contiguous
+    /// run in the release's own text. A character the bar painted over leaves a word that is in no
+    /// run — and unlike a "is the column empty" check, this sees the loss, because the bar
+    /// overwrites the glyph rather than pushing it. Row-wise so it does not depend on how long the
+    /// newest release's notes happen to be.
     #[test]
     fn changelog_notes_never_reach_the_scrollbar_column() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
         for padded in [false, true] {
             let mut app = app_with_pull();
             app.panel_padding = padded;
             app.open_changelog(false);
-            let screen = render_ui(&mut app, 120, 40);
-            let rows: Vec<Vec<char>> = screen.lines().map(|row| row.chars().collect()).collect();
-            // Measure the modal off the buffer (its borders), then read only ITS columns — the
-            // panes either side render their own text on the same screen rows.
-            let (top, left) = rows
-                .iter()
-                .enumerate()
-                .find_map(|(y, row)| row.iter().position(|ch| *ch == '\u{256d}').map(|x| (y, x)))
-                .expect("changelog modal is on screen");
-            let right = rows[top].iter().rposition(|ch| *ch == '\u{256e}').expect("modal has a right corner");
-            // Erase the scrollbar glyphs: a character the bar painted over leaves a mangled word.
-            let body: String = rows[top + 1..]
-                .iter()
-                .take_while(|row| row.get(left) == Some(&'\u{2502}'))
-                .map(|row| {
-                    row[left + 1..right].iter().map(|ch| if *ch == '\u{2588}' || *ch == '\u{2551}' { ' ' } else { *ch }).collect::<String>()
-                })
+            let (width, height) = (120u16, 40u16);
+            let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+            term.draw(|frame| crate::render::render(frame, &mut app, 0)).unwrap();
+            let buffer = term.backend().buffer().clone();
+            let screen: String = (0..height)
+                .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
                 .collect::<Vec<_>>()
-                .join(" ");
-
-            let releases = crate::changelog::releases();
-            // The whole newest release is on screen while the NEXT release's header is — so every
-            // one of its words must be readable, not just the ones above the first clipped row.
-            assert!(
-                body.contains(&format!("v{}", releases[1].version)),
-                "the newest release fits on screen with room to spare\n{screen}"
-            );
-            let notes = releases[0].notes.join(" ");
-            // The markdown markers are stripped in the render, so compare marker-free words.
+                .join("\n");
+            // The modal's own rect, captured by the render — scraping for a corner glyph would find
+            // the list pane's border first when pane borders are on.
+            let modal = app.changelog_area;
+            assert!(modal.width > 20, "the changelog modal rendered\n{screen}");
             let strip = |text: &str| -> Vec<String> {
-                text.split_whitespace().map(|word| word.replace(['*', '`'], "")).filter(|word| !word.is_empty()).collect()
+                text.split_whitespace()
+                    .map(|word| word.replace(['*', '`'], ""))
+                    .filter(|word| !word.is_empty())
+                    .collect()
             };
-            let (on_screen, expected) = (strip(&body), strip(&notes));
-            assert!(
-                on_screen.windows(expected.len()).any(|window| window == expected.as_slice()),
-                "padding={padded}: the newest release's notes are clipped on screen\n{screen}"
+            // Every word of every rendered release, so a row can be checked against its own source.
+            let source: Vec<String> = strip(
+                &crate::changelog::releases()
+                    .iter()
+                    .map(|release| release.notes.join(" "))
+                    .collect::<Vec<_>>()
+                    .join(" "),
             );
+
+            let mut checked = 0usize;
+            for row in modal.y + 1..modal.bottom().saturating_sub(1) {
+                let text: String = (modal.x + 1..modal.right().saturating_sub(1))
+                    .map(|col| {
+                        let ch = buffer[(col, row)].symbol().chars().next().unwrap_or(' ');
+                        // Erase the bar: a character it painted over leaves a mangled word.
+                        if ch == '\u{2588}' || ch == '\u{2551}' { ' ' } else { ch }
+                    })
+                    .collect();
+                let words = strip(&text);
+                // Skip release headers and blank rows: they are not note text.
+                if words.len() < 3 || !source.windows(2).any(|pair| pair[0] == words[0] && pair[1] == words[1]) {
+                    continue;
+                }
+                assert!(
+                    source.windows(words.len()).any(|window| window == words.as_slice()),
+                    "padding={padded}: row {row} is not intact — a character was painted over: \
+                     {words:?}\n{screen}"
+                );
+                checked += 1;
+            }
+            assert!(checked >= 8, "padding={padded}: only {checked} note rows checked\n{screen}");
         }
     }
 
@@ -830,3 +885,199 @@ fn perf_overlay_declines_to_draw_when_the_terminal_is_too_small() {
         assert!(app.perf_close_click.is_none(), "no click region at {width}x{height}");
     }
 }
+
+    /// Every scrollable surface registers its track in `app.scroll_hits`, so ONE test covers all of
+    /// them: the column immediately left of a bar has to be blank on every row the bar spans.
+    ///
+    /// That column is the whole defect. A bar is drawn over the content area's last column, so a row
+    /// that fills the width loses its final character to it — and the loss is invisible in the
+    /// buffer, because the bar overwrote the glyph rather than pushing it. What IS visible is the
+    /// column beside it: text pressed against a scrollbar means the surface never reserved a gutter,
+    /// and the next character it wraps lands under the bar. `tuilith::scroll::Area` carves the gutter
+    /// out of the content, and this asserts every surface actually went through it.
+    #[test]
+    fn no_scrollable_surface_puts_text_against_its_scrollbar() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        // Each case opens one surface and names the track it must register — a surface that silently
+        // failed to open would otherwise pass this test by having nothing to check.
+        use crate::app::ScrollKind as SK;
+        type Open = fn(&mut AppState);
+        let surfaces: Vec<(&str, Open, SK)> = vec![
+            ("panes", |_app| {}, SK::Info),
+            ("changelog", |app| app.open_changelog(false), SK::Changelog),
+            (
+                "what's new",
+                |app| {
+                    app.whats_new_since = "0.0.1".to_string();
+                    app.open_changelog(true);
+                },
+                SK::Changelog,
+            ),
+            ("settings", |app| app.show_settings = true, SK::Settings),
+            (
+                "help",
+                |app| {
+                    // The Design tab is the tall one — the others fit and would prove nothing.
+                    app.help_tab = crate::app::HelpTab::DesignSystem;
+                    app.show_help = true;
+                },
+                SK::Help,
+            ),
+            ("keybindings", |app| app.show_keybindings = true, SK::Keybindings),
+            (
+                "build info",
+                |app| {
+                    // The preview has to overflow, or the modal opens with nothing to scroll and the
+                    // case proves nothing. Long lines so a row can fill the width.
+                    app.build_info_settings_preview =
+                        (0..200).map(|n| format!("  \"key_{n}\": \"{}\",", "v".repeat(160))).collect();
+                    app.show_build_info = true;
+                },
+                SK::BuildInfo,
+            ),
+            ("repo page", |app| {
+                let tags: Vec<crate::app::TagInfo> = (0..60)
+                    .map(|n| crate::app::TagInfo {
+                        name: format!("v1.0.{n}"),
+                        sha: format!("{n:07}a"),
+                        subject: "a".repeat(140),
+                        author: "someone with a long name".into(),
+                        rel_date: "3 days ago".into(),
+                    })
+                    .collect();
+                app.repos[0].lock().unwrap().page = Some(crate::app::RepoPageData {
+                    branches: vec![], worktrees: vec![], stashes: vec![], commits: vec![], tags,
+                    head_dirty_count: 0, dirty_worktrees: vec![], fetched: true, fetch_error: None,
+                    base_branch: Some("origin/main".into()),
+                });
+                app.repo_page = Some(0);
+                app.repo_page_tab = crate::app::RepoTab::Tags;
+                app.maximized = Some(crate::app::Pane::RepoPage);
+            }, SK::RepoPage),
+            ("diff modal", |app| {
+                app.diff_modal = Some(crate::app::DiffModal {
+                    source: crate::app::DiffSource::Branch {
+                        path: std::path::PathBuf::from("/tmp/demo"),
+                        name: "feature".into(),
+                    },
+                    mode: crate::app::DiffMode::Uncommitted,
+                    view: crate::app::DiffView::Raw,
+                    focus: crate::app::DiffFocus::Diff,
+                    files: (0..40)
+                        .map(|n| crate::app::DiffFile {
+                            status: "M".into(),
+                            path: format!("src/{}{n}.rs", "deeply/nested/".repeat(6)),
+                            untracked: false,
+                        })
+                        .collect(),
+                    selected: 0,
+                    file_scroll: 0,
+                    // Lines wider than any pane, so a row that can fill the width does.
+                    lines: (0..200).map(|n| format!("+ {n} {}", "x".repeat(200))).collect(),
+                    scroll: 0,
+                    loading: false,
+                    diff_loading: false,
+                    status_filter: None,
+                });
+            }, SK::DiffBody),
+        ];
+
+        for (name, open, expect) in surfaces {
+            // Both padding settings: with padding the gutter is the pane's own blank column, without
+            // it the content has to give one up — the case that used to have no gap at all.
+            for padded in [false, true] {
+                for (width, height) in [(120u16, 40u16), (80, 24)] {
+                    let mut app = app_with_pull();
+                    app.panel_padding = padded;
+                    open(&mut app);
+                    let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    term.draw(|frame| crate::render::render(frame, &mut app, 0)).unwrap();
+                    let buffer = term.backend().buffer().clone();
+                    let overflowing: Vec<crate::app::ScrollKind> = app
+                        .scroll_hits
+                        .iter()
+                        .filter(|hit| hit.total > hit.viewport)
+                        .map(|hit| hit.kind)
+                        .collect();
+                    assert!(
+                        overflowing.contains(&expect),
+                        "{name} at {width}x{height}: expected an overflowing {expect:?} track, got \
+                         {overflowing:?} — did the surface open?"
+                    );
+                    let modal_open = app.any_modal_open();
+                    for hit in &app.scroll_hits {
+                        // Only vertical bars that actually overflow are drawn.
+                        if hit.total <= hit.viewport || hit.track.width != 1 || hit.track.x == 0 {
+                            continue;
+                        }
+                        // A pane under an open modal still registers its track, but the column beside
+                        // it now holds the modal's frame — nothing observable about the pane.
+                        let pane = matches!(
+                            hit.kind,
+                            crate::app::ScrollKind::List
+                                | crate::app::ScrollKind::Info
+                                | crate::app::ScrollKind::Preview
+                                | crate::app::ScrollKind::RepoPage
+                        );
+                        if modal_open && pane {
+                            continue;
+                        }
+                        let gutter = hit.track.x - 1;
+                        for row in hit.track.y..hit.track.bottom().min(height) {
+                            let symbol = buffer[(gutter, row)].symbol().to_string();
+                            assert_eq!(
+                                symbol.trim(),
+                                "",
+                                "{name} at {width}x{height} (padding={padded}): {:?} has text in the \
+                                 column beside its scrollbar at row {row} — the next character it \
+                                 wraps lands under the bar\n{}",
+                                hit.kind,
+                                (0..height)
+                                    .map(|y| (0..width)
+                                        .map(|x| buffer[(x, y)].symbol())
+                                        .collect::<String>())
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+    /// A scroll hint is only shown while the surface can actually scroll. A footer that advertises
+    /// `j/k scroll` on content that fits teaches the reader to stop reading footers — and the keys
+    /// genuinely do nothing there.
+    ///
+    /// The exception is a **collapsible** surface: the changelog accordion's `j/k` moves the release
+    /// selection, and the build-info tree's moves the cursor, whether or not anything overflows.
+    /// Those keep their hint.
+    #[test]
+    fn a_scroll_hint_appears_only_where_something_scrolls() {
+        // The helper both halves are built from.
+        assert!(scroll_hint("j/k", false, crate::app::HintKey::Char('j')).is_empty());
+        assert_eq!(scroll_hint("j/k", true, crate::app::HintKey::Char('j')).len(), 3);
+
+        // A surface whose content I control: the build-info raw preview.
+        let render_preview = |lines: usize| -> String {
+            let mut app = app_with_pull();
+            app.build_info_settings_preview = (0..lines).map(|n| format!("line {n}")).collect();
+            app.show_build_info = true;
+            render_ui(&mut app, 120, 40)
+        };
+        let fits = render_preview(3);
+        assert!(!fits.contains("j/k scroll"), "3 lines fit, so no scroll hint\n{fits}");
+        assert!(fits.contains("esc") || fits.contains("close"), "the rest of the footer stays\n{fits}");
+        let overflows = render_preview(400);
+        assert!(overflows.contains("j/k scroll"), "400 lines scroll, so the hint shows\n{overflows}");
+
+        // The collapsible exceptions keep their hint whatever fits.
+        let mut app = app_with_pull();
+        app.open_changelog(false);
+        let accordion = render_ui(&mut app, 120, 40);
+        assert!(accordion.contains("j/k scroll"), "the accordion always offers j/k\n{accordion}");
+    }

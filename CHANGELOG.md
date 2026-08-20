@@ -3,6 +3,43 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.19.0 — 2026-08-20
+Scrollbars get a column of their own, from a component that makes the old bug unrepresentable
+A scrollbar occupies a column and ratatui does not say which one, so every call site chose — and the
+shortest way to write it is to hand the bar the same rect the text was drawn into, where it renders on
+the right edge and paints over whatever filled the last column. The failure hid twice over: invisible
+while the text rarely reached the edge, and not even shaped like an overlap when it arrived, because
+the bar OVERWRITES the character rather than pushing it. The row still looked like a row; the sentence
+just ended a letter early. Thirteen of polygit's surfaces did it, and it had been fixed per call site
+four times before that stopped being a strategy.
+- **The geometry moved out of this repo into `tuilith::scroll`**, so the next project inherits the fix
+  instead of the bug. `scroll::Area` splits a rect into the content and the bar's own track, and the
+  content rect is the only way to get one — there is no order of calls that draws text where the bar
+  goes, and the broken geometry can no longer be expressed. `Area::on_border` measures whether the
+  frame's padding already separates the text from the border rather than spending a second column on a
+  gap that exists.
+- **Every bar now owns a column and has a blank one before it.** On a bordered surface it rides the
+  border and costs the content nothing; inside an unframed panel it takes the last column and leaves
+  the one before it blank. The settings modal got a column back (`○ custom` was reading as `○ custo`),
+  and the explorer's preview, the diff panes, the PR viewer, the keybindings editor, the branch filter,
+  the changelog and What's New all gained the missing gap.
+- **A scroll hint appears only where something scrolls.** `j/k scroll` used to be permanent, or dimmed
+  rather than hidden, on surfaces whose content fit — advertising keys that do nothing. It is now
+  derived from the same `Bar::overflows()` the bar itself is drawn from, so a hint and its bar cannot
+  disagree. Collapsible surfaces are the exception and say so: the changelog accordion and the
+  build-info tree keep it, because `j/k` moves the selection whatever fits.
+- **One test covers every surface.** Each scrollable surface registers its track for hit-testing, so a
+  single invariant reads that registry and asserts the column beside every bar is blank — and each
+  case must register the track it names, so a surface that silently fails to open cannot pass by
+  having nothing to check.
+- ratatui 0.29 → 0.30.2 and crossterm 0.28 → 0.29 (no code changes needed), which is what let the
+  component be shared rather than copied. Measured cost: 13 more crates actually compiled (0.30 is
+  split into `ratatui-core`/`-widgets`/`-crossterm`/`-macros`), against ~87 new `Cargo.lock` entries
+  — the rest are optional backends the lockfile records and the build never touches.
+- Render tests are now hermetic against the real `state-v3.json`. Driving the app under a pty to
+  verify this change persisted `help_tab` and the repo page's maximize, and a test that asserted a
+  flat section header started failing — it had been passing on how the app was last left.
+
 ## v3.18.1 — 2026-08-20
 Icon glyphs keep their ink on their own background
 A copy button beside dim text came out half in its own hover highlight and half on the panel behind
