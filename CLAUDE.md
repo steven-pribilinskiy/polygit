@@ -85,6 +85,8 @@ When an element exposes a key, **surface that key in the element itself** (foote
 
 **Scrollbar = ScrollHit, indivisibly.** `render_scrollbar(frame, app, area, pos, total, viewport, ScrollKind::X)` BOTH draws the bar AND registers the draggable `ScrollHit` — that's the only way to draw a scrollbar. A scrollbar drawn any other way is *decorative*: not draggable, the wheel can't target it, and (in the list's case) a grab on it falls through to the splitter beside it. This exact bug recurred four times (list, info, build-info, version-picker) before registration was folded into `render_scrollbar`, so the coupling is now structural — don't reintroduce a hand-rolled `Scrollbar` widget + manual `scroll_hits.push`. A new scrollable surface needs: a `ScrollKind` variant, an `apply_scroll` arm, and (for the wheel) capturing its area + routing the wheel to it; the drag comes free.
 
+**The bar is drawn OVER the content area's last column, so text that fills the width loses its final character to it.** Any surface that wraps text to the pane/modal width must reserve that column (`note_wrap_width` does it for release notes). The failure is invisible while the text rarely reaches the edge — it only surfaces once wrapping starts filling rows completely — and a screen-buffer assertion can't see it either: the bar overwrites the character rather than pushing it, so the row still *looks* like a row. Assert the text survived (compare the rendered words against the source), not that the column is empty.
+
 ### Every clickable button needs THREE wirings, not two (hover is not optional)
 
 A clickable element is only complete when all three are present — miss one and it's a defect:
