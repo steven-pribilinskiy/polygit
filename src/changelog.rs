@@ -6,6 +6,8 @@
 pub const CHANGELOG_MD: &str = include_str!("../CHANGELOG.md");
 
 /// One parsed release: version, ISO date, and its note lines (borrowed from the embedded markdown).
+/// `notes` keeps the source's own blank lines as empty entries — a paragraph break the renderer
+/// reads — but never a leading or trailing one.
 #[derive(Debug, Clone)]
 pub struct Release {
     pub version: &'static str,
@@ -27,10 +29,17 @@ pub fn releases() -> Vec<Release> {
             out.push(Release { version, date, notes: Vec::new() });
         } else if let Some(current) = out.last_mut() {
             let trimmed = line.trim_end();
-            // Skip blank lines that merely separate releases; keep intra-note blanks rarely matter.
-            if !trimmed.is_empty() {
+            // Intra-release blanks are KEPT: they're the paragraph separators the note renderer
+            // needs to re-flow hard-wrapped source lines without welding two paragraphs into one.
+            // Blanks before the first note (and after the last) are separators only, so drop them.
+            if !trimmed.is_empty() || !current.notes.is_empty() {
                 current.notes.push(trimmed);
             }
+        }
+    }
+    for release in &mut out {
+        while release.notes.last().is_some_and(|note| note.is_empty()) {
+            release.notes.pop();
         }
     }
     out

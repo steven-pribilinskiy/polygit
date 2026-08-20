@@ -548,3 +548,147 @@
         assert!(page.contains("TAGS (2)"), "Tags section renders with its count\n{page}");
         assert!(page.contains("v1.152.1") && page.contains("def5678") && page.contains("ci-bot"), "tag row shows name/sha/author\n{page}");
     }
+
+    /// Release notes re-flow to the modal width instead of re-breaking wherever CHANGELOG.md
+    /// happened to hard-wrap. Regression: each source line was wrapped on its own, so the last
+    /// word of a ~90-col line landed alone on the next row ("…and the very" / "thing"), and a
+    /// continuation starting with `-` (`--write-tree)`) was promoted to a bullet of its own.
+    #[test]
+    fn release_notes_reflow_across_source_line_breaks() {
+        let plain = |rows: &[(usize, Vec<(String, Style)>)]| -> Vec<String> {
+            rows.iter()
+                .map(|(indent, segs)| {
+                    format!("{}{}", " ".repeat(*indent), segs.iter().map(|(text, _)| text.as_str()).collect::<String>())
+                })
+                .collect()
+        };
+        let notes = [
+            "Squash-merged branches are now recognised",
+            "Until now polygit decided whether a merged branch was safe to delete with a single",
+            "`git merge-base --is-ancestor` check. A **squash merge** — GitHub's default, and the very thing",
+            "that leaves a branch with a `gone` upstream — produces a fresh commit.",
+            "- Unchanged where it matters: the ladder still runs **only** for the handful of gone-upstream repos",
+            "  in a scan, never per-branch on the repo page. On git older than 2.38 (no `merge-tree",
+            "  --write-tree`) the expensive rungs are skipped silently rather than erroring.",
+            "Docs (README, keymap.json) updated to match.",
+        ];
+        let rows = wrap_release_notes(&notes, Style::default(), Style::default(), 60);
+        let lines = plain(&rows);
+        let body = lines.join("\n");
+
+        // The whole block re-flows to the wrap width: no row is an orphan fragment of the
+        // sentence above it, and a bullet's wrapped rows hang under its text.
+        let expected = "    Squash-merged branches are now recognised
+    Until now polygit decided whether a merged branch was safe
+    to delete with a single git merge-base --is-ancestor check.
+    A squash merge — GitHub's default, and the very thing that
+    leaves a branch with a gone upstream — produces a fresh
+    commit.
+    - Unchanged where it matters: the ladder still runs only for
+      the handful of gone-upstream repos in a scan, never
+      per-branch on the repo page. On git older than 2.38 (no
+      merge-tree --write-tree) the expensive rungs are skipped
+      silently rather than erroring.
+    Docs (README, keymap.json) updated to match.";
+        assert_eq!(body, expected, "notes re-flow to the wrap width\n{body}");
+        // Every row still fits the wrap width (indent included).
+        for line in &lines {
+            assert!(line.chars().count() <= 66, "row fits 60 + hanging indent: {line:?}\n{body}");
+        }
+        // The bullet's `--write-tree)` continuation stays inside the bullet, never its own item.
+        assert!(body.contains("merge-tree --write-tree) the expensive rungs"), "bullet continuation rejoins\n{body}");
+        assert_eq!(lines.iter().filter(|line| line.trim_start().starts_with("- ")).count(), 1, "exactly one bullet\n{body}");
+        // Headline stands alone (bold) and does not swallow the paragraph under it.
+        assert_eq!(lines[0].trim(), "Squash-merged branches are now recognised");
+        let bolded: Vec<_> = rows[0].1.iter().filter(|(text, _)| !text.trim().is_empty()).collect();
+        assert!(!bolded.is_empty() && bolded.iter().all(|(_, style)| style.add_modifier.contains(Modifier::BOLD)), "headline is bold");
+        // The trailing flush-left note after the bullets is its own paragraph, not bullet text.
+        assert!(lines.last().unwrap().trim().starts_with("Docs (README"), "trailing note stays separate\n{body}");
+    }
+
+    /// A blank line in a release's notes is a paragraph break: the two paragraphs must not weld
+    /// into one block when the renderer re-flows hard-wrapped source lines.
+    #[test]
+    fn blank_note_line_separates_paragraphs() {
+        let notes = ["Headline", "First paragraph line one", "still paragraph one.", "", "Second paragraph."];
+        let rows = wrap_release_notes(&notes, Style::default(), Style::default(), 60);
+        let lines: Vec<String> =
+            rows.iter().map(|(_, segs)| segs.iter().map(|(text, _)| text.as_str()).collect()).collect();
+        assert!(lines.iter().any(|line| line == "First paragraph line one still paragraph one."), "{lines:?}");
+        assert!(lines.iter().any(|line| line.is_empty()), "the blank renders as a spacer row: {lines:?}");
+        assert!(lines.iter().any(|line| line == "Second paragraph."), "not welded to the first: {lines:?}");
+    }
+
+    /// `- ` opens a list item; a hyphen or asterisk that merely starts a word does not.
+    #[test]
+    fn list_item_detection_requires_a_marker_space() {
+        assert!(opens_list_item("- a bullet"));
+        assert!(opens_list_item("* a bullet"));
+        assert!(!opens_list_item("--write-tree`) the expensive rungs"));
+        assert!(!opens_list_item("*merging adds nothing*"));
+        assert!(!opens_list_item("-d <branch> keeps the safe delete"));
+    }
+
+    /// The changelog modal's scrollbar is drawn OVER the last column of the content area, so the
+    /// note wrap width has to reserve that column. Regression: once notes re-flowed to fill the
+    /// width, a bullet's continuation row ran to the very edge and the bar painted over its last
+    /// character ("…so an unmerged branch still can't b║"). Asserts on the rendered buffer with the
+    /// bars erased: every word of the release's notes must survive, in order.
+    #[test]
+    fn changelog_notes_never_reach_the_scrollbar_column() {
+        for padded in [false, true] {
+            let mut app = app_with_pull();
+            app.panel_padding = padded;
+            app.open_changelog(false);
+            let screen = render_ui(&mut app, 120, 40);
+            let rows: Vec<Vec<char>> = screen.lines().map(|row| row.chars().collect()).collect();
+            // Measure the modal off the buffer (its borders), then read only ITS columns — the
+            // panes either side render their own text on the same screen rows.
+            let (top, left) = rows
+                .iter()
+                .enumerate()
+                .find_map(|(y, row)| row.iter().position(|ch| *ch == '\u{256d}').map(|x| (y, x)))
+                .expect("changelog modal is on screen");
+            let right = rows[top].iter().rposition(|ch| *ch == '\u{256e}').expect("modal has a right corner");
+            // Erase the scrollbar glyphs: a character the bar painted over leaves a mangled word.
+            let body: String = rows[top + 1..]
+                .iter()
+                .take_while(|row| row.get(left) == Some(&'\u{2502}'))
+                .map(|row| {
+                    row[left + 1..right].iter().map(|ch| if *ch == '\u{2588}' || *ch == '\u{2551}' { ' ' } else { *ch }).collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let releases = crate::changelog::releases();
+            // The whole newest release is on screen while the NEXT release's header is — so every
+            // one of its words must be readable, not just the ones above the first clipped row.
+            assert!(
+                body.contains(&format!("v{}", releases[1].version)),
+                "the newest release fits on screen with room to spare\n{screen}"
+            );
+            let notes = releases[0].notes.join(" ");
+            // The markdown markers are stripped in the render, so compare marker-free words.
+            let strip = |text: &str| -> Vec<String> {
+                text.split_whitespace().map(|word| word.replace(['*', '`'], "")).filter(|word| !word.is_empty()).collect()
+            };
+            let (on_screen, expected) = (strip(&body), strip(&notes));
+            assert!(
+                on_screen.windows(expected.len()).any(|window| window == expected.as_slice()),
+                "padding={padded}: the newest release's notes are clipped on screen\n{screen}"
+            );
+        }
+    }
+
+    /// The changelog modal has to survive every terminal size its own clamps allow — the note wrap
+    /// width bottoms out at 8 columns, so a tiny pane must still lay out rather than panic.
+    #[test]
+    fn changelog_renders_at_any_terminal_size() {
+        for (width, height) in [(40u16, 12u16), (50, 20), (62, 24), (120, 40), (200, 60)] {
+            let mut app = app_with_pull();
+            app.open_changelog(false);
+            let screen = render_ui(&mut app, width, height);
+            assert!(screen.contains("Changelog"), "modal renders at {width}x{height}\n{screen}");
+        }
+    }
+

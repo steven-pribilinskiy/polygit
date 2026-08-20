@@ -300,9 +300,10 @@ header is the version + a time-ago (`▸ v2.60.0 · 2d ago`), with the latest tw
 select a release, `space`/`enter` (or a header click) fold it, `g`/`G` jump. After you reload into a
 newer build, a **What's New** modal pops automatically with every release since the version you last
 ran. The notes are embedded from `CHANGELOG.md` and render **markdown** (`**bold**`, `` `code` ``);
-long notes wrap to the modal width (bulleted lines get a hanging indent). Press **`m`** — or click
-the `[m maximize]` / `[m restore]` title-bar button — to maximize ⇄ restore the Changelog, What's
-New, or version-picker modal (same as the help modal).
+each release's first line is its bold summary, and the paragraphs and bullets under it **re-flow**
+to the modal width — the file's own hard wraps are ignored — with a hanging indent on bulleted
+lines. Press **`m`** — or click the `[m maximize]` / `[m restore]` title-bar button — to maximize ⇄
+restore the Changelog, What's New, or version-picker modal (same as the help modal).
 
 ## Reading the result
 

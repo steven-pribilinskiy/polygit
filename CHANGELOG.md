@@ -3,6 +3,26 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.17.1 — 2026-08-20
+Release notes re-flow to the modal width instead of re-breaking where CHANGELOG.md wraps
+The Changelog / What's New / pin-version modals wrapped each SOURCE line of a release on its own, so
+a line that already filled ~100 columns spilled its last word onto a row of its own — "and the very"
+then "thing", "an ancestor" then "of". Bullets were re-joined first and escaped this; plain
+paragraphs were not.
+- **Paragraphs now coalesce into blocks before wrapping**, exactly as bullets already did, so the
+  text re-flows to the modal width and the file's own hard wraps are invisible. A blank line in a
+  release's notes survives parsing as a real paragraph break, so two paragraphs can't weld into one.
+- **A list item needs a marker AND a space.** A wrapped `--write-tree)` (and an italic `*merging`)
+  used to read as a new bullet and got yanked out of the sentence it belonged to, rendering
+  flush-left as an item of its own.
+- **The release's first line renders bold** — it's the summary, and with the paragraph under it now
+  re-flowed there was nothing left to separate the two.
+- **The note wrap width reserves the scrollbar column.** The bar is drawn over the content area's
+  last column, so a row that filled the width lost its final character to it — invisible until the
+  re-flow started filling rows completely.
+- A pane narrower than its own right-hand footer segments no longer underflows the status-bar
+  layout (a panic in debug, a wild x offset in release); the right group pins to the left edge.
+
 ## v3.17.0 — 2026-08-18
 Squash-merged branches are now recognised, so the cleanup suggestion offers the delete
 Until now polygit decided whether a merged branch was safe to delete with a single

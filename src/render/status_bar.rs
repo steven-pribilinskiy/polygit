@@ -160,7 +160,9 @@ pub(crate) fn compose_status_row(
         line.spans = clip_spans(std::mem::take(&mut line.spans), keep);
         line.spans.push(Span::styled("… · ".to_string(), hint));
     }
-    let right_start = area.x + (avail - right_width) as u16;
+    // A pane narrower than the right-hand segments themselves would underflow: pin the right
+    // group to the pane's left edge instead of panicking (debug) / wrapping to a huge x (release).
+    let right_start = area.x + avail.saturating_sub(right_width) as u16;
     let right_line = build_status_row(right, right_start, row_y, clickable);
     line.spans.extend(right_line.spans);
     line

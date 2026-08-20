@@ -519,42 +519,107 @@ pub(crate) fn render_build_info(frame: &mut Frame, app: &mut AppState, area: Rec
     let _ = pad;
 }
 
+/// Columns a wrapped release-note row hangs under: 4 for the note indent + 2 for the `- ` marker,
+/// so a bullet's continuation lines align with its text.
+const NOTE_HANGING_INDENT: usize = 6;
+
+/// The width release-note text wraps to inside a changelog-style modal `width` columns wide: the
+/// borders and optional panel padding come off the content area, then the deepest hanging indent
+/// and one column for the scrollbar — the bar is drawn OVER the content area's last column, so a
+/// row that fills the width loses its final character to it.
+pub(super) fn note_wrap_width(modal_width: u16, panel_padding: bool) -> usize {
+    let pad = if panel_padding { 2 } else { 0 };
+    let inner = modal_width.saturating_sub(2 + pad) as usize;
+    inner.saturating_sub(NOTE_HANGING_INDENT + 1).max(8)
+}
+
+/// One coalesced release-note block: what a run of source lines means once re-joined.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NoteBlock {
+    /// The release's first line — it mirrors the commit subject, so it stands alone (bold).
+    Headline,
+    /// Prose: the summary paragraph, or a trailing "Docs updated…" note after the bullets.
+    Paragraph,
+    /// A `- …` list item; wrapped rows hang under the text, not under the marker.
+    Bullet,
+    /// A blank source line — a paragraph break, rendered as a spacer row.
+    Blank,
+}
+
+/// True when a line OPENS a markdown list item. The marker must be followed by a space: without
+/// that, a wrapped `--write-tree)` or an italic `*merging` reads as a new bullet and gets yanked
+/// out of the sentence it belongs to.
+pub(super) fn opens_list_item(line: &str) -> bool {
+    let mut chars = line.chars();
+    matches!(chars.next(), Some('-' | '*' | '+')) && chars.next() == Some(' ')
+}
+
 /// Wrap a release's note lines into indented, markdown-styled display rows — the single shared note
 /// renderer for the changelog, What's New, and version-picker modals (so they look identical).
-/// `avail` is the wrap width (already minus the deepest indent). Bullets (`- …`) get a hanging
-/// indent; `**bold**` / `` `code` `` render styled. Returns `(indent_cols, styled_segments)` rows.
-fn wrap_release_notes(
+/// `avail` is the wrap width from [`note_wrap_width`] (indent + scrollbar gutter already off the
+/// top). Bullets (`- …`) get a hanging indent; `**bold**` / `` `code` `` render styled. Returns
+/// `(indent_cols, styled_segments)` rows.
+pub(super) fn wrap_release_notes(
     notes: &[&str],
     note_style: Style,
     dim: Style,
     avail: usize,
 ) -> Vec<(usize, Vec<(String, Style)>)> {
-    // The changelog is hard-wrapped at ~100 cols, so one bullet spans several source lines — a
-    // continuation line is indented and is NOT itself a new bullet. Coalesce those back into one
-    // logical block first, so the text re-flows to the modal width (no mid-sentence break) and the
-    // whole bullet shares one style + hanging indent (instead of dim, flush-left orphan lines).
-    let mut blocks: Vec<String> = Vec::new();
+    // The changelog is hard-wrapped at ~100 cols, so one logical paragraph or bullet spans several
+    // source lines. Coalesce those back into blocks FIRST, so the text re-flows to the modal width
+    // instead of re-breaking wherever the FILE happened to wrap — which stranded orphan words
+    // ("thing", "of") on their own rows and, when a continuation line started with `-`, rendered a
+    // fragment as a bullet of its own.
+    let mut blocks: Vec<(NoteBlock, String)> = Vec::new();
+    let mut seen_text = false;
     for note in notes {
-        let trimmed = note.trim_start();
-        let is_continuation = note.len() != trimmed.len() // had leading whitespace
-            && !trimmed.starts_with('-')
-            && !trimmed.starts_with('*');
+        let trimmed = note.trim();
+        if trimmed.is_empty() {
+            blocks.push((NoteBlock::Blank, String::new()));
+            continue;
+        }
+        if opens_list_item(trimmed) {
+            seen_text = true;
+            blocks.push((NoteBlock::Bullet, trimmed.to_string()));
+            continue;
+        }
+        if !seen_text {
+            seen_text = true;
+            blocks.push((NoteBlock::Headline, trimmed.to_string()));
+            continue;
+        }
+        // An indented line continues whatever block is open (the file's own wrap). A flush-left
+        // line continues a paragraph, but starts a new one after a bullet or the headline.
+        let indented = note.starts_with([' ', '\t']);
+        let joins = match blocks.last() {
+            Some((NoteBlock::Paragraph, _)) => true,
+            Some((NoteBlock::Bullet | NoteBlock::Headline, _)) => indented,
+            Some((NoteBlock::Blank, _)) | None => false,
+        };
         match blocks.last_mut() {
-            Some(last) if is_continuation => {
-                last.push(' ');
-                last.push_str(trimmed);
+            Some((_, text)) if joins => {
+                text.push(' ');
+                text.push_str(trimmed);
             }
-            _ => blocks.push(trimmed.to_string()),
+            _ => blocks.push((NoteBlock::Paragraph, trimmed.to_string())),
         }
     }
     let mut rows = Vec::new();
-    for block in &blocks {
+    for (kind, text) in &blocks {
+        if *kind == NoteBlock::Blank {
+            rows.push((0, Vec::new()));
+            continue;
+        }
         // Bullets get the bright note style + a hanging indent (continuations align under the text
-        // after "- "); a plain paragraph (e.g. the release summary line) is dim, flush at indent 4.
-        let bullet = block.starts_with('-') || block.starts_with('*');
-        let base = if bullet { note_style } else { dim };
-        for (row, segs) in super::preview::wrap_markdown(block, base, avail).into_iter().enumerate() {
-            let indent = if row > 0 && bullet { 6 } else { 4 };
+        // after "- "); the headline is bold so the summary paragraph under it reads as separate
+        // prose; plain paragraphs are dim, flush at indent 4.
+        let base = match kind {
+            NoteBlock::Bullet => note_style,
+            NoteBlock::Headline => note_style.add_modifier(Modifier::BOLD),
+            _ => dim,
+        };
+        for (row, segs) in super::preview::wrap_markdown(text, base, avail).into_iter().enumerate() {
+            let indent = if row > 0 && *kind == NoteBlock::Bullet { NOTE_HANGING_INDENT } else { 4 };
             rows.push((indent, segs));
         }
     }
@@ -1273,10 +1338,7 @@ pub(crate) fn render_changelog(frame: &mut Frame, app: &mut AppState, area: Rect
     } else {
         (area.width.saturating_sub(8).clamp(40, 96), area.height.saturating_sub(4).clamp(10, 40))
     };
-    // Note text wraps to the inner content width (borders + padding removed) so long bullets don't
-    // clip; wrap to the deeper continuation indent so every wrapped row fits.
-    let inner_width = width.saturating_sub(2 + pad) as usize;
-    let wrap_avail = inner_width.saturating_sub(6).max(8);
+    let wrap_avail = note_wrap_width(width, app.panel_padding);
 
     let mut items: Vec<Item> = Vec::new();
     for &idx in &visible {
@@ -1415,9 +1477,7 @@ fn render_pin_picker(frame: &mut Frame, app: &mut AppState, area: Rect) {
     } else {
         (area.width.saturating_sub(8).clamp(44, 96), area.height.saturating_sub(4).clamp(10, 40))
     };
-    // Wrap note text to the inner content width so long bullets wrap instead of clipping.
-    let inner_width = width.saturating_sub(2 + pad) as usize;
-    let wrap_avail = inner_width.saturating_sub(6).max(8);
+    let wrap_avail = note_wrap_width(width, app.panel_padding);
 
     // Build the row model: every visible release header, with the selected one's notes expanded.
     let mut items: Vec<Item> = Vec::new();
