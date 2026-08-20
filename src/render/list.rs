@@ -114,7 +114,12 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
     let dirty_w = 3 + col_extra; // glyph + up to 2 digits
     let count_w = 4 + col_extra; // glyph + count (worktrees / branches / stashes)
     let pr_w = 6; // `#NNNNN` — fits a 5-digit PR number
-    let fav_w = 1; // star is a compact 1-cell symbol in both icon sets
+    // Two, not one. `★` and `☆` are one column and the same glyph in both icon
+    // sets — but no terminal monospace font covers them, and the fallback inks
+    // 1.42 cells, so each needs the cell to its right or the overflow lands on
+    // the kebab gutter beside it. `pad_display` cannot supply that at width 1:
+    // it pads only up to the budget, and the glyph already fills it.
+    let fav_w = 2;
     let kebab_w = 2; // the rightmost column: a space + the `⋮` kebab affordance (shown on hover)
     let columns_width = kebab_w
         + usize::from(columns.status) * (STATUS_COL_W + 1)
@@ -357,6 +362,9 @@ pub(crate) fn render_list(frame: &mut Frame, app: &mut AppState, area: Rect, tic
                 };
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(pad_display(glyph, fav_w), style));
+                // `pad_display` is what gives the star its overflow cell here,
+                // because the cell is inside the padded string and therefore
+                // inside this span rather than the next one.
             }
             // The rightmost column reserves `kebab_w` cells (above) for the `⋮` kebab affordance; the
             // glyph itself is overlaid at the pane's right edge on the hovered row after the list
@@ -756,9 +764,9 @@ pub(crate) fn build_result_footer(app: &AppState, inner_width: usize) -> Vec<Lin
 
     let glyph = if app.all_done {
         if failed > 0 {
-            Span::styled(icons.failed, Style::default().fg(Color::Red))
+            super::icon_span(icons.failed, Style::default().fg(Color::Red))
         } else {
-            Span::styled(icons.ok, Style::default().fg(Color::Green))
+            super::icon_span(icons.ok, Style::default().fg(Color::Green))
         }
     } else {
         Span::styled("\u{2014}", dim) // — while the run is still in flight
@@ -787,7 +795,7 @@ pub(crate) fn build_result_footer(app: &AppState, inner_width: usize) -> Vec<Lin
     if app.has_errors() {
         lines.push(divider());
         lines.push(Line::from(vec![
-            Span::styled(icons.failed, Style::default().fg(Color::Red)),
+            super::icon_span(icons.failed, Style::default().fg(Color::Red)),
             Span::raw(" "),
             Span::styled(format!("Errors ({failed})"), Style::default().fg(Color::Red)),
         ]));
@@ -953,7 +961,15 @@ pub(crate) fn group_header_item(
                 Style::default().fg(Color::Yellow),
             ));
         } else if group.error.is_some() {
-            head.push(Span::styled(format!(" {}", icons.warning), Style::default().fg(Color::Red)));
+            // The header's trailing dashes are a different style, so the
+            // warning's ink would land on them without a cell of its own.
+            head.push(Span::styled(
+                format!(" {}", icons.warning),
+                Style::default().fg(Color::Red),
+            ));
+            if super::draws_past_its_cell(icons.warning) {
+                head.push(Span::styled(" ", Style::default().fg(Color::Red)));
+            }
         }
     }
     finish_header_line(head, tail, inner_width, !app.hide_folder_lines)

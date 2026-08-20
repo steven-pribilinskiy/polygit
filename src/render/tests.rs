@@ -1,5 +1,86 @@
     use super::*;
 
+    /// A glyph the terminal draws past its cell has to carry the cell it spills
+    /// onto, inside its own span. Otherwise the ink lands on whatever style the
+    /// next span brought — which is how a magenta `⧉` came out half in its
+    /// hover highlight and half on the panel behind it.
+    #[test]
+    fn an_overflowing_glyph_carries_the_cell_its_ink_lands_on() {
+        assert!(draws_past_its_cell("\u{29c9}"));
+        assert_eq!(icon_cols("\u{29c9}"), 2);
+        assert_eq!(icon_span("\u{29c9}", Style::default()).content.as_ref(), "\u{29c9} ");
+
+        // One column, one cell of ink: nothing to pad, and padding it would
+        // leave a gap and push everything after it a column right.
+        assert!(!draws_past_its_cell("\u{25a2}"));
+        assert_eq!(icon_cols("\u{25a2}"), 1);
+        assert_eq!(icon_span("\u{25a2}", Style::default()).content.as_ref(), "\u{25a2}");
+
+        // Genuinely two columns, and `unicode-width` agrees, so it needs no
+        // help — the budget is already the size of the glyph.
+        assert!(!draws_past_its_cell("\u{1f4cb}"));
+        assert_eq!(icon_cols("\u{1f4cb}"), 2);
+    }
+
+    /// The emoji window controls are the trap the icon-set rule does not catch:
+    /// single codepoints, which is what that rule tests, but East_Asian_Width N
+    /// — so `unicode-width` reports 1 for a glyph that inks 1.71 cells, and the
+    /// comment beside them claiming "2 cells" was measuring nothing.
+    #[test]
+    fn the_emoji_window_controls_are_not_two_cells_however_they_look() {
+        for glyph in ["\u{1f5d6}", "\u{1f5d7}", "\u{1f3f7}"] {
+            assert_eq!(
+                UnicodeWidthStr::width(glyph),
+                1,
+                "{glyph} is EAW=N, whatever it looks like"
+            );
+            assert!(draws_past_its_cell(glyph), "{glyph} inks past its cell");
+            assert_eq!(icon_cols(glyph), 2);
+        }
+
+        // These three really are two columns and are left alone.
+        for glyph in ["\u{1f4cb}", "\u{1f517}", "\u{274c}"] {
+            assert_eq!(UnicodeWidthStr::width(glyph), 2, "{glyph}");
+            assert!(!draws_past_its_cell(glyph), "{glyph} needs no pad");
+        }
+    }
+
+    /// Every glyph either icon set can put in a fixed-width column must fit the
+    /// budget that column reserves. The favourites column is the one with no
+    /// slack: `pad_display` cannot add the overflow cell at width 1, because the
+    /// glyph already fills it and the function returns early.
+    #[test]
+    fn a_fixed_width_icon_column_reserves_the_cells_its_glyph_inks() {
+        for icons in [&crate::app::UNICODE_ICONS, &crate::app::EMOJI_ICONS] {
+            for glyph in [icons.fav_on, icons.fav_off] {
+                assert!(
+                    icon_cols(glyph) <= 2,
+                    "{glyph} needs more than the favourites column reserves"
+                );
+                assert_eq!(
+                    pad_display(glyph, 2).chars().count() >= 2,
+                    true,
+                    "{glyph} must be padded to the column width"
+                );
+            }
+        }
+    }
+
+    /// The table is searched by binary search and guarded by a floor, and a
+    /// misplaced entry fails neither loudly — it is simply never found, and the
+    /// glyph goes back to inking onto its neighbour.
+    #[test]
+    fn the_overflow_table_is_sorted_and_its_guard_matches() {
+        assert!(
+            DRAWN_PAST_THEIR_CELL.windows(2).all(|pair| pair[0] < pair[1]),
+            "DRAWN_PAST_THEIR_CELL must be sorted by codepoint"
+        );
+        assert_eq!(
+            FIRST_OVERFLOWING,
+            *DRAWN_PAST_THEIR_CELL.first().expect("at least one entry")
+        );
+    }
+
     /// The Design-tab theming radios must stay keyed to their real settings rows, and the settings
     /// modal's per-row flags (the Theme autodetect underline, the emoji "Hide zeros" disable) must
     /// be matched by LABEL — not a hardcoded index. Regression: when settings sections were sorted

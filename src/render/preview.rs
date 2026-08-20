@@ -200,12 +200,15 @@ pub(crate) fn render_preview(frame: &mut Frame, app: &mut AppState, area: Rect, 
             // space): the trailing pad reuses the separator's own leading space, and only a leading
             // pad (before the glyph) is newly rendered — mirroring the maximize button's treatment.
             let glyph = app.icons().copy;
-            let glyph_w = UnicodeWidthStr::width(glyph) as u16;
+            let glyph_w = super::icon_cols(glyph);
             let sep_start = copy_end.saturating_sub(2); // ` · ` separator = 3 cols
             let col_start = sep_start.saturating_sub(glyph_w);
             let hot_start = col_start.saturating_sub(1); // leading pad column
             top_spans.push(Span::raw(" "));
-            top_spans.push(Span::styled(glyph, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+            top_spans.push(super::icon_span(
+                glyph,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ));
             top_spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
             app.info_click.push((area.y, hot_start, sep_start + 1, InfoAction::CopyText(copy_text)));
         }
@@ -985,10 +988,11 @@ pub(crate) fn build_info_lines(
     let dim = Style::default().fg(Color::DarkGray);
     let link = Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED);
     let value_width = content_width.saturating_sub(LABEL_W).max(1);
-    // The copy-button glyph follows the icon set (`⧉` in Unicode mode, `📋` in emoji mode); emoji
-    // render 2 cells wide, so measure it instead of assuming 1.
+    // The copy-button glyph follows the icon set (`⧉` in Unicode mode, `📋` in emoji mode). Its
+    // width comes from `icon_cols`, not `UnicodeWidthStr`: emoji render 2 cells, and `⧉` renders
+    // one column but INKS nearly two, so it carries a pad cell that every region here must span.
     let copy_glyph = app.icons().copy;
-    let copy_w = UnicodeWidthStr::width(copy_glyph) as u16;
+    let copy_w = super::icon_cols(copy_glyph);
     // Reserve a leading space + the glyph for the trailing copy button on copyable rows.
     let copy_btn_w = 1 + copy_w; // " " + glyph
     let copy_avail = value_width.saturating_sub(copy_btn_w as usize).max(1);
@@ -1042,7 +1046,7 @@ pub(crate) fn build_info_lines(
             Span::styled(format!("{name:<13}"), label),
             Span::styled(display, value),
             Span::raw(" "),
-            Span::styled(copy_glyph.to_string(), copy_icon),
+            super::icon_span(copy_glyph, copy_icon),
         ]));
     };
 
@@ -1062,7 +1066,7 @@ pub(crate) fn build_info_lines(
                 Span::styled(format!("{:<13}", "Branch"), label),
                 Span::styled(branch.to_string(), link),
                 Span::raw(" "),
-                Span::styled(copy_glyph.to_string(), dim),
+                super::icon_span(copy_glyph, dim),
             ]));
         } else {
             push_link(lines, clicks, "Branch", branch, url);
@@ -1136,7 +1140,7 @@ pub(crate) fn build_info_lines(
     // Pull Request — the PR for the current branch (via `gh`), clickable to the PR on the remote.
     if let Some(pr) = state.pr.as_ref() {
         let ext_glyph = app.icons().external;
-        let ext_w = UnicodeWidthStr::width(ext_glyph) as u16;
+        let ext_w = super::icon_cols(ext_glyph);
         let ext_btn_w = 1 + ext_w; // " " + glyph
         let text = format!("#{} {}", pr.number, pr.title);
         let segments = wrap_link(&text, value_width.saturating_sub(ext_btn_w as usize).max(1));
@@ -1155,7 +1159,7 @@ pub(crate) fn build_info_lines(
                 let ext_start = LABEL_W as u16 + width + 1;
                 clicks.push((line_idx, ext_start, ext_start + ext_w, InfoAction::OpenUrl(pr.url.clone())));
                 spans.push(Span::raw(" "));
-                spans.push(Span::styled(ext_glyph, copy_icon));
+                spans.push(super::icon_span(ext_glyph, copy_icon));
             }
             lines.push(Line::from(spans));
         }
@@ -1218,7 +1222,7 @@ pub(crate) fn build_info_lines(
                 Span::styled(" · ", dim),
                 Span::styled(copy_label.to_string(), value),
                 Span::raw(" "),
-                Span::styled(copy_glyph.to_string(), copy_icon),
+                super::icon_span(copy_glyph, copy_icon),
             ]));
         }
     }

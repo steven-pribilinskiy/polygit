@@ -1131,7 +1131,11 @@ pub(crate) fn render_pr_modal(frame: &mut Frame, app: &mut AppState, area: Rect,
                             spans.push(Span::styled(format!("  {}", check.state.to_lowercase()), dim));
                         }
                         if !check.link.is_empty() {
-                            spans.push(Span::styled("  \u{2197}", Style::default().fg(Color::Cyan)));
+                            spans.push(Span::raw("  "));
+                            spans.push(super::icon_span(
+                                "\u{2197}",
+                                Style::default().fg(Color::Cyan),
+                            ));
                             check_at.push((body.len(), check.link.clone()));
                         }
                         body.push(Line::from(spans));
@@ -1849,13 +1853,19 @@ pub(crate) fn render_confirm(frame: &mut Frame, app: &mut AppState, area: Rect) 
             )));
         }
         let copy_y = inner.y + lines.len() as u16;
-        let glyph = " \u{29c9}";
-        let span_width = (UnicodeWidthStr::width(cmd.as_str()) + 2 + UnicodeWidthStr::width(glyph)) as u16;
+        // The pad was on the wrong side: `" ⧉"` puts a space BEFORE the glyph,
+        // which does nothing for ink that spills to the right.
+        let glyph = "\u{29c9}";
+        let span_width =
+            (UnicodeWidthStr::width(cmd.as_str()) + 3) as u16 + super::icon_cols(glyph);
         let end = (inner.x + span_width).min(inner.x + inner.width);
         app.confirm_copy_click = Some((copy_y, inner.x, end));
         lines.push(Line::from(vec![
-            Span::styled(format!("  {cmd}"), Style::default().fg(Color::Cyan)),
-            Span::styled(glyph, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("  {cmd} "), Style::default().fg(Color::Cyan)),
+            super::icon_span(
+                glyph,
+                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+            ),
         ]));
     }
     lines.push(Line::from(String::new()));

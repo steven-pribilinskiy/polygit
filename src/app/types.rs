@@ -2201,6 +2201,13 @@ pub struct IconSet {
 // Status glyphs are drawn from Geometric Shapes (U+25xx), which terminal fonts like Cascadia Code
 // cover at a true single cell. Earlier circled-operator glyphs (⊘ ⊝, Math Operators) were missing
 // from those fonts, so terminals substituted a double-width fallback and shifted the repo name.
+//
+// That rationale covers the U+25xx glyphs and nothing else in this set. `↯ ✗ ⚠ ★ ☆ ⧉ ↗ ✕` are
+// Arrows, Dingbats and Misc Symbols, no font here covers any of them, and each inks 1.16–1.71
+// cells from the fallback while `unicode-width` reports 1. They are listed in
+// `render::DRAWN_PAST_THEIR_CELL` and every span that ends on one carries a pad cell, which is
+// what keeps their ink on their own background instead of the next span's. `scripts/glyph_screen`
+// in the shefrd tree is what measures them; run it before adding a glyph here.
 pub static UNICODE_ICONS: IconSet = IconSet {
     spinner: &["◐", "◓", "◑", "◒"],
     queued: "◯",
@@ -2227,9 +2234,10 @@ pub static UNICODE_ICONS: IconSet = IconSet {
     retry_log: "↻",
     fav_on: "★",
     fav_off: "☆",
-    // Geometric Shapes (U+25xx), single-cell like the status glyphs above: hollow square = maximize,
-    // square-in-square = restore, multiplication-X = close. Distinct shapes, reliable single-cell
-    // width across terminal fonts (✕ is U+2715, distinct from the `failed` ✗).
+    // Hollow square = maximize, square-in-square = restore, multiplication-X = close. `▢` and `▣`
+    // are Geometric Shapes and genuinely single-cell. `✕` is not — U+2715 is Dingbats, uncovered,
+    // and inks 1.39 cells, so it is padded like its sibling `✗` rather than grouped with the two
+    // above as this comment used to do.
     maximize: "▢",
     restore: "▣",
     close: "✕",
@@ -2268,13 +2276,18 @@ pub static EMOJI_ICONS: IconSet = IconSet {
     // the active icon style (or a style change after the line was written).
     skip_log: "⊘",
     retry_log: "↻",
-    // The star stays a compact 1-cell symbol in both sets (like the ahead/behind arrows) so the
-    // favorites column keeps a fixed width regardless of icon style.
+    // The star is the same glyph in both sets, so the favourites column is a fixed width whatever
+    // the icon style — but that width is 2, not 1. `★`/`☆` advance one column and ink 1.42, and
+    // `pad_display` cannot supply the overflow cell at a budget of 1 because the glyph already
+    // fills it and the function returns early.
     fav_on: "★",
     fav_off: "☆",
-    // Window controls as single-codepoint Emoji_Presentation glyphs (2 cells, no variation selector):
-    // white square button = maximize, black square button = restore, cross mark = close. The button
-    // renderer measures display width, so the 2-cell glyphs lay out + hit-test correctly.
+    // Window controls as single codepoints, no variation selector — but only `❌` is
+    // Emoji_Presentation. `🗖` and `🗗` are **East_Asian_Width N**, so `unicode-width` reports 1 for
+    // them, not the 2 they look like. That is the trap the single-codepoint rule above does not
+    // catch: it tests how many codepoints a glyph is, not how wide anything thinks it is. The
+    // button renderer does measure display width, which is why the wrong measurement mattered —
+    // it now asks `icon_cols`, which adds the cell their 1.71 of ink needs.
     maximize: "🗖",
     restore: "🗗",
     close: "❌",

@@ -3,6 +3,21 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.18.1 — 2026-08-20
+Icon glyphs keep their ink on their own background
+A copy button beside dim text came out half in its own hover highlight and half on the panel behind
+it. Thirteen glyphs do it, and the cause is not width — they advance one column and `unicode-width`
+is right — but no terminal font covers them, so the fallback inks 1.16–1.71 cells and the spill
+lands on the next span.
+- **Every span ending on one now carries the cell its ink lands on**, and click regions, hover rects
+  and column budgets ask `icon_cols` instead of `unicode-width`. The pad is a space in the same
+  span, never a wider measurement.
+- **The favourites column is 2 cells**, not 1: `★`/`☆` ink 1.42, and `pad_display` could not add the
+  cell at a budget of 1 because the glyph already filled it.
+- **`🗖` and `🗗` were never 2 cells.** Single codepoints, which is what the icon-set rule tests, but
+  East_Asian_Width N — so `unicode-width` says 1. `🏷` too. `📋` `🔗` `❌` really are 2 and were fine.
+- Affected: `↗` `↯` `↻` `⎇` `★` `☆` `⚠` `✕` `✗` `⧉` `🏷` `🗖` `🗗`.
+
 ## v3.18.0 — 2026-08-20
 `Ctrl+T` perf overlay + `--perf` report: find out WHY the UI feels slow
 Hover sluggishness has three possible causes that all feel identical, and no way to tell them apart

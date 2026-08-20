@@ -71,10 +71,13 @@ fn window_button(
 ) -> ([Span<'static>; 2], (u16, u16, u16), u16) {
     let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(Color::DarkGray);
-    let width = (UnicodeWidthStr::width(keycap) + UnicodeWidthStr::width(glyph)) as u16;
+    // `icon_cols`, not `UnicodeWidthStr`: `✕` and `❌` are one column and two,
+    // and the first of them inks past its cell, so it carries a pad the region
+    // has to span or the button's right edge stops short of its own glyph.
+    let width = UnicodeWidthStr::width(keycap) as u16 + icon_cols(glyph);
     let start = right_end.saturating_sub(width);
     (
-        [Span::styled(keycap.to_string(), key), Span::styled(glyph.to_string(), dim)],
+        [Span::styled(keycap.to_string(), key), icon_span(glyph, dim)],
         (row, start, right_end),
         start.saturating_sub(1),
     )
@@ -98,11 +101,16 @@ fn max_button_spans(
     let glyph = if app.maximized == Some(pane) { icons.restore } else { icons.maximize };
     let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(Color::DarkGray);
-    let width = (UnicodeWidthStr::width("m") + UnicodeWidthStr::width(glyph)) as u16 + 1; // +1 trailing pad
+    // The emoji `🗖`/`🗗` are the case this has to ask about rather than assume:
+    // they are single codepoints, which is what the icon-set rule tests, but
+    // their East_Asian_Width is N — `unicode-width` reports 1 while they ink
+    // 1.71 cells. `icon_cols` gives them the cell they need; the `+ 1` after it
+    // is still the button's own trailing pad, which is a different thing.
+    let width = UnicodeWidthStr::width("m") as u16 + icon_cols(glyph) + 1;
     let start = right_end.saturating_sub(width);
     let left = start.saturating_sub(1);
     app.max_click.push((row, left, right_end, pane));
-    ([Span::styled("m", key), Span::styled(glyph.to_string(), dim), Span::raw(" ")], left)
+    ([Span::styled("m", key), icon_span(glyph, dim), Span::raw(" ")], left)
 }
 
 /// Title style for the main panes: dim while a modal overlays them, so the background chrome
@@ -826,6 +834,82 @@ fn panel_pad(app: &AppState) -> Padding {
     }
 }
 
+/// Glyphs the terminal draws wider than the cell it advances over.
+///
+/// `unicode-width` is right about the width — these step one column, and a
+/// cursor-position report agrees. What it cannot see is whether the glyph FITS:
+/// one the terminal's monospace font lacks is supplied by a fallback whose
+/// advance is its own business, and the ink is drawn past the cell into the
+/// next one. Whatever style that cell carries is the background the overflow
+/// lands on, so a styled span ENDING on one of these has half its glyph painted
+/// on somebody else's background — which is what a magenta `⧉` beside dim text
+/// looked like, half in its own hover highlight and half out.
+///
+/// Measured against Cascadia Mono, which covers none of them, and the Segoe UI
+/// Symbol it falls back to. The ratio is the fallback's advance as a fraction of
+/// the cell:
+///
+/// | glyph | advance | where |
+/// |---|---|---|
+/// | `↗` U+2197 | 1.25 | `external` |
+/// | `↯` U+21AF | 1.16 | `throttled` |
+/// | `↻` U+21BB | 1.45 | `retry_log` |
+/// | `⎇` U+2387 | 1.71 | the switch chip |
+/// | `★` U+2605 | 1.42 | `fav_on` |
+/// | `☆` U+2606 | 1.42 | `fav_off` |
+/// | `⚠` U+26A0 | 1.47 | `warning` |
+/// | `✕` U+2715 | 1.39 | `close` |
+/// | `✗` U+2717 | 1.39 | `failed` |
+/// | `⧉` U+29C9 | 1.71 | `copy` |
+/// | `🏷` U+1F3F7 | 1.71 | emoji `tags` |
+/// | `🗖` U+1F5D6 | 1.71 | emoji `maximize` |
+/// | `🗗` U+1F5D7 | 1.71 | emoji `restore` |
+///
+/// The last three are the trap the icon-set rule does not catch: they are single
+/// codepoints, which is what that rule tests, but their East_Asian_Width is **N**
+/// — so `unicode-width` reports 1 for them, not the 2 an emoji is assumed to be.
+/// `📋`, `🔗` and `❌` are EAW=W and genuinely two cells; they are fine.
+///
+/// Sorted by codepoint; `FIRST_OVERFLOWING` is the scan guard.
+const DRAWN_PAST_THEIR_CELL: &[char] = &[
+    '\u{2197}', '\u{21af}', '\u{21bb}', '\u{2387}', '\u{2605}', '\u{2606}', '\u{26a0}',
+    '\u{2715}', '\u{2717}', '\u{29c9}', '\u{1f3f7}', '\u{1f5d6}', '\u{1f5d7}',
+];
+
+/// Nothing below this is in the table, so a scan can stop asking.
+const FIRST_OVERFLOWING: char = '\u{2197}';
+
+/// Whether `glyph`'s ink is drawn past the cell it advances over.
+pub(crate) fn draws_past_its_cell(glyph: &str) -> bool {
+    glyph.chars().next_back().is_some_and(|last| {
+        last >= FIRST_OVERFLOWING && DRAWN_PAST_THEIR_CELL.binary_search(&last).is_ok()
+    })
+}
+
+/// Columns a glyph needs so its ink stays on its own background.
+///
+/// Its display width, plus a cell for the overflow when it has one. Every click
+/// region, hover rect and column budget around an icon asks this rather than
+/// `UnicodeWidthStr::width`, or the highlight stops short of the ink.
+pub(crate) fn icon_cols(glyph: &str) -> u16 {
+    let width = UnicodeWidthStr::width(glyph) as u16;
+    width + u16::from(draws_past_its_cell(glyph))
+}
+
+/// A styled span whose ink stays inside it.
+///
+/// The pad is a space in the SAME span, never a wider measurement: the glyph
+/// really is one column, and claiming two would put every later region on the
+/// row a column right of where it is drawn.
+pub(crate) fn icon_span(glyph: &str, style: Style) -> Span<'static> {
+    let text = if draws_past_its_cell(glyph) {
+        format!("{glyph} ")
+    } else {
+        glyph.to_string()
+    };
+    Span::styled(text, style)
+}
+
 /// Pad `s` with trailing spaces until its display width reaches `width` (width-aware so
 /// double-width emoji glyphs don't shift the columns that follow).
 fn pad_display(s: &str, width: usize) -> String {
@@ -879,10 +963,13 @@ fn status_glyph_colored(status: &RepoStatus, tick: u64, icons: &IconSet) -> Span
             Span::styled(icons.no_upstream, Style::default().fg(Color::DarkGray))
         }
         RepoStatus::Skipped => Span::styled(icons.skipped, Style::default().fg(Color::DarkGray)),
+        // `↯` and `✗` both ink past their cell, and the span after this one is
+        // the row's own padding at the default style — so without the pad the
+        // overflow lands on it rather than on the status colour.
         RepoStatus::Throttled => {
-            Span::styled(icons.throttled, Style::default().fg(Color::Magenta))
+            icon_span(icons.throttled, Style::default().fg(Color::Magenta))
         }
-        RepoStatus::Failed => Span::styled(icons.failed, Style::default().fg(Color::Red)),
+        RepoStatus::Failed => icon_span(icons.failed, Style::default().fg(Color::Red)),
     }
 }
 
