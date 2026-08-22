@@ -217,12 +217,9 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
     let mut hits: Vec<Rect> = Vec::new();
     let mut strong_hits: Vec<Rect> = Vec::new();
     let mut button_hits: Vec<Rect> = Vec::new();
-    // The perf overlay floats above every pane AND every modal, so its `[x]` is checked before the
-    // dropdown/modal chain below — otherwise a modal's own branch would claim the cursor and the
-    // button would be clickable but dead on hover.
-    if let Some((row, start, end)) = app.perf_close_click.filter(|&(r, s, e)| contains(r, s, e)) {
-        button_hits.push(row_rect(row, start, end));
-    }
+    // The perf overlay is NOT handled here. It draws after this pass and `Clear`s its own cells,
+    // which would reset anything applied to them — so it paints its own hover in
+    // `render_perf_overlay`. A branch here would be a second source of truth that does nothing.
     // An open header dropdown floats above every pane, so its rows win the hover first — the item
     // under the cursor (and the `[x]` close button) get the standard soft button tint.
     if app.dropdown.is_some() {
@@ -1091,6 +1088,7 @@ fn truncate_left(s: &str, max_width: usize) -> String {
 /// over the list, so it must not sit under the cursor or cover the rows being hovered.
 fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     app.perf_close_click = None;
+    app.perf_panel_rect = Rect::default();
     if !app.perf.overlay {
         return;
     }
@@ -1152,6 +1150,13 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         "  lock".into(),
         format!("{} {}", ms(perf.lock_wait.p95(), !perf.lock_wait.is_empty()), ms(perf.lock_wait.p50(), !perf.lock_wait.is_empty())),
         palette.muted,
+    ));
+    // What this panel costs to draw. Shown because it is subtracted from `flush` — a reader who
+    // cannot see the correction has to take it on trust.
+    rows.push((
+        "overlay".into(),
+        format!("{} {}", ms(perf.overlay_cost.p95(), !perf.overlay_cost.is_empty()), ms(perf.overlay_cost.p50(), !perf.overlay_cost.is_empty())),
+        palette.faint,
     ));
 
     // A backlog is the tell that the loop is structurally behind, so it gets the same alarm colors
@@ -1256,6 +1261,24 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         Rect { x: rect.x, y: rect.y, width: rect.width, height: 1 },
     );
     app.perf_close_click = close_region;
+    // The whole panel is registered, not just the button: every mouse event inside it belongs to
+    // the panel, and without this a click in the middle of it selects the repo row behind it.
+    app.perf_panel_rect = rect;
+
+    // The panel paints its OWN hover. `apply_hover` runs earlier and this function then draws
+    // `Clear` over the same cells, which resets them — so a highlight applied there is computed
+    // and then wiped, leaving a button that is clickable and dead on hover. Doing it here also
+    // means the highlight cannot lag a frame behind a panel that has just moved.
+    if let (Some((row, start, end)), Some((hover_col, hover_row))) = (close_region, app.hover)
+        && hover_row == row
+        && hover_col >= start
+        && hover_col < end
+    {
+        frame.buffer_mut().set_style(
+            Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 },
+            Style::default().bg(palette.hover_bg()),
+        );
+    }
 }
 
 /// Greedy word wrap to `width`, used by the perf overlay's verdict line. Falls back to a hard
@@ -1323,7 +1346,14 @@ pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
 
     // The overlay is painted last, over the finished frame, so its own cost is excluded from every
     // channel above — an overlay that inflated the numbers it reports would be worse than useless.
+    // Excluded from `build` by being drawn after it, and excluded from `flush` by `last_overlay`
+    // (the event loop subtracts it); without that second half the panel's cost is billed to the
+    // emulator, which is the one channel the verdict uses to blame the emulator.
+    let overlay_started = Instant::now();
     render_perf_overlay(frame, app);
+    let overlay_took = overlay_started.elapsed();
+    app.perf.last_overlay = overlay_took;
+    app.perf.overlay_cost.record(overlay_took);
 }
 
 /// Render the active dwell tooltip (a small bordered popup), placed by the floating engine relative

@@ -3,6 +3,30 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.19.1 — 2026-08-22
+The perf overlay was charging its own weight to your terminal, and two of its rows were lying
+Three defects in the instrumentation itself, all found while extending it. Each one made the panel
+report something that was not true, which is the only kind of bug a measuring tool cannot have.
+- **The overlay's own render cost was billed to `flush`.** It was excluded from `build` by being
+  drawn after it, but the event loop computed `flush = whole_draw − build` and `whole_draw` wraps
+  the overlay — so the panel inflated the exact channel `verdict` reads to conclude "TERMINAL FLUSH
+  — the emulator is the slow part". It now times itself into a new **overlay** row and subtracts it,
+  via a pure `attribute_frame`. The residual limit is stated in the code and stands: the extra cells
+  the panel adds to ratatui's diff *are* real work for the emulator, so this removes our layout
+  cost, not the emulator's cost of drawing us.
+- **`motion/s` and `event/s` were always the same number.** Both counters were incremented on
+  adjacent lines inside the `if kind == Moved` branch, so no key, click, wheel, drag or resize was
+  ever counted and `backlog` described only motion coalescing. Every event is now counted, drained
+  into the next frame so the hot path takes no extra lock.
+- **The `[x]`'s hover highlight was dead.** `apply_hover` set the style and the overlay then drew
+  `Clear` over the same cells, which resets them — computed, then wiped. The panel now paints its
+  own hover, which also means the highlight cannot lag a frame behind.
+- **The panel is opaque to the mouse.** Its whole rect is registered, not just the close button: a
+  click in the middle of it no longer selects the repo row behind it, and a drag near its edge no
+  longer grabs the splitter underneath.
+- The `build`/`palette`/`hover` docs now say these nest rather than sum, and the report indents them
+  to match.
+
 ## v3.19.0 — 2026-08-20
 Scrollbars get a column of their own, from a component that makes the old bug unrepresentable
 A scrollbar occupies a column and ratatui does not say which one, so every call site chose — and the

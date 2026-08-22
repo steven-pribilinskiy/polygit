@@ -1498,6 +1498,10 @@ async fn run_event_loop(
     // rather than taking the lock. `coalesce_motion` is the A/B switch: `--no-coalesce` restores the
     // old one-frame-per-motion-report behaviour so the fix can be measured against it.
     let coalesce_motion = !std::env::var("POLYGIT_NO_COALESCE").is_ok_and(|v| v == "1");
+    // One event is dispatched per iteration; this carries it to the render block at the top of the
+    // NEXT one, which already holds the `AppState` lock. Recording it at the dispatch instead would
+    // mean taking the lock again on the hot path just to bump a counter.
+    let mut pending_event: Option<(Instant, usize)> = None;
 
     // Whether all-motion mouse tracking (DEC 1003) is currently enabled in the terminal; kept in
     // sync with the `hover_effects` setting each render.
@@ -1702,7 +1706,12 @@ async fn run_event_loop(
             let mut app = app_state.lock().unwrap();
             if app.perf.enabled {
                 app.perf.lock_wait.record(lock_started.elapsed());
+                if let Some((at, queued)) = pending_event.take() {
+                    app.perf.event_read(at, queued);
+                }
             }
+            // Cleared unconditionally: a session with perf off must not accumulate a stale event.
+            pending_event = None;
             // Keep the selection in view whenever it moved this frame (keyboard / Alt+wheel nav,
             // filter preview, reselect after a layout change). A plain wheel scroll leaves the
             // selection unchanged, so this is skipped and the view stays where the wheel left it.
@@ -1883,11 +1892,14 @@ async fn run_event_loop(
             terminal.draw(|frame| render::render(frame, &mut app, tick))?;
             if perf_on {
                 let whole = draw_started.elapsed();
-                // `render::render` recorded THIS frame's build time into `last_build`; the rest of
-                // the `draw` call is ratatui's diff plus the write to the tty.
-                let build = app.perf.last_build;
-                app.perf.frame.record(whole);
-                app.perf.flush.record(whole.saturating_sub(build));
+                // `render::render` recorded THIS frame's build and overlay times. The overlay is
+                // drawn inside the same `draw` call, so billing it to the remainder would charge
+                // the panel's own cost to the emulator — the one channel the verdict reads to
+                // blame the emulator.
+                let (frame_took, flush_took) =
+                    perf::attribute_frame(whole, app.perf.last_build, app.perf.last_overlay);
+                app.perf.frame.record(frame_took);
+                app.perf.flush.record(flush_took);
                 app.perf.frame_done(Instant::now());
                 let iter = iter_started.elapsed();
                 app.perf.upkeep.record(iter.saturating_sub(whole));
@@ -1930,6 +1942,11 @@ async fn run_event_loop(
             None
         };
         if let Some(next_event) = next_event {
+            // Every event counts, whatever its kind — key, click, wheel, drag, resize, paste.
+            // Gated behind the motion branch (where this used to live) it counted exactly the same
+            // stream as `motion_read`, so `event/s` and `motion/s` were always the same number and
+            // `backlog` described only coalescing. Drained by the next render.
+            pending_event = Some((Instant::now(), coalesced_motion));
             match next_event {
             Event::Mouse(mouse) => {
                 let mut app = app_state.lock().unwrap();
@@ -1942,9 +1959,7 @@ async fn run_event_loop(
                 // Bare cursor motion carries no action beyond the hover position recorded above.
                 if matches!(mouse.kind, MouseEventKind::Moved) {
                     if app.perf.enabled {
-                        let now = Instant::now();
-                        app.perf.event_read(now, coalesced_motion);
-                        app.perf.motion_read(now);
+                        app.perf.motion_read(Instant::now());
                     }
                     continue;
                 }
@@ -1956,6 +1971,15 @@ async fn run_event_loop(
                 {
                     app.perf.toggle_overlay();
                     app.show_toast("perf overlay off");
+                    continue;
+                }
+                // Everything else inside the panel belongs to the panel. Without this a click in
+                // the middle of it selects the repo row behind it, a wheel scrolls that list, and a
+                // drag near its left edge grabs the splitter underneath — the panel is opaque on
+                // screen, so it has to be opaque to the mouse too.
+                if !app.perf_panel_rect.is_empty()
+                    && point_in(app.perf_panel_rect, mouse.column, mouse.row)
+                {
                     continue;
                 }
 

@@ -864,6 +864,86 @@ fn perf_overlay_shows_its_verdict_and_close_button() {
     assert!(app.perf_close_click.is_none(), "the stale click region is cleared");
 }
 
+/// The panel draws AFTER `apply_hover` and `Clear`s its own cells, which resets any style that
+/// pass applied — so a highlight registered there is computed and then wiped, leaving a button
+/// that is clickable and dead on hover. It has to paint its own. Asserting the background changed
+/// is the discrimination: an `apply_hover`-only implementation renders an identical-looking box.
+#[test]
+fn perf_panel_paints_its_own_hover() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+        "demo",
+        std::path::PathBuf::from("/tmp/demo"),
+    )))];
+    let mut app = AppState::new(repos, Some(4), true);
+    app.perf.toggle_overlay();
+    app.perf.lag.record_us(500.0);
+
+    // First frame with no cursor: learn where the `[x]` landed.
+    app.hover = None;
+    let mut term = Terminal::new(TestBackend::new(150, 44)).unwrap();
+    term.draw(|frame| crate::render::render(frame, &mut app, 0)).unwrap();
+    let (row, start, _end) = app.perf_close_click.expect("the close button registers a region");
+    let unhovered = term.backend().buffer()[(start, row)].bg;
+
+    // Second frame with the cursor on it.
+    app.hover = Some((start, row));
+    let mut term = Terminal::new(TestBackend::new(150, 44)).unwrap();
+    term.draw(|frame| crate::render::render(frame, &mut app, 1)).unwrap();
+    let hovered = term.backend().buffer()[(start, row)].bg;
+
+    assert_ne!(hovered, unhovered, "the close button must change background under the cursor");
+}
+
+/// The panel is opaque on screen, so it must be opaque to the mouse: its whole rect is registered,
+/// not just the close button. Without it a click in the middle selects the repo row behind it.
+#[test]
+fn perf_panel_registers_its_whole_rect_not_just_the_close_button() {
+    let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+        "demo",
+        std::path::PathBuf::from("/tmp/demo"),
+    )))];
+    let mut app = AppState::new(repos, Some(4), true);
+    app.perf.toggle_overlay();
+    app.perf.lag.record_us(500.0);
+    let _ = render_rows(&mut app, 150, 44);
+
+    let rect = app.perf_panel_rect;
+    assert!(!rect.is_empty(), "the panel registers a rect");
+    let (row, start, _) = app.perf_close_click.expect("close button region");
+    assert!(
+        crate::app::point_in(rect, start, row),
+        "the close button must lie inside the registered panel rect"
+    );
+    // A point in the panel's body — not the button — must still be inside it.
+    let mid = (rect.x + rect.width / 2, rect.y + rect.height / 2);
+    assert!(crate::app::point_in(rect, mid.0, mid.1), "the body is covered too");
+
+    // Closed again, the rect is cleared — a stale one would keep swallowing clicks over the list.
+    app.perf.toggle_overlay();
+    let _ = render_rows(&mut app, 150, 44);
+    assert!(app.perf_panel_rect.is_empty(), "the stale rect is cleared when the panel closes");
+}
+
+/// The panel reports what it costs to draw, because that cost is subtracted from `flush` and a
+/// reader who cannot see the correction has to take it on trust.
+#[test]
+fn perf_panel_reports_its_own_cost() {
+    let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+        "demo",
+        std::path::PathBuf::from("/tmp/demo"),
+    )))];
+    let mut app = AppState::new(repos, Some(4), true);
+    app.perf.toggle_overlay();
+    app.perf.lag.record_us(500.0);
+    let screen = render_rows(&mut app, 150, 44).join("\n");
+    assert!(screen.contains("overlay"), "the overlay-cost row is listed:\n{screen}");
+    // And the render path actually sampled it, rather than leaving the row permanently blank.
+    assert!(!app.perf.overlay_cost.is_empty(), "rendering the panel records its own cost");
+}
+
 /// A terminal too short for the overlay must simply not draw it — never panic, and never leave a
 /// click region pointing at a box that was not rendered.
 #[test]

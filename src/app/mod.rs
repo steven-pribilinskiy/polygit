@@ -736,6 +736,10 @@ pub struct AppState {
     /// Per-area tooltip enablement (master + footer/headers/counts/settings/links). Persisted,
     /// all default on. Tooltips still require `hover_effects` (for cursor tracking).
     pub tooltips: TooltipPrefs,
+    /// The perf panel's full rect, captured each frame it is drawn. Every mouse event inside it
+    /// belongs to the panel — without this a click in the middle of it falls through and selects
+    /// the repo row behind it, and a drag near its edge can grab the splitter underneath.
+    pub perf_panel_rect: Rect,
     /// The perf overlay's `[x]` close button region `(row, col_start, col_end)`, captured each
     /// frame it is drawn. The overlay floats above every pane, so this is hit-tested before the
     /// pane/modal dispatch — mirroring how its `Ctrl+T` key is handled before the per-view gates.
@@ -1232,6 +1236,7 @@ impl AppState {
             changed_row_effect: persisted.interaction.changed_row_effect,
             tooltips: persisted.tooltips,
             perf: crate::perf::Perf::default(),
+            perf_panel_rect: Rect::default(),
             perf_close_click: None,
             hover: None,
             hover_tooltip: None,

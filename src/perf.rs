@@ -124,14 +124,19 @@ pub struct Perf {
     /// Whether to draw the overlay. Collection can run without it (for the on-quit report).
     pub overlay: bool,
 
-    /// Widget layout + paint into the back buffer (our code).
+    /// Widget layout + paint into the back buffer (our code). CONTAINS `palette` and `hover` —
+    /// they are timed inside it, not beside it, so the three do not sum.
     pub build: Channel,
-    /// The palette remap pass over every cell.
+    /// The palette remap pass over every cell. Nested inside `build`.
     pub palette: Channel,
-    /// The hover-highlight pass.
+    /// The hover-highlight pass. Nested inside `build`.
     pub hover: Channel,
     /// Buffer diff + escape-sequence write + flush to the tty (the terminal's speed).
     pub flush: Channel,
+    /// What the overlay itself costs to lay out. Subtracted from `flush`, because the overlay is
+    /// drawn INSIDE `terminal.draw` — without this it is charged to the emulator, and the panel
+    /// inflates the very channel `verdict` reads to blame the emulator.
+    pub overlay_cost: Channel,
     /// `build` + `flush`, i.e. the whole `terminal.draw` call.
     pub frame: Channel,
     /// Wall time for one full pass of the event loop, draw included.
@@ -166,6 +171,8 @@ pub struct Perf {
     /// to attribute the remainder to the flush, so it must be the CURRENT frame's value, not a
     /// window statistic.
     pub last_build: Duration,
+    /// The most recent frame's overlay-render time, for the same reason as `last_build`.
+    pub last_overlay: Duration,
 
     /// When the oldest not-yet-drawn motion report was read. Cleared by the frame that draws it.
     pending_motion: Option<Instant>,
@@ -203,7 +210,10 @@ impl Perf {
         }
     }
 
-    /// Record an input event of any kind, with how many more were already queued behind it.
+    /// Record an input event of any kind — key, click, wheel, drag, resize, paste — with how many
+    /// superseded motion reports the poll discarded ahead of it. Called for EVERY event, not only
+    /// motion: gated behind the motion branch it counted the same stream as `motion_read`, so the
+    /// panel showed one fact in two rows and `backlog` described only coalescing.
     pub fn event_read(&mut self, at: Instant, queued: usize) {
         if !self.enabled {
             return;
@@ -268,13 +278,16 @@ impl Perf {
             "{:<12} {:>9} {:>9} {:>9} {:>9} {:>9} {:>8}\n",
             "channel", "p50", "p95", "p99", "win-max", "peak", "n"
         ));
-        let rows: [(&str, &Channel); 9] = [
+        // Indentation is containment: `build` includes `palette` and `hover`, and `frame` includes
+        // `build` and `flush`. `overlay` is the panel's own cost, already subtracted from `flush`.
+        let rows: [(&str, &Channel); 10] = [
             ("hover lag", &self.lag),
             ("frame", &self.frame),
             ("  build", &self.build),
             ("    palette", &self.palette),
             ("    hover", &self.hover),
             ("  flush", &self.flush),
+            ("overlay", &self.overlay_cost),
             ("upkeep", &self.upkeep),
             ("lock wait", &self.lock_wait),
             ("event", &self.event),
@@ -324,6 +337,26 @@ impl Perf {
         out.push_str(&format!("\nverdict: {}\n", self.verdict()));
         out
     }
+}
+
+/// Split one `terminal.draw` call into what our layout cost and what the write cost.
+///
+/// `whole` is the entire call; `build` is the widget layout; `overlay` is the perf panel's own
+/// render, which happens inside the same call and must not be billed to the terminal. Returns
+/// `(frame, flush)` where `frame` is `whole` minus the overlay — the cost of drawing the app as it
+/// would be with the panel closed — and `flush` is what is left after our layout.
+///
+/// The limit, stated because it cannot be measured away: the extra cells the panel puts into
+/// ratatui's diff ARE real work for the emulator. This subtracts our layout cost, not the
+/// emulator's cost of drawing us. A panel-open reading of `flush` is therefore still slightly
+/// pessimistic, and the honest fix for a borderline verdict is to close the panel and use `--perf`.
+///
+/// Saturating throughout: the three clocks are read at different points, so a scheduler hiccup can
+/// make the parts sum to more than the whole, and a negative duration would panic.
+pub fn attribute_frame(whole: Duration, build: Duration, overlay: Duration) -> (Duration, Duration) {
+    let frame = whole.saturating_sub(overlay);
+    let flush = frame.saturating_sub(build);
+    (frame, flush)
 }
 
 /// Measure how long this terminal takes to answer a Device Status Report — the floor on its
@@ -467,6 +500,35 @@ mod tests {
             perf.backlog.record_us(0.0);
         }
         assert_eq!(perf.verdict(), "hover is keeping up");
+    }
+
+    /// The overlay renders INSIDE `terminal.draw`, so without subtracting it the panel's own cost
+    /// is billed to the terminal — inflating the one channel `verdict` uses to say the emulator is
+    /// at fault. Assert the arithmetic, never a timing: a timing assertion here would be flaky and
+    /// would prove nothing about the attribution.
+    #[test]
+    fn attribute_frame_bills_the_overlay_to_neither_build_nor_flush() {
+        let whole = Duration::from_micros(1000);
+        let build = Duration::from_micros(400);
+        let overlay = Duration::from_micros(250);
+        let (frame, flush) = attribute_frame(whole, build, overlay);
+        assert_eq!(frame, Duration::from_micros(750), "frame excludes the overlay");
+        assert_eq!(flush, Duration::from_micros(350), "flush is frame minus build");
+        // The pre-fix behaviour charged the overlay to flush; that is what this must not do.
+        assert_ne!(flush, whole.saturating_sub(build));
+    }
+
+    /// The three clocks are read at different points, so a scheduler hiccup can make the parts sum
+    /// to more than the whole. Duration subtraction panics on underflow — saturate instead.
+    #[test]
+    fn attribute_frame_saturates_when_the_parts_exceed_the_whole() {
+        let (frame, flush) = attribute_frame(
+            Duration::from_micros(100),
+            Duration::from_micros(900),
+            Duration::from_micros(900),
+        );
+        assert_eq!(frame, Duration::ZERO);
+        assert_eq!(flush, Duration::ZERO);
     }
 
     #[test]
