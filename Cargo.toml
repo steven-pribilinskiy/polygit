@@ -43,6 +43,9 @@ tui-pick = { path = "tui-pick" }
 # crate is unpublished, and the lockfile pins the revision either way.
 tuilith = { git = "https://github.com/aylith-labs/tuilith", default-features = false }
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 lto = true
 codegen-units = 1
