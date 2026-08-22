@@ -3,6 +3,69 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.20.0 — 2026-08-22
+Pick repos by rule, see where they would land, then clone or move them there
+
+Cloning a whole org and reorganizing one you already have turned out to be the same operation: a
+selected set, a desired layout, and the diff between that and where the repos actually are. Absent
+locally is a clone, present in the wrong place is a move, already right is left alone. One plan
+model, one preview, two executors — designing them separately would have built the same thing twice.
+
+**Selecting.** `polygit select '<expr>'` resolves a rule over every owner in scope: glob, regex,
+name prefix at a configurable token depth, suffix with plural folding, any token, topic, language,
+owner, boolean state, or an explicit list — composed with AND/OR/NOT and parentheses. Name-first by
+design, because across a real 991-repo org the name is the only field populated for every repo:
+descriptions are empty on 35.8%, topics on 63.9%, language null on 9.2%.
+
+`--with-siblings` widens a selection to the project: a service repo pulls in its infrastructure and
+its deploy-manifest repos, which a role-bucket classifier scatters into three different places.
+Clustering is an expansion operator rather than a taxonomy on purpose — 71.7% of repos in that org
+cluster with nothing, and 54% of the infrastructure-prefixed ones have no repo-side anchor at all,
+so clusters say which of the two they are and the unanchored ones stay out of bulk actions.
+
+Both commands print what each axis is actually worth for the owners in scope instead of ranking
+silently. Two real orgs sit at opposite ends — 36% tagged over 38 distinct topics against 100% over
+208 — so a fixed default axis ordering is simply wrong for one of them.
+
+**Laying out.** `polygit plan` renders each selected repo through a destination template
+(`{group}/{project}/{repo}`) and prints the resulting directory tree, built by the same code
+the repo list already uses. A placeholder that resolves to nothing drops its whole path segment, so
+the repos that belong to no cluster sit flat rather than each getting a folder of their own. Rows
+come out as clone, keep, move or skip, and two owners with the same repo name both wanting one
+destination is a reported collision rather than one silently winning.
+
+**Cloning.** `polygit clone` acts on the clone rows. Concurrency comes from the same cap as pulls,
+so a throttling remote slows both together. Full history by default; `--blobless` defers file
+contents and is much faster at org scale while truncating nothing. Skips are decided up front and
+always reported — an occupied destination or a repo over `--max-size` is an answer, not a failure.
+
+**Reorganizing.** `polygit reorg` moves repos that exist but not where the layout says they belong,
+taking `<repo>.worktrees/` along as one unit and repairing git with each worktree's new path, which
+reconnects both directions at once. The links come back relative, so the next move of that subtree
+needs no repair at all.
+
+Every gate runs before anything is written. The sharpest is not a filesystem one: a git config can
+switch your commit identity by path through `includeIf "gitdir:…"`, so moving across such a boundary
+changes what you commit with no error and no output. That blocks by default. So does a repo any
+process is sitting in, a locked worktree, an occupied destination, and a destination on another
+filesystem. A failure partway walks back the completed renames.
+
+polygit rewrites its own path-keyed state and reports everything else — session transcripts, other
+tools' registries, shell history — into a manifest rather than editing it. Rewriting files across
+config directories polygit does not own is where an unrecoverable mistake lives.
+
+**The panel.** `C` gained the mouse. `render_coverage` took an immutable borrow, so it could not
+register a hit region even in principle, and clicks inside it fell through to the repo list
+underneath and moved the selection there. It now has a real scrollbar, clickable tabs, checkboxes,
+footer chips and `[x]`, wheel scrolling, and a hover branch. `+` adds an owner by name, `owner/repo`
+or URL — enumerated even with nothing cloned from it, which is what turns an org you have never
+touched into something the panel can act on.
+
+Fixed along the way: the owner listing was capped at 1000 repos and a real org is at 991, nine from
+silently truncating and dropping local clones out of the view entirely; worktree discovery stopped
+one level down, so a branch name containing `/` hid its checkout; and `lists.favorites` was
+documented as relative while it stores absolute paths, which a path rewrite would have corrupted.
+
 ## v3.19.1 — 2026-08-22
 The perf overlay was charging its own weight to your terminal, and two of its rows were lying
 Three defects in the instrumentation itself, all found while extending it. Each one made the panel

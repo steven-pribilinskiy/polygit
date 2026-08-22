@@ -685,26 +685,52 @@ pub async fn run_coverage_scan(app_state: Arc<Mutex<AppState>>) {
     }
 }
 
-/// Clone the coverage panel's checked-missing repos. Forks land under `<root>/<forks_subdir>/`
-/// (the subdir is a persisted preference); everything else clones directly under the first scan
-/// root. Clones run sequentially (they're heavy) with live `clone_status`, then the panel re-scans
-/// so freshly-cloned repos flip to ✓.
+/// Clone the coverage panel's checked-missing repos through the shared clone engine — the same one
+/// `polygit clone` uses, so the panel and the command cannot drift on concurrency, skip reasons or
+/// destination. Forks land under `<root>/<forks_subdir>/`. Afterwards the panel re-scans AND the
+/// repos are discovered into the list, so a freshly cloned repo is usable without a restart.
 pub async fn run_coverage_clone(app_state: Arc<Mutex<AppState>>) {
-    let (targets, base_root) = {
+    let (checked, base_root, control, max_jobs, depth, timeout, icons, no_worktrees, prefs) = {
         let app = app_state.lock().unwrap();
         let Some(state) = app.coverage_modal.as_ref() else {
             return;
         };
-        (state.checked_missing(), state.roots.first().cloned())
+        (
+            state.checked_missing(),
+            state.roots.first().cloned(),
+            Arc::clone(&app.throttle),
+            app.max_jobs,
+            app.discovery_max_depth,
+            app.discovery_timeout_secs,
+            app.icon_style,
+            app.discovery_no_worktrees,
+            app.coverage_prefs.clone(),
+        )
     };
     let Some(base_root) = base_root else {
         return;
     };
-    if targets.is_empty() {
+    if checked.is_empty() {
         return;
     }
-    let forks_subdir = crate::persist::load().coverage.forks_subdir;
+
+    let targets: Vec<crate::clone::CloneTarget> = checked
+        .iter()
+        .map(|repo| crate::clone::CloneTarget {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            dest: if repo.is_fork {
+                base_root.join(&prefs.forks_subdir).join(&repo.name)
+            } else {
+                base_root.join(&repo.name)
+            },
+            size_kb: repo.size_kb,
+        })
+        .collect();
     let total = targets.len();
+    let progress = Arc::new(Mutex::new(crate::clone::CloneProgress::new(total)));
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     {
         let mut app = app_state.lock().unwrap();
         if let Some(state) = app.coverage_modal.as_mut() {
@@ -713,28 +739,60 @@ pub async fn run_coverage_clone(app_state: Arc<Mutex<AppState>>) {
         }
     }
 
-    let mut done = 0usize;
-    let mut failures: Vec<String> = Vec::new();
-    for (url, name, is_fork) in targets {
-        {
-            let mut app = app_state.lock().unwrap();
-            match app.coverage_modal.as_mut() {
-                Some(state) => state.clone_status = format!("cloning {}/{total} — {name}", done + 1),
-                None => return, // panel closed mid-clone
+    // Mirror the engine's live progress onto the panel while it runs.
+    let reporter = Arc::clone(&progress);
+    let ui = Arc::clone(&app_state);
+    let ticker = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let (done, running, finished) = {
+                let state = reporter.lock().unwrap();
+                (state.done, state.running.join(", "), state.done >= state.total)
+            };
+            {
+                let mut app = ui.lock().unwrap();
+                match app.coverage_modal.as_mut() {
+                    Some(state) => {
+                        state.clone_status = if running.is_empty() {
+                            format!("cloning {done}/{total}…")
+                        } else {
+                            format!("cloning {done}/{total} — {running}")
+                        };
+                    }
+                    None => return,
+                }
+            }
+            if finished {
+                return;
             }
         }
-        let dest = if is_fork {
-            base_root.join(&forks_subdir).join(&name)
-        } else {
-            base_root.join(&name)
-        };
-        match crate::git::clone_repo(&url, &dest).await {
-            Ok(()) => done += 1,
-            Err(err) => failures.push(format!("{name}: {err}")),
-        }
-    }
+    });
 
-    // Re-scan so the cloned repos flip to ✓ (bypass the cache for a fresh count).
+    crate::clone::run_clone(
+        targets,
+        crate::clone::CloneOptions::default(),
+        Arc::clone(&progress),
+        cancel,
+        control.clone(),
+        crate::clone::gh_clone_fn(),
+    )
+    .await;
+    ticker.abort();
+
+    let summary = progress.lock().unwrap().summary();
+    let failures: Vec<String> = progress
+        .lock()
+        .unwrap()
+        .results
+        .iter()
+        .filter_map(|(target, outcome)| match outcome {
+            crate::clone::CloneOutcome::Cloned => None,
+            other => Some(format!("{}: {}", target.name, other.label())),
+        })
+        .collect();
+
+    // Re-scan coverage so the rows flip, and discover the new clones into the list so they are
+    // usable straight away rather than after a restart.
     let (roots, max_depth, extra_owners) = {
         let app = app_state.lock().unwrap();
         app.coverage_modal
@@ -742,6 +800,17 @@ pub async fn run_coverage_clone(app_state: Arc<Mutex<AppState>>) {
             .map(|state| (state.roots.clone(), state.max_depth, state.extra_owners.clone()))
             .unwrap_or_default()
     };
+    tokio::spawn(run_discovery(
+        Arc::clone(&app_state),
+        vec![base_root],
+        depth,
+        control,
+        max_jobs,
+        timeout,
+        icons,
+        no_worktrees,
+        false,
+    ));
     let refreshed = crate::coverage::compute(&roots, max_depth, None, true, &extra_owners).await;
 
     let mut app = app_state.lock().unwrap();
@@ -755,14 +824,14 @@ pub async fn run_coverage_clone(app_state: Arc<Mutex<AppState>>) {
                 state.active_tab = 0;
             }
             state.selected = 0;
+            state.scroll = 0;
         }
     }
-    let summary = if failures.is_empty() {
-        format!("Cloned {done} repo(s)")
+    if failures.is_empty() {
+        app.show_toast(&summary);
     } else {
-        format!("Cloned {done}, {} failed — {}", failures.len(), failures.join("; "))
-    };
-    app.show_toast(&summary);
+        app.show_toast(format!("{summary} — {}", failures.join("; ")));
+    }
 }
 
 /// Fetch the Files tab's whole-PR diff (`gh pr diff`) for the open PR modal and store it. Guarded

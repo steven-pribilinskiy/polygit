@@ -49,6 +49,15 @@ pub fn parse_owner_input(raw: &str) -> Option<String> {
     Some(owner.to_string())
 }
 
+/// A repo the user ticked for cloning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedRepo {
+    pub owner: String,
+    pub name: String,
+    pub is_fork: bool,
+    pub size_kb: u64,
+}
+
 impl CoverageState {
     /// The active owner tab, if any.
     pub fn active_owner(&self) -> Option<&OwnerCoverage> {
@@ -73,13 +82,19 @@ impl CoverageState {
         format!("{owner}/{}", repo.name)
     }
 
-    /// Missing (not-cloned) repos currently checked in the active tab, as `(url, name, is_fork)` —
-    /// the payload the clone action needs.
-    pub fn checked_missing(&self) -> Vec<(String, String, bool)> {
+    /// Missing (not-cloned) repos currently checked in the active tab — the payload the clone
+    /// action needs, carrying the owner so the destination and the `gh` slug both resolve.
+    pub fn checked_missing(&self) -> Vec<CheckedRepo> {
+        let owner = self.active_owner().map(|owner| owner.owner.clone()).unwrap_or_default();
         self.visible_rows()
             .into_iter()
             .filter(|repo| !repo.cloned && self.checked.contains(&self.row_key(repo)))
-            .map(|repo| (repo.url.clone(), repo.name.clone(), repo.is_fork))
+            .map(|repo| CheckedRepo {
+                owner: owner.clone(),
+                name: repo.name.clone(),
+                is_fork: repo.is_fork,
+                size_kb: repo.size_kb,
+            })
             .collect()
     }
 }

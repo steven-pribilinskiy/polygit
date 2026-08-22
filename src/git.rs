@@ -635,21 +635,6 @@ pub fn normalize_remote_url(raw: &str) -> Option<String> {
 }
 
 /// Clone `url` into `dest` (which must not already exist). Creates the parent directory first.
-/// Best-effort quiet clone; on failure returns git's stderr.
-pub async fn clone_repo(url: &str, dest: &Path) -> anyhow::Result<()> {
-    if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
-    }
-    let output = Command::new("git")
-        .args(["clone", "--quiet", url])
-        .arg(dest)
-        .output()
-        .await?;
-    if !output.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
-    }
-    Ok(())
-}
 
 /// Reconnect a moved repo and its worktrees. Passing each worktree's NEW path is what makes this
 /// work in both directions at once — git's own documentation is explicit that when the main
