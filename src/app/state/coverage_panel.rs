@@ -85,6 +85,7 @@ impl AppState {
             include_forks: false,
             include_archived: false,
             checked: HashSet::new(),
+            extra_owners: Vec::new(),
             roots,
             max_depth,
             refresh: false,
@@ -214,6 +215,10 @@ mod tests {
             is_archived: false,
             private: false,
             topics: topics.iter().map(|topic| topic.to_string()).collect(),
+            size_kb: 0,
+            description: None,
+            language: None,
+            pushed_at: None,
             url: format!("https://github.com/acme/{name}"),
         }
     }

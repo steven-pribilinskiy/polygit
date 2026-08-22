@@ -657,13 +657,15 @@ pub async fn run_pr_view(app_state: Arc<Mutex<AppState>>) {
 /// panel's scan roots + depth, runs the (network-touching) `gh` scan off the lock, then writes the
 /// per-owner result back — unless the panel was closed meanwhile.
 pub async fn run_coverage_scan(app_state: Arc<Mutex<AppState>>) {
-    let Some((roots, max_depth, refresh)) = ({
+    let Some((roots, max_depth, refresh, extra_owners)) = ({
         let app = app_state.lock().unwrap();
-        app.coverage_modal.as_ref().map(|state| (state.roots.clone(), state.max_depth, state.refresh))
+        app.coverage_modal
+            .as_ref()
+            .map(|state| (state.roots.clone(), state.max_depth, state.refresh, state.extra_owners.clone()))
     }) else {
         return;
     };
-    let result = crate::coverage::compute(&roots, max_depth, None, refresh).await;
+    let result = crate::coverage::compute(&roots, max_depth, None, refresh, &extra_owners).await;
     let mut app = app_state.lock().unwrap();
     if let Some(state) = app.coverage_modal.as_mut() {
         state.loading = false;
@@ -733,14 +735,14 @@ pub async fn run_coverage_clone(app_state: Arc<Mutex<AppState>>) {
     }
 
     // Re-scan so the cloned repos flip to ✓ (bypass the cache for a fresh count).
-    let (roots, max_depth) = {
+    let (roots, max_depth, extra_owners) = {
         let app = app_state.lock().unwrap();
         app.coverage_modal
             .as_ref()
-            .map(|state| (state.roots.clone(), state.max_depth))
+            .map(|state| (state.roots.clone(), state.max_depth, state.extra_owners.clone()))
             .unwrap_or_default()
     };
-    let refreshed = crate::coverage::compute(&roots, max_depth, None, true).await;
+    let refreshed = crate::coverage::compute(&roots, max_depth, None, true, &extra_owners).await;
 
     let mut app = app_state.lock().unwrap();
     if let Some(state) = app.coverage_modal.as_mut() {

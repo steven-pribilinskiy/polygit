@@ -26,12 +26,16 @@ found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level sc
 | `dirty` | | Print just the names of repos with uncommitted changes (grep-style filter). |
 | `branches` | | Show each repo's branch and ahead/behind vs its upstream (`↑N ↓N`, `✓` in sync, `no upstream`). |
 | `sizes` | | Show disk usage per repo, largest first, plus a total. |
+| `coverage` | `missing`, `cov` | Per GitHub owner, which of its repos aren't cloned locally. |
+| `select` | `sel` | Resolve a [selector expression](#selector-expressions) to the repos it picks. |
+| `plan` | | Preview the directory layout a selector + template produce. Touches nothing. |
+| `orgs` | `owners` | Your account, orgs and enterprises, with how much of each is cloned. |
 | `ws` | `workspace`, `workspaces` | Interactive workspace picker; `ws ls` lists saved workspaces. |
 | `update` | `upgrade` | Self-update to the latest published release. |
 
-The five report commands are headless: they print to stdout and exit (colors only when
-stdout is a TTY, so piped output stays plain). Each accepts its own scan args — `[DIR...]`,
-`-w <name>`, `--depth <N>`, `--no-recursive` — which must come **after** the subcommand
+Every command above is headless: it prints to stdout and exits (colors only when stdout is a TTY,
+so piped output stays plain). Each accepts its own scan args — `[DIR...]`, `-w <name>`,
+`--depth <N>`, `--no-recursive` — which must come **after** the subcommand
 (`polygit list -w work`, not `polygit -w work list`).
 
 ```bash
@@ -40,7 +44,64 @@ polygit status                       # what's uncommitted, per repo
 polygit dirty | head                 # pipe-friendly dirty-repo names
 polygit branches -w work             # ahead/behind across a saved workspace
 polygit sizes --no-recursive         # disk usage, immediate subdirs only
+polygit coverage ~/projects          # which repos of each owner you're missing
 ```
+
+## Selector expressions
+
+`select` and `plan` take an expression over the repos of every owner found under the scan roots
+(plus any named with `--owner`). An empty expression selects everything.
+
+| Term | Matches |
+|------|---------|
+| `foo` | name contains `foo` |
+| `tf-*` | name matches the `*` glob (same matcher as a `groups.json` `pattern`) |
+| `re:^tf-` | name matches the regex |
+| `prefix:tf` | the name's leading hyphen-tokens are `tf` |
+| `suffix:service` | the name's last token is `service` — plurals fold, so `-services` matches too |
+| `token:billing` | any hyphen-token of the name is `billing` |
+| `topic:x` · `lang:rust` · `owner:acme` | GitHub topic, primary language, owner |
+| `is:cloned` · `is:missing` · `is:archived` · `is:fork` · `is:private` | boolean state |
+| `list:a,b,c` | an explicit set, by `name` or `owner/name` |
+
+Compose with `AND`, `OR`, `NOT` (or `&`, `|`, `!`) and parentheses; adjacent terms are an implicit
+AND; a leading `-` negates one term. `--with-siblings` then widens the result to every repo sharing
+a project stem with it — so selecting one service pulls in its infrastructure and deploy repos.
+
+```bash
+polygit select 'tf-* NOT is:archived' ~/projects
+polygit select 'topic:cli AND is:missing' --owner acme
+polygit select 'billing' --with-siblings          # the service, its IaC, its manifests
+```
+
+Both commands print how much signal each axis actually carries for the owners in scope — topic
+coverage, prefix families, language spread — because a topic filter is a strong primary axis in a
+well-tagged org and close to useless in one where the topics are machine-generated markers.
+
+## Layout templates
+
+`plan` renders each selected repo to a destination path built from a template. A placeholder that
+resolves to nothing **drops its whole path segment**, so repos that belong to no cluster sit flat
+rather than each getting a folder of their own.
+
+| Placeholder | Resolves to |
+|-------------|-------------|
+| `{repo}` | the repo name (required — a template without it is rejected) |
+| `{owner}` | the GitHub owner |
+| `{project}` | the project stem, when the repo belongs to a multi-repo cluster |
+| `{group}` | the name-prefix family, when that family has more than one member |
+| `{language}` | the primary language |
+| `{topic:<t>}` | `<t>`, when the repo carries that topic |
+
+```bash
+polygit plan '' ~/projects --layout '{project}/{repo}'
+polygit plan 'tf-*' ~/projects --layout '{group}/{repo}' -o /tmp/preview --json
+```
+
+Each row comes out as **clone** (not present locally), **keep** (already exactly there), **move**
+(present somewhere else) or **skip**. A skip is usually a collision: two owners with the same repo
+name both wanting one destination, which `plan` refuses to resolve silently — add `{owner}` to the
+template and it goes away.
 
 ## Flags
 

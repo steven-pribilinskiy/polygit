@@ -12,12 +12,14 @@ mod groups;
 mod highlight;
 mod keybindings;
 mod keymap;
+mod layout;
 mod perf;
 mod persist;
 mod plain;
 mod pr_cache;
 mod profile;
 mod render;
+mod select;
 mod theme;
 mod timeago;
 mod treeview;
@@ -180,6 +182,69 @@ enum Commands {
         #[arg(long)]
         refresh: bool,
     },
+    /// Resolve a selector expression to the repos it picks
+    #[command(visible_alias = "sel")]
+    Select {
+        /// Selector expression, e.g. `tf-* OR topic:x NOT is:archived`. Empty selects everything.
+        #[arg(default_value = "")]
+        expr: String,
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+        /// Enumerate this owner too, even with nothing cloned from it (repeatable)
+        #[arg(long = "owner", value_name = "NAME")]
+        owners: Vec<String>,
+        /// Widen the selection to every repo sharing a project stem with it
+        #[arg(long)]
+        with_siblings: bool,
+        #[arg(long)]
+        include_forks: bool,
+        #[arg(long)]
+        include_archived: bool,
+        #[arg(long)]
+        refresh: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Preview the directory layout a selector + template produce, without touching anything
+    Plan {
+        /// Selector expression. Empty selects everything.
+        #[arg(default_value = "")]
+        expr: String,
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+        /// Destination path template, e.g. `{group}/{project}/{repo}`
+        #[arg(long, value_name = "TEMPLATE", default_value = "{repo}")]
+        layout: String,
+        /// Destination root (default: the first scan root)
+        #[arg(short = 'o', long, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Name tokens that form a prefix family key
+        #[arg(long, value_name = "N", default_value = "1")]
+        prefix_depth: usize,
+        #[arg(long = "owner", value_name = "NAME")]
+        owners: Vec<String>,
+        #[arg(long)]
+        with_siblings: bool,
+        #[arg(long)]
+        include_forks: bool,
+        #[arg(long)]
+        include_archived: bool,
+        #[arg(long)]
+        refresh: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Your account, orgs and enterprises, with how much of each is cloned locally
+    #[command(visible_alias = "owners")]
+    Orgs {
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+        #[arg(long)]
+        refresh: bool,
+    },
+
     /// Manage saved workspaces — opens an interactive picker; `ws ls` lists them.
     #[command(visible_aliases = ["workspace", "workspaces"])]
     Ws {
@@ -995,6 +1060,70 @@ async fn run() -> Result<i32> {
                 },
             )
             .await;
+        }
+        Some(Commands::Select {
+            expr,
+            scan,
+            owners,
+            with_siblings,
+            include_forks,
+            include_archived,
+            refresh,
+            json,
+        }) => {
+            let (roots, _) = resolve_roots(&scan.dirs, scan.workspace.as_deref())?;
+            return commands::run_select(
+                roots,
+                scan.max_depth(),
+                commands::SelectOpts {
+                    expr: expr.clone(),
+                    owners: owners.clone(),
+                    with_siblings: *with_siblings,
+                    include_forks: *include_forks,
+                    include_archived: *include_archived,
+                    refresh: *refresh,
+                    json: *json,
+                },
+            )
+            .await;
+        }
+        Some(Commands::Plan {
+            expr,
+            scan,
+            layout,
+            output,
+            prefix_depth,
+            owners,
+            with_siblings,
+            include_forks,
+            include_archived,
+            refresh,
+            json,
+        }) => {
+            let (roots, _) = resolve_roots(&scan.dirs, scan.workspace.as_deref())?;
+            return commands::run_plan(
+                roots,
+                scan.max_depth(),
+                commands::PlanOpts {
+                    select: commands::SelectOpts {
+                        expr: expr.clone(),
+                        owners: owners.clone(),
+                        with_siblings: *with_siblings,
+                        include_forks: *include_forks,
+                        include_archived: *include_archived,
+                        refresh: *refresh,
+                        json: *json,
+                    },
+                    layout: layout.clone(),
+                    output: output.clone(),
+                    prefix_depth: *prefix_depth,
+                },
+            )
+            .await;
+        }
+        Some(Commands::Orgs { scan, refresh }) => {
+            let (roots, _) = resolve_roots(&scan.dirs, scan.workspace.as_deref())?;
+            return commands::run_orgs(roots, scan.max_depth(), *refresh).await;
         }
         Some(Commands::Update) => return run_self_update().await,
         Some(Commands::Ws { action }) => match action {
@@ -5976,6 +6105,30 @@ fn compute_exit_code(app_state: &Arc<Mutex<AppState>>) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+
+    #[test]
+    fn help_lists_every_subcommand() {
+        let listed: Vec<&str> = crate::commands::HELP_SECTIONS
+            .iter()
+            .flat_map(|(_, rows)| rows.iter())
+            .flat_map(|(primary, aliases, _)| {
+                std::iter::once(*primary)
+                    .chain(aliases.split(',').map(str::trim).filter(|alias| !alias.is_empty()))
+            })
+            .collect();
+        for command in super::Cli::command().get_subcommands() {
+            let name = command.get_name();
+            if name == "help" {
+                continue;
+            }
+            assert!(
+                listed.contains(&name),
+                "`{name}` is missing from HELP_SECTIONS, so `polygit --help` never mentions it"
+            );
+        }
+    }
+
     use super::wheel_step;
     use crossterm::event::KeyModifiers;
 

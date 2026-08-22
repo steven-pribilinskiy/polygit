@@ -71,6 +71,16 @@ pub struct CoverageRepo {
     pub private: bool,
     #[serde(default)]
     pub topics: Vec<String>,
+    /// GitHub's `diskUsage`, in kilobytes.
+    #[serde(default)]
+    pub size_kb: u64,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    /// ISO-8601 timestamp of the last push, as `gh` reports it.
+    #[serde(default)]
+    pub pushed_at: Option<String>,
     /// Browsable / clone URL: `https://github.com/<owner>/<name>`.
     pub url: String,
 }
@@ -186,6 +196,14 @@ struct OrgRepoData {
     private: bool,
     #[serde(default)]
     topics: Vec<String>,
+    #[serde(default)]
+    size_kb: u64,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    pushed_at: Option<String>,
 }
 
 /// Raw `gh repo list --json` row. Topics come back as `[{"name": "..."}]`; visibility is uppercase.
@@ -201,10 +219,23 @@ struct RawRepo {
     visibility: String,
     #[serde(default)]
     repository_topics: Option<Vec<RawTopic>>,
+    #[serde(default)]
+    disk_usage: u64,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    primary_language: Option<RawLanguage>,
+    #[serde(default)]
+    pushed_at: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct RawTopic {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct RawLanguage {
     name: String,
 }
 
@@ -221,8 +252,187 @@ impl From<RawRepo> for OrgRepoData {
                 .into_iter()
                 .map(|topic| topic.name)
                 .collect(),
+            size_kb: raw.disk_usage,
+            description: raw.description.filter(|text| !text.is_empty()),
+            language: raw.primary_language.map(|language| language.name),
+            pushed_at: raw.pushed_at,
         }
     }
+}
+
+/// One owner you can enumerate: your own account, or an org you belong to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerRef {
+    pub login: String,
+    pub kind: OwnerKind,
+}
+
+/// Your account plus every org you belong to.
+///
+/// Deliberately the REST endpoint: `gh api user/orgs` returns memberships that the GraphQL
+/// `viewer.organizations` connection omits (measured: 4 versus 3 on the same token), and an org
+/// missing from the picker is an org you cannot select.
+pub async fn list_my_owners() -> Vec<OwnerRef> {
+    let mut out = Vec::new();
+    if let Some(login) = current_login().await {
+        out.push(OwnerRef { login, kind: OwnerKind::User });
+    }
+    let output = Command::new("gh").args(["api", "user/orgs", "--paginate", "--jq", ".[].login"]).output().await;
+    if let Ok(output) = output
+        && output.status.success()
+    {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let login = line.trim();
+            if !login.is_empty() {
+                out.push(OwnerRef { login: login.to_string(), kind: OwnerKind::MemberOrg });
+            }
+        }
+    }
+    out
+}
+
+/// One org inside an enterprise, with the repo counts GitHub reports for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnterpriseOrg {
+    pub login: String,
+    pub name: String,
+    pub total: usize,
+    pub archived: usize,
+}
+
+/// An enterprise and the orgs it contains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Enterprise {
+    pub slug: String,
+    pub name: String,
+    pub orgs: Vec<EnterpriseOrg>,
+}
+
+/// Why enterprise discovery produced nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnterpriseError {
+    /// The token lacks `read:enterprise`. Carries the exact command that fixes it, because an API
+    /// error here reads as "no enterprises" and sends people looking in the wrong place.
+    ScopeMissing { remedy: String },
+    Other(String),
+}
+
+impl EnterpriseError {
+    pub fn message(&self) -> String {
+        match self {
+            EnterpriseError::ScopeMissing { remedy } => {
+                format!("needs the read:enterprise scope — run: {remedy}")
+            }
+            EnterpriseError::Other(detail) => detail.clone(),
+        }
+    }
+}
+
+/// The command that grants the scope enterprise discovery needs.
+pub const ENTERPRISE_SCOPE_REMEDY: &str = "gh auth refresh -h github.com -s read:enterprise";
+
+const ENTERPRISE_QUERY: &str = r#"
+query($ecursor: String) {
+  viewer {
+    enterprises(first: 25, after: $ecursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        slug
+        name
+        organizations(first: 100) {
+          nodes {
+            login
+            name
+            repositories(first: 1) { totalCount }
+            repositoriesArchived: repositories(isArchived: true, first: 1) { totalCount }
+          }
+        }
+      }
+    }
+  }
+}
+"#;
+
+/// Every enterprise you belong to and the orgs inside it, following the enterprise cursor.
+pub async fn list_enterprises() -> Result<Vec<Enterprise>, EnterpriseError> {
+    let mut out: Vec<Enterprise> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut args: Vec<String> = vec![
+            "api".into(),
+            "graphql".into(),
+            "-f".into(),
+            format!("query={ENTERPRISE_QUERY}"),
+        ];
+        if let Some(after) = &cursor {
+            args.push("-f".into());
+            args.push(format!("ecursor={after}"));
+        }
+        let output = Command::new("gh")
+            .args(&args)
+            .output()
+            .await
+            .map_err(|err| EnterpriseError::Other(format!("running gh api graphql: {err}")))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stdout.contains("INSUFFICIENT_SCOPES") || stderr.contains("INSUFFICIENT_SCOPES") {
+            return Err(EnterpriseError::ScopeMissing {
+                remedy: ENTERPRISE_SCOPE_REMEDY.to_string(),
+            });
+        }
+        if !output.status.success() {
+            return Err(EnterpriseError::Other(stderr.trim().to_string()));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|err| EnterpriseError::Other(format!("parsing graphql reply: {err}")))?;
+        let connection = &parsed["data"]["viewer"]["enterprises"];
+        for node in connection["nodes"].as_array().unwrap_or(&Vec::new()) {
+            out.push(Enterprise {
+                slug: node["slug"].as_str().unwrap_or_default().to_string(),
+                name: node["name"].as_str().unwrap_or_default().to_string(),
+                orgs: node["organizations"]["nodes"]
+                    .as_array()
+                    .unwrap_or(&Vec::new())
+                    .iter()
+                    .map(|org| EnterpriseOrg {
+                        login: org["login"].as_str().unwrap_or_default().to_string(),
+                        name: org["name"].as_str().unwrap_or_default().to_string(),
+                        total: org["repositories"]["totalCount"].as_u64().unwrap_or(0) as usize,
+                        archived: org["repositoriesArchived"]["totalCount"].as_u64().unwrap_or(0)
+                            as usize,
+                    })
+                    .collect(),
+            });
+        }
+        if connection["pageInfo"]["hasNextPage"].as_bool().unwrap_or(false) {
+            cursor = connection["pageInfo"]["endCursor"].as_str().map(String::from);
+            if cursor.is_none() {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// Flatten resolved coverage into the records the selector engine matches against.
+pub fn repo_facts(owners: &[OwnerCoverage]) -> Vec<crate::select::RepoFacts> {
+    owners
+        .iter()
+        .flat_map(|owner| {
+            owner.repos.iter().map(|repo| crate::select::RepoFacts {
+                owner: owner.owner.clone(),
+                name: repo.name.clone(),
+                topics: repo.topics.clone(),
+                language: repo.language.clone(),
+                is_fork: repo.is_fork,
+                is_archived: repo.is_archived,
+                private: repo.private,
+                local_path: repo.local_path.clone(),
+            })
+        })
+        .collect()
 }
 
 /// `gh api user --jq .login` → the authenticated user's login.
@@ -264,9 +474,9 @@ async fn fetch_owner_repos(owner: &str) -> Result<Vec<OrgRepoData>> {
             "list",
             owner,
             "--limit",
-            "1000",
+            "10000",
             "--json",
-            "name,isFork,isArchived,visibility,repositoryTopics",
+            "name,isFork,isArchived,visibility,repositoryTopics,diskUsage,description,primaryLanguage,pushedAt",
         ])
         .output()
         .await
@@ -368,16 +578,23 @@ fn is_fresh(checked_at: i64, now: i64) -> bool {
 // Orchestration
 // ---------------------------------------------------------------------------------------------
 
-/// Compute coverage for every github owner found under `roots`. When `only_owner` is set, restrict
-/// to that owner. `force_refresh` bypasses the listing cache. Network access is via `gh`.
+/// Compute coverage for every github owner found under `roots`, plus every owner in `extra_owners`
+/// (which may have no local clones at all). When `only_owner` is set, restrict to that owner.
+/// `force_refresh` bypasses the listing cache. Network access is via `gh`.
 pub async fn compute(
     roots: &[PathBuf],
     max_depth: usize,
     only_owner: Option<&str>,
     force_refresh: bool,
+    extra_owners: &[String],
 ) -> Result<Vec<OwnerCoverage>> {
     let login = current_login().await.unwrap_or_default();
-    let by_owner = scan_local(roots, max_depth).await;
+    let mut by_owner = scan_local(roots, max_depth).await;
+    // An explicitly named owner is enumerated even with nothing cloned from it — that is what makes
+    // a cold org (every repo missing) a plannable target rather than an empty tab.
+    for owner in extra_owners {
+        by_owner.entry(owner.clone()).or_default();
+    }
     let mut cache = load_cache();
     let now = now_unix();
     let mut out: Vec<OwnerCoverage> = Vec::new();
@@ -393,7 +610,11 @@ pub async fn compute(
         let entry = match cache.owners.get(owner) {
             Some(entry) if !force_refresh && is_fresh(entry.checked_at, now) => entry.clone(),
             _ => {
-                let kind = classify_owner(owner, &login).await;
+                let named = extra_owners.iter().any(|wanted| wanted.eq_ignore_ascii_case(owner));
+                let kind = match classify_owner(owner, &login).await {
+                    OwnerKind::Partial if named => OwnerKind::MemberOrg,
+                    other => other,
+                };
                 let (repos, total) = if kind.is_partial() {
                     (Vec::new(), owner_public_repos(owner).await.unwrap_or(locals.len()))
                 } else {
@@ -442,6 +663,10 @@ async fn build_owner_coverage(
                 is_archived: false,
                 private: false,
                 topics: Vec::new(),
+                size_kb: 0,
+                description: None,
+                language: None,
+                pushed_at: None,
             })
             .collect();
         return OwnerCoverage { owner: owner.to_string(), kind: entry.kind, repos, total: entry.total };
@@ -485,6 +710,10 @@ async fn build_owner_coverage(
                 is_archived: repo.is_archived,
                 private: repo.private,
                 topics: repo.topics.clone(),
+                size_kb: repo.size_kb,
+                description: repo.description.clone(),
+                language: repo.language.clone(),
+                pushed_at: repo.pushed_at.clone(),
             }
         })
         .collect();
@@ -510,6 +739,10 @@ mod tests {
             is_archived,
             private: false,
             topics: Vec::new(),
+            size_kb: 0,
+            description: None,
+            language: None,
+            pushed_at: None,
             url: format!("https://github.com/acme/{name}"),
         }
     }

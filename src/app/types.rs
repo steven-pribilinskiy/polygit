@@ -2471,6 +2471,8 @@ pub struct CoverageState {
     pub include_archived: bool,
     /// Checked rows for the clone action, keyed `"owner/repo"`.
     pub checked: std::collections::HashSet<String>,
+    /// Owners named explicitly (via `+`), enumerated even with nothing cloned from them.
+    pub extra_owners: Vec<String>,
     /// Scan roots (for refresh + clone destinations) and the depth they were discovered at.
     pub roots: Vec<std::path::PathBuf>,
     pub max_depth: usize,

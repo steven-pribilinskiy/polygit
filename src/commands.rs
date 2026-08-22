@@ -96,9 +96,10 @@ fn name_pad(repos: &[Repo]) -> usize {
 /// One command in the help screen: `(primary, comma-separated aliases, description)`.
 type HelpRow = (&'static str, &'static str, &'static str);
 
-/// The command list shown by `polygit --help`, grouped into sections. Kept in sync with the
-/// `Commands` enum in `main.rs`.
-const HELP_SECTIONS: &[(&str, &[HelpRow])] = &[
+/// The command list shown by `polygit --help`, grouped into sections. Hand-written, so
+/// `help_lists_every_subcommand` (main.rs) holds it to the clap definition — without that guard a
+/// new subcommand is simply absent from `polygit --help` and nobody notices.
+pub(crate) const HELP_SECTIONS: &[(&str, &[HelpRow])] = &[
     ("Reports", &[
         ("list", "ls", "List every repo with its current branch"),
         ("status", "", "Show uncommitted changes for each dirty repo"),
@@ -106,6 +107,11 @@ const HELP_SECTIONS: &[(&str, &[HelpRow])] = &[
         ("branches", "", "Branch + ahead/behind vs upstream, per repo"),
         ("sizes", "", "Disk usage per repo, largest first"),
         ("coverage", "missing, cov", "Which repos in each GitHub org aren't cloned locally"),
+    ]),
+    ("Layout", &[
+        ("select", "sel", "Resolve a selector expression to the repos it picks"),
+        ("plan", "", "Preview the directory layout a selector + template produce"),
+        ("orgs", "owners", "Your account, orgs and enterprises, with cloned counts"),
     ]),
     ("Workspaces", &[
         ("ws", "workspace, workspaces", "Manage & open saved workspaces (ws ls to list)"),
@@ -384,7 +390,7 @@ pub struct CoverageOpts {
 /// remotes, so the root folder name is irrelevant.
 pub async fn run_coverage(roots: Vec<PathBuf>, max_depth: usize, opts: CoverageOpts) -> Result<i32> {
     let coverage =
-        crate::coverage::compute(&roots, max_depth, opts.org.as_deref(), opts.refresh).await?;
+        crate::coverage::compute(&roots, max_depth, opts.org.as_deref(), opts.refresh, &[]).await?;
 
     if opts.json {
         println!("{}", serde_json::to_string_pretty(&coverage)?);
@@ -450,6 +456,351 @@ pub async fn run_coverage(roots: Vec<PathBuf>, max_depth: usize, opts: CoverageO
             color,
         ),
     );
+    Ok(0)
+}
+
+/// Options shared by `select` and `plan`.
+pub struct SelectOpts {
+    pub expr: String,
+    /// Owners to enumerate on top of whatever the scan roots reveal.
+    pub owners: Vec<String>,
+    pub with_siblings: bool,
+    pub include_forks: bool,
+    pub include_archived: bool,
+    pub refresh: bool,
+    pub json: bool,
+}
+
+/// Options for `plan`, which is `select` plus a destination.
+pub struct PlanOpts {
+    pub select: SelectOpts,
+    pub layout: String,
+    pub output: Option<PathBuf>,
+    pub prefix_depth: usize,
+}
+
+/// Resolve the listing once: coverage for the scan roots plus any explicitly named owners, mapped
+/// into the flat records the selector engine matches against.
+async fn resolve_facts(
+    roots: &[PathBuf],
+    max_depth: usize,
+    opts: &SelectOpts,
+) -> Result<Vec<crate::select::RepoFacts>> {
+    let coverage =
+        crate::coverage::compute(roots, max_depth, None, opts.refresh, &opts.owners).await?;
+    let mut facts = crate::coverage::repo_facts(&coverage);
+    facts.retain(|repo| {
+        repo.cloned()
+            || ((opts.include_forks || !repo.is_fork)
+                && (opts.include_archived || !repo.is_archived))
+    });
+    Ok(facts)
+}
+
+/// Apply the expression, then optionally widen to project siblings.
+fn resolve_selection(
+    facts: &[crate::select::RepoFacts],
+    opts: &SelectOpts,
+) -> Result<Vec<usize>> {
+    let selector = crate::select::parse(&opts.expr).map_err(|err| anyhow::anyhow!(err))?;
+    let mut chosen = crate::select::select(facts, &selector);
+    if opts.with_siblings {
+        chosen =
+            crate::select::expand_siblings(&chosen, facts, &crate::select::ClusterOpts::default());
+    }
+    Ok(chosen)
+}
+
+/// `polygit select` — print the repos an expression picks, with why each axis is worth using.
+pub async fn run_select(roots: Vec<PathBuf>, max_depth: usize, opts: SelectOpts) -> Result<i32> {
+    let facts = resolve_facts(&roots, max_depth, &opts).await?;
+    let chosen = resolve_selection(&facts, &opts)?;
+
+    if opts.json {
+        let rows: Vec<serde_json::Value> = chosen
+            .iter()
+            .map(|&index| {
+                let repo = &facts[index];
+                serde_json::json!({
+                    "owner": repo.owner,
+                    "name": repo.name,
+                    "cloned": repo.cloned(),
+                    "local_path": repo.local_path,
+                    "topics": repo.topics,
+                    "language": repo.language,
+                    "archived": repo.is_archived,
+                    "fork": repo.is_fork,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(0);
+    }
+
+    let color = stdout_color();
+    if chosen.is_empty() {
+        println!("{}", paint("No repos match.", DIM, color));
+        print_axis_hints(&facts, color);
+        return Ok(0);
+    }
+    let pad = chosen.iter().map(|&index| facts[index].name.chars().count()).max().unwrap_or(0);
+    for &index in &chosen {
+        let repo = &facts[index];
+        let mark = if repo.cloned() {
+            paint("\u{2713}", GREEN, color)
+        } else {
+            paint("\u{2717}", RED, color)
+        };
+        let name = paint(&format!("{:<pad$}", repo.name), CYAN, color);
+        let mut tail = vec![repo.owner.clone()];
+        if let Some(language) = &repo.language {
+            tail.push(language.clone());
+        }
+        if !repo.topics.is_empty() {
+            tail.push(repo.topics.join(" "));
+        }
+        println!("{mark} {name}  {}", paint(&tail.join("  \u{b7}  "), DIM, color));
+    }
+    println!();
+    let cloned = chosen.iter().filter(|&&index| facts[index].cloned()).count();
+    println!(
+        "{}",
+        paint(
+            &format!("{} selected \u{b7} {cloned} cloned \u{b7} {} missing", chosen.len(), chosen.len() - cloned),
+            DIM,
+            color,
+        )
+    );
+    print_axis_hints(&facts, color);
+    Ok(0)
+}
+
+/// Report how much signal each axis actually carries here, so the ranking is legible rather than
+/// magic — topics are a strong primary axis in one org and near-useless in another.
+fn print_axis_hints(facts: &[crate::select::RepoFacts], color: bool) {
+    if facts.is_empty() {
+        return;
+    }
+    let (topics, regime) = crate::select::topic_stats(facts);
+    let languages = crate::select::language_stats(facts);
+    let families = crate::select::prefix_families(facts, 1);
+    let covered: usize = families.iter().map(|(_, count)| count).sum();
+    let regime_label = match regime {
+        crate::select::Regime::Rich => "rich",
+        crate::select::Regime::Sparse => "sparse",
+        crate::select::Regime::Degenerate => "degenerate",
+    };
+    println!(
+        "{}",
+        paint(
+            &format!(
+                "axes over {} repos \u{b7} prefix: {}% in {} families \u{b7} topic: {}% tagged, {} distinct ({regime_label}) \u{b7} language: {}% in {} distinct",
+                facts.len(),
+                covered * 100 / facts.len().max(1),
+                families.len(),
+                topics.percent(),
+                topics.distinct,
+                languages.percent(),
+                languages.distinct,
+            ),
+            DIM,
+            color,
+        )
+    );
+}
+
+/// `polygit plan` — resolve a selection, lay it out, and print the resulting directory tree plus
+/// what each repo would do. Touches nothing.
+pub async fn run_plan(roots: Vec<PathBuf>, max_depth: usize, opts: PlanOpts) -> Result<i32> {
+    let facts = resolve_facts(&roots, max_depth, &opts.select).await?;
+    let chosen = resolve_selection(&facts, &opts.select)?;
+    let layout = crate::layout::LayoutTemplate::parse(&opts.layout)
+        .map_err(|err| anyhow::anyhow!(err))?;
+    let context = crate::layout::LayoutContext::build(
+        &facts,
+        opts.prefix_depth,
+        2,
+        &crate::select::ClusterOpts::default(),
+    );
+    let root = match opts.output {
+        Some(path) => path,
+        None => roots.first().cloned().unwrap_or_else(|| PathBuf::from(".")),
+    };
+    let plan = crate::layout::plan(&facts, &chosen, &layout, &context, &root);
+
+    if opts.select.json {
+        let rows: Vec<serde_json::Value> = plan
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "owner": row.owner,
+                    "name": row.name,
+                    "action": row.action.label(),
+                    "dest": row.dest,
+                    "from": match &row.action {
+                        crate::layout::Action::Move { from } => Some(from.clone()),
+                        _ => None,
+                    },
+                    "skip_reason": match &row.action {
+                        crate::layout::Action::Skip(reason) => Some(reason.label()),
+                        _ => None,
+                    },
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "root": plan.root,
+                "layout": layout.source(),
+                "rows": rows,
+            }))?
+        );
+        return Ok(0);
+    }
+
+    let color = stdout_color();
+    println!("{}  {}", paint("root", DIM, color), plan.root.display());
+    println!("{}  {}", paint("layout", DIM, color), layout.source());
+    println!();
+    print_plan_tree(&plan, color);
+    println!();
+    for row in &plan.rows {
+        if let crate::layout::Action::Skip(reason) = &row.action {
+            println!(
+                "  {} {}  {}",
+                paint("!", RED, color),
+                row.name,
+                paint(&reason.label(), DIM, color)
+            );
+        }
+    }
+    let counts = plan.counts();
+    println!(
+        "{}",
+        paint(
+            &format!(
+                "{} selected \u{2014} {} clone \u{b7} {} move \u{b7} {} keep \u{b7} {} skip",
+                counts.total(),
+                counts.clone_rows,
+                counts.moves,
+                counts.keep,
+                counts.skipped
+            ),
+            BOLD,
+            color,
+        )
+    );
+    Ok(0)
+}
+
+/// Render the planned directory tree, badging each repo with what will happen to it.
+fn print_plan_tree(plan: &crate::layout::Plan, color: bool) {
+    let nodes = plan.tree();
+    // Repos that sit directly at the root have no folder node, so print them first.
+    let mut in_folder: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for node in &nodes {
+        for position in &node.repos {
+            in_folder.insert(*position);
+        }
+    }
+    for (position, row) in plan.rows.iter().enumerate() {
+        if !in_folder.contains(&position) && !row.rel_dest.is_empty() {
+            println!("{}", plan_row_line(row, 0, color));
+        }
+    }
+    for node in &nodes {
+        let indent = "  ".repeat(node.depth as usize);
+        println!(
+            "{indent}{}{}",
+            paint(&node.name, BOLD_CYAN, color),
+            paint(&format!("/  ({})", node.repos.len()), DIM, color)
+        );
+        for position in &node.repos {
+            println!("{}", plan_row_line(&plan.rows[*position], node.depth as usize + 1, color));
+        }
+    }
+}
+
+fn plan_row_line(row: &crate::layout::PlanRow, depth: usize, color: bool) -> String {
+    let indent = "  ".repeat(depth);
+    let (glyph, code) = match &row.action {
+        crate::layout::Action::Clone => ("+", GREEN),
+        crate::layout::Action::Keep => ("\u{b7}", DIM),
+        crate::layout::Action::Move { .. } => ("\u{2192}", CYAN),
+        crate::layout::Action::Skip(_) => ("!", RED),
+    };
+    let detail = match &row.action {
+        crate::layout::Action::Move { from } => format!("  from {}", from.display()),
+        _ => String::new(),
+    };
+    format!("{indent}{} {}{}", paint(glyph, code, color), row.name, paint(&detail, DIM, color))
+}
+
+/// `polygit orgs` — your account, your orgs and your enterprises, with how much of each is cloned.
+pub async fn run_orgs(roots: Vec<PathBuf>, max_depth: usize, refresh: bool) -> Result<i32> {
+    let color = stdout_color();
+    let owners = crate::coverage::list_my_owners().await;
+    if owners.is_empty() {
+        println!("{}", paint("No GitHub account resolved \u{2014} is `gh` authenticated?", DIM, color));
+        return Ok(1);
+    }
+    let names: Vec<String> = owners.iter().map(|owner| owner.login.clone()).collect();
+    let coverage = crate::coverage::compute(&roots, max_depth, None, refresh, &names).await?;
+
+    let pad = owners.iter().map(|owner| owner.login.chars().count()).max().unwrap_or(0);
+    println!("{}", paint("Owners", BOLD, color));
+    for owner in &owners {
+        let found = coverage.iter().find(|entry| entry.owner.eq_ignore_ascii_case(&owner.login));
+        let summary = match found {
+            Some(entry) => format!("{}/{}", entry.cloned_count(true, true), entry.badge_total(true, true)),
+            None => "-".to_string(),
+        };
+        let kind = match owner.kind {
+            crate::coverage::OwnerKind::User => "you",
+            crate::coverage::OwnerKind::MemberOrg => "org",
+            crate::coverage::OwnerKind::Partial => "partial",
+        };
+        println!(
+            "  {}  {:>9}  {}",
+            paint(&format!("{:<pad$}", owner.login), CYAN, color),
+            summary,
+            paint(kind, DIM, color)
+        );
+    }
+
+    println!();
+    println!("{}", paint("Enterprises", BOLD, color));
+    match crate::coverage::list_enterprises().await {
+        Ok(enterprises) if enterprises.is_empty() => {
+            println!("  {}", paint("none", DIM, color));
+        }
+        Ok(enterprises) => {
+            for enterprise in &enterprises {
+                println!(
+                    "  {}  {}",
+                    paint(&enterprise.slug, BOLD_CYAN, color),
+                    paint(&enterprise.name, DIM, color)
+                );
+                for org in &enterprise.orgs {
+                    println!(
+                        "    {}  {}",
+                        org.login,
+                        paint(
+                            &format!("{} repos, {} archived", org.total, org.archived),
+                            DIM,
+                            color
+                        )
+                    );
+                }
+            }
+        }
+        Err(err) => {
+            // A scope failure reads as "no enterprises" unless the remedy is named here.
+            println!("  {}", paint(&err.message(), DIM, color));
+        }
+    }
     Ok(0)
 }
 

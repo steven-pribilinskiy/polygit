@@ -1614,6 +1614,7 @@ dependencies = [
  "ignore",
  "num_cpus",
  "ratatui",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
