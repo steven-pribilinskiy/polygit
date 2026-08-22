@@ -537,6 +537,14 @@ pub struct AppState {
     pub branch_picker_click: Vec<(u16, usize)>,
     /// The open org-coverage panel (which repos in each GitHub org aren't cloned), if any.
     pub coverage_modal: Option<CoverageState>,
+    pub coverage_area: Rect,
+    pub coverage_close_click: Option<(u16, u16, u16)>,
+    /// Owner tab chips: (row, col_start, col_end, tab index).
+    pub coverage_tab_click: Vec<(u16, u16, u16, usize)>,
+    /// Repo rows: (screen row, index into the visible rows).
+    pub coverage_rows_click: Vec<(u16, usize)>,
+    /// The checkbox cell of each row: (row, col_start, col_end, index into the visible rows).
+    pub coverage_check_click: Vec<(u16, u16, u16, usize)>,
     /// The open branch-existence filter modal (`Ctrl+F`), if any.
     pub branch_filter_modal: Option<BranchFilterModal>,
     pub branch_filter_modal_area: Rect,
@@ -1131,6 +1139,11 @@ impl AppState {
             branch_picker_close_click: None,
             branch_picker_click: Vec::new(),
             coverage_modal: None,
+            coverage_area: Rect::default(),
+            coverage_close_click: None,
+            coverage_tab_click: Vec::new(),
+            coverage_rows_click: Vec::new(),
+            coverage_check_click: Vec::new(),
             branch_filter_modal: None,
             branch_filter_modal_area: Rect::default(),
             branch_filter_modal_close_click: None,

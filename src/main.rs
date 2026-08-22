@@ -1104,6 +1104,51 @@ async fn run_self_update() -> Result<i32> {
     }
 }
 
+/// Run a coverage-panel command named by a footer chip. Shared with the key handler so a click and
+/// its key can never drift apart.
+fn coverage_hint_action(
+    app: &mut AppState,
+    key: crate::app::HintKey,
+    pending_coverage: &mut bool,
+    pending_coverage_clone: &mut bool,
+) {
+    match key {
+        crate::app::HintKey::Char(' ') => app.coverage_toggle_check(),
+        crate::app::HintKey::Char('a') => app.coverage_set_all(true),
+        crate::app::HintKey::Tab => app.coverage_cycle_tab(true),
+        crate::app::HintKey::Char('/') => {
+            if let Some(state) = app.coverage_modal.as_mut() {
+                state.filter_focused = true;
+            }
+        }
+        crate::app::HintKey::Char('f') => app.coverage_toggle_forks(),
+        crate::app::HintKey::Char('x') => app.coverage_toggle_archived(),
+        crate::app::HintKey::Char('+') => app.coverage_owner_prompt(),
+        crate::app::HintKey::Char('c') => {
+            if app.coverage_modal.as_ref().is_some_and(|state| state.cloning) {
+                app.show_toast("Clone already in progress");
+            } else if app
+                .coverage_modal
+                .as_ref()
+                .map(|state| state.checked_missing().len())
+                .unwrap_or(0)
+                == 0
+            {
+                app.show_toast("No missing repos selected — press space to select");
+            } else {
+                *pending_coverage_clone = true;
+            }
+        }
+        crate::app::HintKey::Char('r') => {
+            app.coverage_refresh();
+            *pending_coverage = true;
+        }
+        crate::app::HintKey::Esc => app.close_coverage(),
+        _ => {}
+    }
+}
+
+
 async fn run() -> Result<i32> {
     // Custom top-level help (sectioned, aliases dimmed). Only the bare `--help`/`-h`/`help` forms;
     // `polygit <command> --help` still falls through to clap's per-command help.
@@ -3111,6 +3156,76 @@ async fn run_event_loop(
                 // Branch-filter modal: click a mode chip to switch modes, a row to apply+close
                 // (matching the branch picker's single-click-to-choose), [x]/outside to close
                 // without changes. Scrollbar drag is handled by the generic scroll-hit dispatch.
+                // Org-coverage panel: click a tab to switch owner, a checkbox to select, a row to
+                // move the cursor, the footer chips to run their command, [x] or outside to close.
+                // Every event is swallowed while it's open — without this block clicks fall through
+                // to the list underneath and silently move the selection there.
+                if app.coverage_modal.is_some() {
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+                            let down = matches!(mouse.kind, MouseEventKind::ScrollDown);
+                            if let Some(state) = app.coverage_modal.as_mut() {
+                                state.scroll = if down {
+                                    state.scroll.saturating_add(3)
+                                } else {
+                                    state.scroll.saturating_sub(3)
+                                };
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            let tab_hit = app
+                                .coverage_tab_click
+                                .iter()
+                                .find(|(row, start, end, _)| {
+                                    *row == mouse.row && mouse.column >= *start && mouse.column < *end
+                                })
+                                .map(|(_, _, _, index)| *index);
+                            let check_hit = app
+                                .coverage_check_click
+                                .iter()
+                                .find(|(row, start, end, _)| {
+                                    *row == mouse.row && mouse.column >= *start && mouse.column < *end
+                                })
+                                .map(|(_, _, _, index)| *index);
+                            let row_hit = app
+                                .coverage_rows_click
+                                .iter()
+                                .find(|(row, _)| *row == mouse.row)
+                                .map(|(_, index)| *index);
+                            let hint = app.hint_at(mouse.column, mouse.row);
+                            if region_hit(app.coverage_close_click, mouse.column, mouse.row)
+                                || !point_in(app.coverage_area, mouse.column, mouse.row)
+                            {
+                                app.close_coverage();
+                            } else if let Some(index) = tab_hit {
+                                if let Some(state) = app.coverage_modal.as_mut() {
+                                    state.active_tab = index;
+                                    state.selected = 0;
+                                    state.scroll = 0;
+                                }
+                            } else if let Some(index) = check_hit {
+                                if let Some(state) = app.coverage_modal.as_mut() {
+                                    state.selected = index;
+                                }
+                                app.coverage_toggle_check();
+                            } else if let Some(index) = row_hit {
+                                if let Some(state) = app.coverage_modal.as_mut() {
+                                    state.selected = index;
+                                }
+                            } else if let Some(key) = hint {
+                                coverage_hint_action(
+                                    &mut app,
+                                    key,
+                                    &mut pending_coverage,
+                                    &mut pending_coverage_clone,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if app.branch_filter_modal.is_some() {
                     if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
                         let mode_hit = app
@@ -4778,6 +4893,25 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(130);
                     }
+                    if app.coverage_modal.as_ref().is_some_and(|state| state.owner_input.is_some())
+                    {
+                        match key.code {
+                            KeyCode::Esc => app.coverage_owner_cancel(),
+                            KeyCode::Enter => {
+                                if app.coverage_owner_commit() {
+                                    pending_coverage = true;
+                                }
+                            }
+                            KeyCode::Backspace => app.coverage_owner_pop(),
+                            KeyCode::Char(ch)
+                                if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.coverage_owner_push(ch)
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     let filter_focused =
                         app.coverage_modal.as_ref().is_some_and(|state| state.filter_focused);
                     if filter_focused {
@@ -4808,6 +4942,7 @@ async fn run_event_loop(
                                 state.filter_focused = true;
                             }
                         }
+                        KeyCode::Char('+') => app.coverage_owner_prompt(),
                         KeyCode::Char(' ') => app.coverage_toggle_check(),
                         KeyCode::Char('a') => app.coverage_set_all(true),
                         KeyCode::Char('A') => app.coverage_set_all(false),

@@ -699,15 +699,17 @@ fn pr_comment_section(
 /// Render the org-coverage panel: owner tabs with `N/N` badges, a filtered repo list with
 /// checkboxes (missing repos highlighted), and a keys footer. Keyboard-driven — input is handled by
 /// the coverage block in the event loop.
-pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tick: u64) {
-    let Some(state) = app.coverage_modal.as_ref() else {
+pub(crate) fn render_coverage(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
+    let Some(state) = app.coverage_modal.clone() else {
         return;
     };
+    let state = &state;
     let icons = app.icons();
     let width = (area.width.saturating_mul(9) / 10).max(40);
     let height = (area.height.saturating_mul(9) / 10).max(12);
     let modal = centered_rect(width, height, area);
     let dim = Style::default().fg(Color::DarkGray);
+    let (close_line, close_click) = modal_close_button(modal);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -717,10 +719,14 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tic
             " Org coverage ",
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ))
-        .padding(panel_pad(app));
+        .padding(panel_pad(app))
+        .title_top(close_line);
     let inner = block.inner(modal);
+    cast_shadow(frame, modal);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
+    app.coverage_area = modal;
+    app.coverage_close_click = close_click;
     if inner.width < 4 || inner.height < 4 {
         return;
     }
@@ -772,8 +778,23 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tic
         .split(inner);
     let (tabs_area, filter_area, list_area, footer_area) = (rows[0], rows[1], rows[2], rows[3]);
 
-    // Tab strip: one chip per owner, active highlighted, badge colored by completeness.
+    // Tab strip: one chip per owner, active highlighted, badge colored by completeness. Chips are
+    // measured as they are laid out so the strip can scroll to keep the active one on screen —
+    // truncating at the right edge would put later owners permanently out of reach.
     let mut tab_spans: Vec<Span> = Vec::new();
+    let tab_widths: Vec<u16> = state
+        .owners
+        .iter()
+        .map(|owner| {
+            let cloned = owner.cloned_count(state.include_forks, state.include_archived);
+            let total = owner.badge_total(state.include_forks, state.include_archived);
+            format!(" {} {cloned}/{total} ", owner.owner).chars().count() as u16 + 1
+        })
+        .collect();
+    let active_start: u16 = tab_widths.iter().take(state.active_tab).sum();
+    let active_end = active_start + tab_widths.get(state.active_tab).copied().unwrap_or(0);
+    let tab_scroll = active_end.saturating_sub(tabs_area.width).min(active_start);
+    let mut cursor = 0u16;
     for (idx, owner) in state.owners.iter().enumerate() {
         let cloned = owner.cloned_count(state.include_forks, state.include_archived);
         let total = owner.badge_total(state.include_forks, state.include_archived);
@@ -791,11 +812,32 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tic
         } else {
             Style::default().fg(badge_color)
         };
-        tab_spans.push(Span::styled(label, style));
-        tab_spans.push(Span::raw(" "));
+        let span_width = label.chars().count() as u16;
+        // The strip scrolls with the active tab rather than truncating owners out of reach.
+        if cursor >= tab_scroll && cursor + span_width <= tab_scroll + tabs_area.width {
+            let start = tabs_area.x + cursor - tab_scroll;
+            app.coverage_tab_click.push((tabs_area.y, start, start + span_width, idx));
+            tab_spans.push(Span::styled(label, style));
+            tab_spans.push(Span::raw(" "));
+        }
+        cursor += span_width + 1;
     }
     frame.render_widget(Paragraph::new(Line::from(tab_spans)), tabs_area);
 
+    // Add-owner prompt takes the filter line while it is open — one input row, never two.
+    if let Some(input) = state.owner_input.as_ref() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("  + owner ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{input}\u{258f}"),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("   (owner, owner/repo or a GitHub URL \u{b7} enter to add)", dim),
+            ])),
+            filter_area,
+        );
+    } else {
     // Filter line + fork/archived toggle state.
     let filter_span = if state.filter.is_empty() && !state.filter_focused {
         Span::styled("  (all) — / to filter by name or topic:<t> / -topic:<t>", dim)
@@ -814,18 +856,32 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tic
         dim,
     );
     frame.render_widget(Paragraph::new(Line::from(vec![filter_span, toggles])), filter_area);
+    }
 
     // Repo list for the active owner, windowed to keep the cursor visible.
     let owner_name = state.owners[state.active_tab].owner.clone();
     let repos = state.visible_rows();
-    let list_h = (list_area.height as usize).max(1);
-    let start = if state.selected >= list_h { state.selected + 1 - list_h } else { 0 };
+    let list_region = super::scroll_inside(list_area);
+    let list_content = list_region.content();
+    let list_h = (list_content.height as usize).max(1);
+    // The window follows `scroll` alone, web-app style: the wheel and the bar move it while the
+    // selection stays put and may scroll out of view. Keyboard navigation is what pulls the window
+    // back to the cursor, in `coverage_move`.
+    let start = state.scroll.min(repos.len().saturating_sub(list_h));
+    if let Some(live) = app.coverage_modal.as_mut() {
+        live.viewport_rows = list_h;
+        live.scroll = start;
+    }
     let mut lines: Vec<Line> = Vec::new();
     if repos.is_empty() {
         lines.push(Line::from(Span::styled("  (no repos match the filter)", dim)));
     }
     for (idx, repo) in repos.iter().enumerate().skip(start).take(list_h) {
         let is_cursor = idx == state.selected;
+        let row_y = list_content.y + lines.len() as u16;
+        app.coverage_rows_click.push((row_y, idx));
+        // The checkbox is its own target: clicking it toggles, clicking the name just moves.
+        app.coverage_check_click.push((row_y, list_content.x + 2, list_content.x + 5, idx));
         let key = format!("{owner_name}/{}", repo.name);
         let checked = state.checked.contains(&key);
         let checkbox = if repo.cloned {
@@ -868,7 +924,16 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tic
         }
         lines.push(Line::from(spans));
     }
-    frame.render_widget(Paragraph::new(lines), list_area);
+    frame.render_widget(Paragraph::new(lines), list_content);
+    super::render_scrollbar(
+        frame,
+        app,
+        &list_region,
+        start,
+        repos.len(),
+        list_h,
+        crate::app::ScrollKind::Coverage,
+    );
 
     let footer = if state.cloning {
         Line::from(vec![
@@ -876,10 +941,23 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &AppState, area: Rect, tic
             Span::styled(state.clone_status.clone(), Style::default().fg(Color::Cyan)),
         ])
     } else {
-        Line::from(Span::styled(
-            "  ↑↓ move · space select · a/A all · Tab owner · / filter · f forks · x archived · c clone · r refresh · esc close",
-            dim,
-        ))
+        let mut chips: Vec<(String, Style, Option<HintKey>)> = vec![("  ".to_string(), dim, None)];
+        for (key, label, hint) in [
+            ("space", " select", HintKey::Char(' ')),
+            ("a/A", " all", HintKey::Char('a')),
+            ("tab", " owner", HintKey::Tab),
+            ("/", " filter", HintKey::Char('/')),
+            ("f", " forks", HintKey::Char('f')),
+            ("x", " archived", HintKey::Char('x')),
+            ("+", " add owner", HintKey::Char('+')),
+            ("c", " clone", HintKey::Char('c')),
+            ("r", " refresh", HintKey::Char('r')),
+            ("esc", " close", HintKey::Esc),
+        ] {
+            chips.extend(footer_chip(key, label, hint));
+            chips.push((" ".to_string(), dim, None));
+        }
+        build_hint_footer(chips, footer_area.x, footer_area.y, &mut app.hint_click)
     };
     frame.render_widget(Paragraph::new(footer), footer_area);
 }

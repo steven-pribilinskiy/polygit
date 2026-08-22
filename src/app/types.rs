@@ -2436,6 +2436,7 @@ pub enum ScrollKind {
     ExplorerPreview,
     ExplorerPreviewH,
     BranchFilter,
+    Coverage,
 }
 
 /// A draggable scrollbar registered at render time: where its track is + how much it scrolls.
@@ -2451,6 +2452,7 @@ pub struct ScrollHit {
 /// The org-coverage panel: which repos in each GitHub owner found under the scan roots are cloned
 /// locally. Populated asynchronously (a worker runs `coverage::compute`), so it opens in a loading
 /// state. Methods (navigation, filtering, selection) live in `app/state/coverage_panel.rs`.
+#[derive(Clone)]
 pub struct CoverageState {
     /// Per-owner coverage; empty while `loading`.
     pub owners: Vec<crate::coverage::OwnerCoverage>,
@@ -2473,6 +2475,11 @@ pub struct CoverageState {
     pub checked: std::collections::HashSet<String>,
     /// Owners named explicitly (via `+`), enumerated even with nothing cloned from them.
     pub extra_owners: Vec<String>,
+    /// Live text of the add-owner prompt, while it is open.
+    pub owner_input: Option<String>,
+    /// Rows the list pane drew last frame — captured so navigation clamps against the real
+    /// viewport rather than a guess.
+    pub viewport_rows: usize,
     /// Scan roots (for refresh + clone destinations) and the depth they were discovered at.
     pub roots: Vec<std::path::PathBuf>,
     pub max_depth: usize,

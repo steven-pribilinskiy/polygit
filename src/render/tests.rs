@@ -897,6 +897,69 @@ fn perf_panel_paints_its_own_hover() {
     assert_ne!(hovered, unhovered, "the close button must change background under the cursor");
 }
 
+/// Every affordance the coverage panel draws must be clickable, because the panel is drawn over the
+/// repo list: an unregistered region is not inert, it falls through and moves the selection behind
+/// it. This is the panel's half of the "three wirings" rule — the hover branch and the key handler
+/// are the other two.
+#[test]
+fn coverage_panel_registers_every_clickable_region() {
+    let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+        "demo",
+        std::path::PathBuf::from("/tmp/demo"),
+    )))];
+    let mut app = AppState::new(repos, Some(4), true);
+    app.close_all_modals();
+    app.open_coverage(vec![std::path::PathBuf::from("/tmp")], 1);
+    let owner = |name: &str| crate::coverage::OwnerCoverage {
+        owner: name.to_string(),
+        kind: crate::coverage::OwnerKind::MemberOrg,
+        total: 2,
+        repos: (0..2)
+            .map(|index| crate::coverage::CoverageRepo {
+                name: format!("{name}-repo-{index}"),
+                cloned: index == 0,
+                local_path: None,
+                is_fork: false,
+                is_archived: false,
+                private: false,
+                topics: Vec::new(),
+                size_kb: 0,
+                description: None,
+                language: None,
+                pushed_at: None,
+                url: format!("https://github.com/{name}/repo-{index}"),
+            })
+            .collect(),
+    };
+    if let Some(state) = app.coverage_modal.as_mut() {
+        state.owners = vec![owner("one"), owner("two")];
+        state.loading = false;
+    }
+    let _ = render_rows(&mut app, 120, 30);
+
+    assert!(!app.coverage_area.is_empty(), "the panel rect must be registered");
+    assert!(app.coverage_close_click.is_some(), "the [x] must be clickable");
+    assert_eq!(app.coverage_tab_click.len(), 2, "one click region per owner tab");
+    assert_eq!(app.coverage_rows_click.len(), 2, "one click region per visible row");
+    assert_eq!(app.coverage_check_click.len(), 2, "the checkbox cell is its own target");
+    assert!(
+        app.hint_click.iter().any(|hint| hint.key == crate::app::HintKey::Char('c')),
+        "the footer chips must be clickable, not a static hint string"
+    );
+
+    // Each checkbox region sits inside its own row, not a neighbour's.
+    for (row, start, end, index) in &app.coverage_check_click {
+        assert!(start < end, "a zero-width region can never be hit");
+        let owning = app.coverage_rows_click.iter().find(|(_, idx)| idx == index);
+        assert_eq!(owning.map(|(row, _)| *row), Some(*row));
+    }
+
+    // Closing clears the geometry — a stale rect would keep swallowing clicks over the list.
+    app.close_coverage();
+    let _ = render_rows(&mut app, 120, 30);
+    assert!(app.coverage_tab_click.is_empty(), "stale tab regions are cleared");
+}
+
 /// The panel is opaque on screen, so it must be opaque to the mouse: its whole rect is registered,
 /// not just the close button. Without it a click in the middle selects the repo row behind it.
 #[test]
@@ -1067,6 +1130,38 @@ fn perf_overlay_declines_to_draw_when_the_terminal_is_too_small() {
                 SK::Help,
             ),
             ("keybindings", |app| app.show_keybindings = true, SK::Keybindings),
+            (
+                "org coverage",
+                |app| {
+                    app.open_coverage(vec![std::path::PathBuf::from("/tmp")], 1);
+                    let owner = crate::coverage::OwnerCoverage {
+                        owner: "acme".to_string(),
+                        kind: crate::coverage::OwnerKind::MemberOrg,
+                        total: 60,
+                        repos: (0..60)
+                            .map(|index| crate::coverage::CoverageRepo {
+                                name: format!("repo-with-a-longish-name-{index:02}"),
+                                cloned: false,
+                                local_path: None,
+                                is_fork: false,
+                                is_archived: false,
+                                private: false,
+                                topics: vec!["a-fairly-long-topic-name".to_string()],
+                                size_kb: 0,
+                                description: None,
+                                language: None,
+                                pushed_at: None,
+                                url: format!("https://github.com/acme/repo-{index}"),
+                            })
+                            .collect(),
+                    };
+                    if let Some(state) = app.coverage_modal.as_mut() {
+                        state.owners = vec![owner];
+                        state.loading = false;
+                    }
+                },
+                SK::Coverage,
+            ),
             (
                 "build info",
                 |app| {

@@ -34,6 +34,21 @@ fn filter_matches(repo: &CoverageRepo, query: &str) -> bool {
     true
 }
 
+/// Accept an owner as `owner`, `owner/repo`, or a GitHub URL — all three are things people have in
+/// hand when they want an org's repos. Returns None for anything with no owner segment.
+pub fn parse_owner_input(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let without_scheme = trimmed
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_start_matches("github.com/");
+    let owner = without_scheme.split('/').next()?.trim();
+    if owner.is_empty() || owner.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(owner.to_string())
+}
+
 impl CoverageState {
     /// The active owner tab, if any.
     pub fn active_owner(&self) -> Option<&OwnerCoverage> {
@@ -86,6 +101,8 @@ impl AppState {
             include_archived: false,
             checked: HashSet::new(),
             extra_owners: Vec::new(),
+            owner_input: None,
+            viewport_rows: 0,
             roots,
             max_depth,
             refresh: false,
@@ -125,15 +142,24 @@ impl AppState {
     }
 
     /// Move the row cursor within the active tab's visible rows.
+    /// Move the row cursor, pulling the window along so the cursor stays visible. The wheel moves
+    /// `scroll` on its own; this is the only thing that ties the two together.
     pub fn coverage_move(&mut self, delta: i32) {
         if let Some(state) = self.coverage_modal.as_mut() {
             let count = state.visible_rows().len();
             if count == 0 {
                 state.selected = 0;
+                state.scroll = 0;
                 return;
             }
             let next = (state.selected as i32 + delta).clamp(0, count as i32 - 1);
             state.selected = next as usize;
+            let height = state.viewport_rows.max(1);
+            if state.selected < state.scroll {
+                state.scroll = state.selected;
+            } else if state.selected >= state.scroll + height {
+                state.scroll = state.selected + 1 - height;
+            }
         }
     }
 
@@ -193,6 +219,57 @@ impl AppState {
         }
     }
 
+    /// Open the add-owner prompt. An owner named here is enumerated even with nothing cloned from
+    /// it, which is what makes an org you have never touched a plannable target.
+    pub fn coverage_owner_prompt(&mut self) {
+        if let Some(state) = self.coverage_modal.as_mut() {
+            state.owner_input = Some(String::new());
+            state.filter_focused = false;
+        }
+    }
+
+    pub fn coverage_owner_push(&mut self, ch: char) {
+        if let Some(input) = self.coverage_modal.as_mut().and_then(|state| state.owner_input.as_mut())
+        {
+            input.push(ch);
+        }
+    }
+
+    pub fn coverage_owner_pop(&mut self) {
+        if let Some(input) = self.coverage_modal.as_mut().and_then(|state| state.owner_input.as_mut())
+        {
+            input.pop();
+        }
+    }
+
+    pub fn coverage_owner_cancel(&mut self) {
+        if let Some(state) = self.coverage_modal.as_mut() {
+            state.owner_input = None;
+        }
+    }
+
+    /// Accept the typed owner. Returns true when a rescan is needed. Duplicates are a no-op rather
+    /// than a second tab for the same owner.
+    pub fn coverage_owner_commit(&mut self) -> bool {
+        let Some(state) = self.coverage_modal.as_mut() else {
+            return false;
+        };
+        let raw = state.owner_input.take().unwrap_or_default();
+        let Some(owner) = parse_owner_input(&raw) else {
+            return false;
+        };
+        if state.extra_owners.iter().any(|existing| existing.eq_ignore_ascii_case(&owner))
+            || state.owners.iter().any(|existing| existing.owner.eq_ignore_ascii_case(&owner))
+        {
+            self.show_toast(format!("Already showing {owner}"));
+            return false;
+        }
+        state.extra_owners.push(owner);
+        state.loading = true;
+        state.refresh = false;
+        true
+    }
+
     pub fn coverage_filter_pop(&mut self) {
         if let Some(state) = self.coverage_modal.as_mut() {
             state.filter.pop();
@@ -221,6 +298,19 @@ mod tests {
             pushed_at: None,
             url: format!("https://github.com/acme/{name}"),
         }
+    }
+
+    #[test]
+    fn owner_input_accepts_the_forms_people_have_in_hand() {
+        assert_eq!(parse_owner_input("acme"), Some("acme".into()));
+        assert_eq!(parse_owner_input("  acme  "), Some("acme".into()));
+        assert_eq!(parse_owner_input("acme/widget"), Some("acme".into()));
+        assert_eq!(parse_owner_input("https://github.com/acme/widget"), Some("acme".into()));
+        assert_eq!(parse_owner_input("github.com/acme"), Some("acme".into()));
+        assert_eq!(parse_owner_input("acme/"), Some("acme".into()));
+        assert_eq!(parse_owner_input(""), None);
+        assert_eq!(parse_owner_input("   "), None);
+        assert_eq!(parse_owner_input("two words"), None);
     }
 
     #[test]

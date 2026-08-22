@@ -198,6 +198,12 @@ impl AppState {
                 }
                 false
             }
+            ScrollKind::Coverage => {
+                if let Some(state) = self.coverage_modal.as_mut() {
+                    state.scroll = value;
+                }
+                false
+            }
         }
     }
 

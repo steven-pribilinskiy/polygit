@@ -500,6 +500,30 @@ fn apply_hover(frame: &mut Frame, app: &AppState, palette: &crate::theme::Palett
         } else if let Some(scroll) = scrollbar_col_hit(Some(&[crate::app::ScrollKind::BranchFilter])) {
             hits.push(scroll);
         }
+    } else if app.coverage_modal.is_some() {
+        // Hint → close → tabs → rows, the same order every modal uses, and only this panel's own
+        // scrollbar kind so a pane behind it cannot light through.
+        if let Some(hint) = app.hint_click.iter().find(|h| contains(h.row, h.col_start, h.col_end)) {
+            for sibling in app.hint_click.iter().filter(|h| h.key == hint.key) {
+                button_hits.push(row_rect(sibling.row, sibling.col_start, sibling.col_end));
+            }
+        } else if let Some((row, start, end)) =
+            app.coverage_close_click.filter(|&(r, s, e)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.coverage_tab_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if let Some(&(row, start, end, _)) =
+            app.coverage_check_click.iter().find(|&&(r, s, e, _)| contains(r, s, e))
+        {
+            button_hits.push(row_rect(row, start, end));
+        } else if app.coverage_rows_click.iter().any(|&(row, _)| row == hrow) {
+            hits.push(inner_row(app.coverage_area));
+        } else if let Some(scroll) = scrollbar_col_hit(Some(&[crate::app::ScrollKind::Coverage])) {
+            hits.push(scroll);
+        }
     } else if app.show_build_info {
         if let Some((row, start, end)) =
             app.build_info_check_click.filter(|&(r, s, e)| contains(r, s, e))
@@ -1548,6 +1572,13 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     app.scroll_hits.clear();
     app.clickable.clear();
     app.hint_click.clear();
+    // Cleared per frame, not inside the panel's own render: a closed panel never runs that code,
+    // and a stale rect keeps swallowing clicks meant for the list underneath.
+    app.coverage_area = Rect::default();
+    app.coverage_close_click = None;
+    app.coverage_tab_click.clear();
+    app.coverage_rows_click.clear();
+    app.coverage_check_click.clear();
     app.max_click.clear();
     // Dwell-tooltip regions are re-registered by whatever panes render (list headers/counts, the
     // info panel). Clear once per frame here — NOT in render_list, which is skipped when a non-list
