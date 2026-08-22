@@ -2,6 +2,7 @@ mod app;
 mod author_cache;
 mod cache;
 mod changelog;
+mod clone;
 mod commands;
 mod coverage;
 mod diffview;
@@ -234,6 +235,52 @@ enum Commands {
         refresh: bool,
         #[arg(long)]
         json: bool,
+    },
+
+    /// Clone the repos a selector picks, into the layout you choose
+    Clone {
+        /// Selector expression, or a bare owner name. Empty selects everything in scope.
+        #[arg(default_value = "")]
+        expr: String,
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+        /// Destination path template
+        #[arg(long, value_name = "TEMPLATE", default_value = "{repo}")]
+        layout: String,
+        /// Destination root (default: the first scan root)
+        #[arg(short = 'o', long, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Name tokens that form a prefix family key
+        #[arg(long, value_name = "N", default_value = "1")]
+        prefix_depth: usize,
+        #[arg(long = "owner", value_name = "NAME")]
+        owners: Vec<String>,
+        #[arg(long)]
+        with_siblings: bool,
+        #[arg(long)]
+        include_forks: bool,
+        #[arg(long)]
+        include_archived: bool,
+        #[arg(long)]
+        refresh: bool,
+        /// Maximum concurrent clones (default: nproc)
+        #[arg(short = 'j', long, value_name = "N")]
+        jobs: Option<usize>,
+        /// Fetch file contents on demand (`--filter=blob:none`) — full history, much faster at scale
+        #[arg(long)]
+        blobless: bool,
+        /// Shallow clone depth. Throwaway clones only — a working repo wants full history
+        #[arg(long, value_name = "N")]
+        depth_limit: Option<u32>,
+        /// Skip repos larger than this (e.g. 2GB); off by default, and every skip is reported
+        #[arg(long, value_name = "SIZE")]
+        max_size: Option<String>,
+        /// Print what would be cloned and exit
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Your account, orgs and enterprises, with how much of each is cloned locally
@@ -1117,6 +1164,53 @@ async fn run() -> Result<i32> {
                     layout: layout.clone(),
                     output: output.clone(),
                     prefix_depth: *prefix_depth,
+                },
+            )
+            .await;
+        }
+        Some(Commands::Clone {
+            expr,
+            scan,
+            layout,
+            output,
+            prefix_depth,
+            owners,
+            with_siblings,
+            include_forks,
+            include_archived,
+            refresh,
+            jobs,
+            blobless,
+            depth_limit,
+            max_size,
+            dry_run,
+            yes,
+        }) => {
+            let (roots, _) = resolve_roots(&scan.dirs, scan.workspace.as_deref())?;
+            return commands::run_clone_command(
+                roots,
+                scan.max_depth(),
+                commands::CloneCmdOpts {
+                    plan: commands::PlanOpts {
+                        select: commands::SelectOpts {
+                            expr: expr.clone(),
+                            owners: owners.clone(),
+                            with_siblings: *with_siblings,
+                            include_forks: *include_forks,
+                            include_archived: *include_archived,
+                            refresh: *refresh,
+                            json: false,
+                        },
+                        layout: layout.clone(),
+                        output: output.clone(),
+                        prefix_depth: *prefix_depth,
+                    },
+                    jobs: *jobs,
+                    blobless: *blobless,
+                    depth: *depth_limit,
+                    max_size: max_size.clone(),
+                    yes: *yes,
+                    dry_run: *dry_run,
                 },
             )
             .await;

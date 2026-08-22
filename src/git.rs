@@ -635,6 +635,28 @@ pub async fn clone_repo(url: &str, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Clone `<owner>/<repo>` through `gh`, which carries auth for private repos without depending on
+/// a locally-configured git credential helper. Extra `flags` go after `--` to git itself. Built as
+/// an argument vector, never a shell string.
+pub async fn gh_clone_repo(slug: &str, dest: &Path, flags: &[String]) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+    let mut command = Command::new("gh");
+    command.args(["repo", "clone", slug]).arg(dest);
+    if !flags.is_empty() {
+        command.arg("--");
+        command.args(flags);
+    }
+    let output = command.output().await.map_err(|err| format!("running gh repo clone: {err}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let line = detail.lines().find(|line| !line.trim().is_empty()).unwrap_or("clone failed");
+        return Err(line.trim().to_string());
+    }
+    Ok(())
+}
+
 /// Split a normalized GitHub URL (`https://github.com/<owner>/<repo>`, as produced by
 /// `normalize_remote_url`) into `(owner, repo)`. Returns None for non-github.com hosts or malformed
 /// paths — the coverage feature can only enumerate github owners via `gh`.

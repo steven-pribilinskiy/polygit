@@ -48,6 +48,8 @@ pub struct RepoFacts {
     pub is_fork: bool,
     pub is_archived: bool,
     pub private: bool,
+    /// GitHub's reported size in kilobytes; 0 when unknown.
+    pub size_kb: u64,
     /// Absolute path of the local clone, when one exists under the scan roots.
     pub local_path: Option<std::path::PathBuf>,
 }

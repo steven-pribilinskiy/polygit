@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
@@ -111,6 +112,7 @@ pub(crate) const HELP_SECTIONS: &[(&str, &[HelpRow])] = &[
     ("Layout", &[
         ("select", "sel", "Resolve a selector expression to the repos it picks"),
         ("plan", "", "Preview the directory layout a selector + template produce"),
+        ("clone", "", "Clone the repos a selector picks, into the layout you choose"),
         ("orgs", "owners", "Your account, orgs and enterprises, with cloned counts"),
     ]),
     ("Workspaces", &[
@@ -736,6 +738,175 @@ fn plan_row_line(row: &crate::layout::PlanRow, depth: usize, color: bool) -> Str
         _ => String::new(),
     };
     format!("{indent}{} {}{}", paint(glyph, code, color), row.name, paint(&detail, DIM, color))
+}
+
+/// Options for `clone`, which is `plan` plus permission to act on its clone rows.
+pub struct CloneCmdOpts {
+    pub plan: PlanOpts,
+    pub jobs: Option<usize>,
+    pub blobless: bool,
+    pub depth: Option<u32>,
+    pub max_size: Option<String>,
+    pub yes: bool,
+    pub dry_run: bool,
+}
+
+/// `polygit clone` — resolve a selection, lay it out, and clone every repo that is missing. Repos
+/// already present are left alone; a destination that is occupied is reported, never overwritten.
+pub async fn run_clone_command(
+    roots: Vec<PathBuf>,
+    max_depth: usize,
+    opts: CloneCmdOpts,
+) -> Result<i32> {
+    let color = stdout_color();
+    let facts = resolve_facts(&roots, max_depth, &opts.plan.select).await?;
+    let chosen = resolve_selection(&facts, &opts.plan.select)?;
+    let layout = crate::layout::LayoutTemplate::parse(&opts.plan.layout)
+        .map_err(|err| anyhow::anyhow!(err))?;
+    let context = crate::layout::LayoutContext::build(
+        &facts,
+        opts.plan.prefix_depth,
+        2,
+        &crate::select::ClusterOpts::default(),
+    );
+    let root = match &opts.plan.output {
+        Some(path) => path.clone(),
+        None => roots.first().cloned().unwrap_or_else(|| PathBuf::from(".")),
+    };
+    let plan = crate::layout::plan(&facts, &chosen, &layout, &context, &root);
+
+    let max_size_kb = match &opts.max_size {
+        Some(raw) => Some(crate::clone::parse_size_to_kb(raw).map_err(|err| anyhow::anyhow!(err))?),
+        None => None,
+    };
+    let clone_options = crate::clone::CloneOptions {
+        blobless: opts.blobless,
+        depth: opts.depth,
+        max_size_kb,
+    };
+
+    let targets: Vec<crate::clone::CloneTarget> = plan
+        .rows
+        .iter()
+        .filter(|row| matches!(row.action, crate::layout::Action::Clone))
+        .map(|row| crate::clone::CloneTarget {
+            owner: row.owner.clone(),
+            name: row.name.clone(),
+            dest: row.dest.clone(),
+            size_kb: facts[row.index].size_kb,
+        })
+        .collect();
+
+    let counts = plan.counts();
+    let total_kb: u64 = targets.iter().map(|target| target.size_kb).sum();
+    println!(
+        "{}",
+        paint(
+            &format!(
+                "{} to clone into {} \u{b7} {} \u{b7} {} already there, {} elsewhere, {} skipped",
+                targets.len(),
+                root.display(),
+                crate::clone::format_size(total_kb),
+                counts.keep,
+                counts.moves,
+                counts.skipped,
+            ),
+            BOLD,
+            color,
+        )
+    );
+    if counts.moves > 0 {
+        println!(
+            "{}",
+            paint(
+                "repos that exist elsewhere are left where they are — `polygit plan` shows where they would move to",
+                DIM,
+                color,
+            )
+        );
+    }
+    if targets.is_empty() {
+        println!("{}", paint("Nothing to clone.", DIM, color));
+        return Ok(0);
+    }
+    if opts.dry_run {
+        for target in &targets {
+            println!("  {} {}", paint("+", GREEN, color), target.dest.display());
+        }
+        return Ok(0);
+    }
+    if !opts.yes && !confirm(&format!("Clone {} repo(s)?", targets.len()))? {
+        println!("{}", paint("Aborted.", DIM, color));
+        return Ok(0);
+    }
+
+    let progress = Arc::new(std::sync::Mutex::new(crate::clone::CloneProgress::new(targets.len())));
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let jobs = opts.jobs.unwrap_or_else(num_cpus::get).max(1);
+    let control = crate::app::ThrottleControl::new(jobs);
+
+    let reporter = Arc::clone(&progress);
+    let total = targets.len();
+    let ticker = tokio::spawn(async move {
+        let stderr_tty = io::stderr().is_terminal();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let (done, running) = {
+                let state = reporter.lock().unwrap();
+                (state.done, state.running.join(", "))
+            };
+            if stderr_tty {
+                eprint!("\r\x1b[2K{} {running}", progress_bar(done, total, PROGRESS_WIDTH));
+                let _ = io::stderr().flush();
+            }
+            if done >= total {
+                break;
+            }
+        }
+        if stderr_tty {
+            eprint!("\r\x1b[2K");
+            let _ = io::stderr().flush();
+        }
+    });
+
+    crate::clone::run_clone(
+        targets,
+        clone_options,
+        Arc::clone(&progress),
+        cancel,
+        control,
+        crate::clone::gh_clone_fn(),
+    )
+    .await;
+    ticker.abort();
+
+    let state = progress.lock().unwrap();
+    for (target, outcome) in &state.results {
+        match outcome {
+            crate::clone::CloneOutcome::Cloned => {}
+            other => println!(
+                "  {} {}  {}",
+                paint("!", RED, color),
+                target.slug(),
+                paint(&other.label(), DIM, color)
+            ),
+        }
+    }
+    println!("{}", paint(&state.summary(), BOLD, color));
+    Ok(if state.failed() > 0 { 1 } else { 0 })
+}
+
+/// Ask on a TTY; without one, refuse rather than assuming yes.
+fn confirm(question: &str) -> Result<bool> {
+    if !io::stdin().is_terminal() {
+        println!("{question} (no TTY — pass -y to proceed)");
+        return Ok(false);
+    }
+    print!("{question} [y/N] ");
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 /// `polygit orgs` — your account, your orgs and your enterprises, with how much of each is cloned.

@@ -29,6 +29,7 @@ found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level sc
 | `coverage` | `missing`, `cov` | Per GitHub owner, which of its repos aren't cloned locally. |
 | `select` | `sel` | Resolve a [selector expression](#selector-expressions) to the repos it picks. |
 | `plan` | | Preview the directory layout a selector + template produce. Touches nothing. |
+| `clone` | | Clone the repos a selector picks, into that layout. |
 | `orgs` | `owners` | Your account, orgs and enterprises, with how much of each is cloned. |
 | `ws` | `workspace`, `workspaces` | Interactive workspace picker; `ws ls` lists saved workspaces. |
 | `update` | `upgrade` | Self-update to the latest published release. |
@@ -96,6 +97,18 @@ rather than each getting a folder of their own.
 ```bash
 polygit plan '' ~/projects --layout '{project}/{repo}'
 polygit plan 'tf-*' ~/projects --layout '{group}/{repo}' -o /tmp/preview --json
+```
+
+`polygit clone` runs the same resolution and then acts on the **clone** rows only — a repo already
+present is left alone, wherever it sits. Clones run concurrently (`-j`, default `nproc`) through the
+same cap as pulls, so a throttling remote slows both together. Full history by default; `--blobless`
+defers file contents (`--filter=blob:none`) which is much faster at org scale and, unlike
+`--depth-limit`, truncates nothing. `--max-size 2GB` skips large repos and says which. `--dry-run`
+prints the destinations and exits.
+
+```bash
+polygit clone 'topic:cli AND is:missing' --owner acme -o ~/projects/acme
+polygit clone '' --owner acme --layout '{project}/{repo}' --blobless -y
 ```
 
 Each row comes out as **clone** (not present locally), **keep** (already exactly there), **move**

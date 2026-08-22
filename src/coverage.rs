@@ -429,6 +429,7 @@ pub fn repo_facts(owners: &[OwnerCoverage]) -> Vec<crate::select::RepoFacts> {
                 is_fork: repo.is_fork,
                 is_archived: repo.is_archived,
                 private: repo.private,
+                size_kb: repo.size_kb,
                 local_path: repo.local_path.clone(),
             })
         })
