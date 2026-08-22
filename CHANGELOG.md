@@ -3,6 +3,22 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.23.0 — 2026-08-22
+Every metric in the perf panel explains itself
+The panel's labels are abbreviations forced by a 23-cell box — `flush`, `backlog`, `dropped` —
+so the numbers were legible only to whoever wrote them.
+- **Dwell on any metric row and a popover names it**, says what it measures, and says what a bad
+  reading indicts: that flush is your emulator and not this app, that a non-zero backlog is the
+  coalescing working rather than a fault, that a frame rate idling at exactly 20 is a floor and
+  not a health signal. Channel rows carry their p50/p95/p99, worst-in-window, all-time peak and
+  sample count underneath; the rate rows do not, because inventing a line of zeros for a metric
+  with no percentiles would read as a measurement.
+- **The popovers open away from the panel**, never under it. The panel draws last, deliberately,
+  so its own cost stays out of the channels it reports — which means anything overlapping it is
+  painted over. The side is chosen from which half of the screen the panel is in, and flipping is
+  refused for these tips specifically, since flipping is the one thing that could throw one back
+  across the panel.
+
 ## v3.22.0 — 2026-08-22
 The perf panel moves, remembers where you put it, and plots its own history
 It showed the current percentiles in a fixed corner, so a spike that had already passed was

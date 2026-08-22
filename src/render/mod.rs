@@ -1279,10 +1279,15 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     frame.render_widget(Clear, rect);
 
     let mut lines: Vec<Line> = Vec::new();
+    let mut perf_tips: Vec<(u16, String)> = Vec::new();
     lines.push(Line::from(vec![
         Span::styled(format!("{:<label_width$}", "channel"), Style::default().fg(palette.faint)),
         Span::styled(format!(" {:>6} {:>6}", "p95", "p50"), Style::default().fg(palette.faint)),
     ]));
+    // Row index within the table, for turning a row into the screen line it will occupy. The header
+    // takes the first line, so the first metric row is at offset 1.
+    let mut drawn = 1_u16;
+    let popover_side = perf_popover_side(rect, area);
     for (label, value, color, tier) in rows {
         let keep = match tier {
             1 => plan.detail,
@@ -1292,10 +1297,33 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         if !keep {
             continue;
         }
+        // A popover per metric row, explaining what the abbreviation measures and what a bad
+        // reading indicts. Registered against the row's real screen position — the panel moves, so
+        // a computed offset would be right only at the corner it was written for.
+        if let Some((title, body)) = crate::perf::channel_help(&label) {
+            let mut text = format!("**{title}**\n{body}");
+            // Percentiles for the rows that are channels. A rate row has none, and inventing a
+            // line of zeros for it would read as a measurement.
+            if let Some(channel) = app.perf.channel_by_label(&label)
+                && !channel.is_empty()
+            {
+                text.push_str(&format!(
+                    "\np50 {:.2}ms · p95 {:.2}ms · p99 {:.2}ms\nworst {:.2}ms · peak {:.2}ms · n {}",
+                    channel.p50() / 1000.0,
+                    channel.p95() / 1000.0,
+                    channel.p99() / 1000.0,
+                    channel.window_max() / 1000.0,
+                    channel.peak / 1000.0,
+                    channel.count,
+                ));
+            }
+            perf_tips.push((rect.y + 1 + drawn, text));
+        }
         lines.push(Line::from(vec![
             Span::styled(format!("{label:<label_width$}"), Style::default().fg(palette.muted)),
             Span::styled(value, Style::default().fg(color)),
         ]));
+        drawn += 1;
     }
     lines.push(Line::from(Span::styled(
         "─".repeat(inner_width),
@@ -1393,6 +1421,22 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     // the panel, and without this a click in the middle of it selects the repo row behind it.
     app.perf_panel_rect = rect;
 
+    // Per-row popovers, opening AWAY from the panel. `hover_tooltips` is cleared at the top of the
+    // widget pass and this runs later in the same frame, so appending here is safe; the dwell loop
+    // reads the previous frame's registry, exactly as every column header already does.
+    for (row, text) in perf_tips {
+        app.hover_tooltips.push(crate::app::TooltipRegion {
+            row,
+            col_start: rect.x + 1,
+            col_end: rect.x + rect.width.saturating_sub(1),
+            text,
+            anchor: Rect { x: rect.x, y: row, width: rect.width, height: 1 },
+            placement: tui_pick::Placement::new(popover_side, tui_pick::Align::Start),
+            hide_column: None,
+            area: crate::app::TooltipArea::Perf,
+        });
+    }
+
     // The panel paints its OWN hover. `apply_hover` runs earlier and this function then draws
     // `Clear` over the same cells, which resets them — so a highlight applied there is computed
     // and then wiped, leaving a button that is clickable and dead on hover. Doing it here also
@@ -1417,6 +1461,21 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
             // A softer tint on the title strip: it is a draggable surface, not a button.
             tint(frame, app.perf_drag_area.y, app.perf_drag_area.x, app.perf_drag_area.right());
         }
+    }
+}
+
+/// Which side of the panel its popovers open toward: whichever half of the screen it is NOT in.
+///
+/// The panel draws LAST — deliberately, so its own cost stays out of the channels it reports — and
+/// the tooltip draws in the widget pass before it. So a popover that overlaps the panel is painted
+/// over by it. Flipping is disabled at the call site for the same reason: flipping is the one thing
+/// that could throw it back across the panel.
+fn perf_popover_side(panel: Rect, viewport: Rect) -> tui_pick::Side {
+    let panel_centre = panel.x.saturating_add(panel.width / 2);
+    if panel_centre >= viewport.x + viewport.width / 2 {
+        tui_pick::Side::Left
+    } else {
+        tui_pick::Side::Right
     }
 }
 
@@ -1604,7 +1663,7 @@ fn render_tooltip(frame: &mut Frame, app: &mut AppState) {
         (width, height),
         area,
         tip.placement,
-        tui_pick::PositionOptions { offset: 0, flip: true, shift: true },
+        tui_pick::PositionOptions { offset: 0, flip: tip.flip, shift: true },
     )
     .rect;
     let block = Block::default()

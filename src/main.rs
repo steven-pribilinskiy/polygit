@@ -757,6 +757,7 @@ fn cursor_tip(cursor: Option<(u16, u16)>, text: String) -> Option<app::HoverTip>
         text,
         anchor: Rect { x: col, y: row, width: 1, height: 1 },
         placement: tui_pick::Placement::top_center(),
+        flip: true,
         hide_column: None,
     })
 }
@@ -2189,11 +2190,18 @@ async fn run_event_loop(
                                     app::TooltipArea::Header => tips.headers,
                                     app::TooltipArea::Count => tips.counts,
                                     app::TooltipArea::Info => !tips.all_off(),
+                                    // No switch of its own: the panel is already opt-in behind
+                                    // Ctrl+T, so a second toggle would gate a thing you had to ask
+                                    // for twice. The master switch still applies.
+                                    app::TooltipArea::Perf => !tips.all_off(),
                                 };
                                 allowed.then_some(app::HoverTip {
                                     text,
                                     anchor,
                                     placement,
+                                    // The perf panel draws after the tooltip, so a popover that
+                                    // flipped back across it would be painted over.
+                                    flip: area != app::TooltipArea::Perf,
                                     hide_column,
                                 })
                             },

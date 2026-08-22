@@ -880,7 +880,7 @@
           "T"
         ],
         "action": "Toggle the performance overlay",
-        "note": "live frame/input timings — hover lag, frame build, terminal flush, state-lock wait, the panel's own cost, and how many mouse-motion reports were superseded before they could be drawn, each as p95/p50 — plus a history graph and a one-line verdict naming which of them is responsible. The panel is movable: drag its title bar, `Alt`+arrows nudge it, and `[menu]` picks a corner, the graph's metric, its window and its height, or resets the position. Where it sits is remembered. Works from any view or modal; `--perf` starts collecting at launch and prints the full report on exit.",
+        "note": "live frame/input timings — hover lag, frame build, terminal flush, state-lock wait, the panel's own cost, and how many mouse-motion reports were superseded before they could be drawn, each as p95/p50 — plus a history graph and a one-line verdict naming which of them is responsible. The panel is movable: drag its title bar, `Alt`+arrows nudge it, and `[menu]` picks a corner, the graph's metric, its window and its height, or resets the position. Where it sits is remembered. Works from any view or modal; `--perf` starts collecting at launch and prints the full report on exit. Dwell on any metric row for a popover naming the channel, what it measures and what a bad reading indicts, with its full percentiles.",
         "keywords": [
           "performance",
           "perf",

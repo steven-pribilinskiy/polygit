@@ -2348,6 +2348,8 @@ pub enum TooltipArea {
     Count,
     /// An info-panel element (e.g. the SUGGESTED "Copy command" button reveals the full command).
     Info,
+    /// A metric row in the perf panel — what the channel measures and what a bad reading means.
+    Perf,
 }
 
 /// A captured dwell-tooltip region: the hover hit-area, the text, the element the popup anchors to,
@@ -2423,6 +2425,10 @@ pub struct HoverTip {
     pub text: String,
     pub anchor: Rect,
     pub placement: tui_pick::Placement,
+    /// Whether the popup may flip to the opposite side to find room. On for everything except the
+    /// perf panel's rows: the panel draws after the tooltip, so a popover flipped back across it is
+    /// painted over — the one placement that must be refused rather than rescued.
+    pub flip: bool,
     /// When set, the tooltip shows a clickable `[x]` that hides this list column.
     pub hide_column: Option<Column>,
 }

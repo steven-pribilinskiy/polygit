@@ -1391,3 +1391,38 @@ fn perf_overlay_declines_to_draw_when_the_terminal_is_too_small() {
         let accordion = render_ui(&mut app, 120, 40);
         assert!(accordion.contains("j/k scroll"), "the accordion always offers j/k\n{accordion}");
     }
+
+/// Every metric row registers a popover explaining what it measures — the labels are abbreviations
+/// forced by a 23-cell box, so without this the numbers are legible only to whoever wrote them.
+#[test]
+fn perf_panel_registers_a_popover_for_every_metric_row() {
+    let mut app = app_with_perf_history();
+    app.perf.build.record_us(500.0);
+    app.perf.flush.record_us(200.0);
+    let _ = render_rows(&mut app, 150, 44);
+
+    let perf_tips: Vec<_> = app
+        .hover_tooltips
+        .iter()
+        .filter(|region| region.area == crate::app::TooltipArea::Perf)
+        .collect();
+    assert!(!perf_tips.is_empty(), "the panel registers popovers at all");
+    assert!(
+        perf_tips.iter().any(|region| region.text.contains("Terminal flush")),
+        "the flush row explains itself: {:?}",
+        perf_tips.iter().map(|r| &r.text[..30.min(r.text.len())]).collect::<Vec<_>>()
+    );
+    // A sampled channel carries its percentiles; the prose alone would not justify a popover.
+    let flush = perf_tips.iter().find(|r| r.text.contains("Terminal flush")).unwrap();
+    assert!(flush.text.contains("p95"), "and its percentiles: {}", flush.text);
+
+    // Each region must sit on the row it describes, or the popover explains the wrong number.
+    let rect = app.perf_panel_rect;
+    for region in &perf_tips {
+        assert!(
+            region.row > rect.y && region.row < rect.y + rect.height,
+            "region at row {} is outside the panel {rect:?}",
+            region.row
+        );
+    }
+}

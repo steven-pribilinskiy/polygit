@@ -142,6 +142,65 @@ fn wrapped_rows(text: &str, width: usize) -> usize {
     rows.max(1)
 }
 
+/// What a metric row's popover says: what the channel measures, and what a bad reading indicts.
+///
+/// The panel's labels are abbreviations by necessity — the box is 23 cells wide — so without this
+/// the numbers are only legible to whoever wrote them. Each string is the sentence that turns a
+/// reading into a next step.
+pub fn channel_help(label: &str) -> Option<(&'static str, &'static str)> {
+    Some(match label.trim() {
+        "hover lag" => (
+            "Hover lag",
+            "Wall time from a mouse-motion report to the end of the frame that acted on it — the              delay you actually feel. Every other row exists to explain this one. Blank until the              mouse moves, because there is nothing to measure while it is still.",
+        ),
+        "build" => (
+            "Frame build",
+            "Laying the widgets out into the back buffer. This is our code, and the only row a              profiler would help with. Contains the palette and hover passes rather than sitting              beside them, so the three do not sum.",
+        ),
+        "flush" => (
+            "Terminal flush",
+            "Diffing against the previous frame and writing the escape sequences out — your              emulator's speed, not ours. High here with a low build means the terminal is the slow              part and no amount of optimising this app will help.",
+        ),
+        "upkeep" => (
+            "Loop upkeep",
+            "Everything in one pass of the event loop that is not the draw: state bookkeeping, the              dwell-tooltip scan, spawning workers. Usually invisible; a spike here means something              slow crept into the per-iteration path.",
+        ),
+        "lock" => (
+            "State lock wait",
+            "Time the render spent waiting to acquire the shared app state while worker tasks held              it. Shows up as lag with no slow frame to blame it on, which is why it has a row.",
+        ),
+        "overlay" => (
+            "This panel",
+            "What drawing this panel costs. Subtracted from the flush, so the panel never bills its              own weight to your terminal — though the extra cells it puts in the diff are real work              for the emulator and cannot be subtracted. Close it and use --perf for the cleanest read.",
+        ),
+        "backlog" => (
+            "Superseded motion",
+            "Mouse-motion reports discarded at the poll because a newer position had already              arrived. Non-zero is normal and healthy — it is the coalescing working. Large and              sustained alongside high lag means the loop is structurally behind.",
+        ),
+        "dropped" => (
+            "Undrawn motion",
+            "Motion reports read but never drawn, counted per frame. Only ever non-zero with              POLYGIT_NO_COALESCE=1, which restores the old one-frame-per-report behaviour so the              two can be compared.",
+        ),
+        "motion/s" => (
+            "Motion rate",
+            "Mouse-motion reports arriving per second. A terminal emits one per character cell the              cursor crosses, so this rises with how fast you move rather than how far.",
+        ),
+        "event/s" => (
+            "Event rate",
+            "Every input event per second — keys, clicks, wheel, drag, resize, paste — not only              motion. If this tracks the motion rate exactly, nothing else is happening.",
+        ),
+        "frame/s" => (
+            "Frame rate",
+            "Frames drawn per second. Idles at exactly 20: the loop polls on a 50 ms timeout and              draws unconditionally, so this is a floor, not a measure of health.",
+        ),
+        "term rtt" => (
+            "Terminal round-trip",
+            "How long your terminal took to answer a cursor-position query, measured once at              startup. The floor on how fast it can acknowledge anything, whatever this app does.",
+        ),
+        _ => return None,
+    })
+}
+
 /// Which series the history graph is plotting.
 ///
 /// Each metric owns BOTH of its reductions, because they differ per metric and getting either
@@ -721,6 +780,22 @@ impl Perf {
     /// How many wrapped rows the tallest verdict needs at `width`.
     pub fn max_verdict_rows(width: usize) -> usize {
         Self::VERDICTS.iter().map(|text| wrapped_rows(text, width)).max().unwrap_or(1).max(1)
+    }
+
+    /// The channel a panel row is showing, by its label. `None` for rows that are not channels
+    /// (the per-second rates and the terminal round-trip), which have no percentiles to report.
+    pub fn channel_by_label(&self, label: &str) -> Option<&Channel> {
+        Some(match label.trim() {
+            "hover lag" => &self.lag,
+            "build" => &self.build,
+            "flush" => &self.flush,
+            "upkeep" => &self.upkeep,
+            "lock" => &self.lock_wait,
+            "overlay" => &self.overlay_cost,
+            "backlog" => &self.backlog,
+            "dropped" => &self.coalesced,
+            _ => return None,
+        })
     }
 
     /// A plain-text report, printed on quit when instrumentation ran.
