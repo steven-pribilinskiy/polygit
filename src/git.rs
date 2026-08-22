@@ -418,7 +418,12 @@ pub fn parse_fetch_branches(output: &str) -> Vec<FetchedRef> {
     branches
 }
 
-/// Discover worktree entries from `<cwd>/<repo>.worktrees/*/.git`.
+/// How deep under `<repo>.worktrees/` a checkout may sit. A branch name with one `/` nests one
+/// level; more than three is not a branch layout anyone uses, and the bound keeps a stray deep
+/// tree from being walked in full.
+const WORKTREE_NEST_LIMIT: usize = 4;
+
+/// Discover worktree entries under `<cwd>/<repo>.worktrees/`, at any nesting a branch name creates.
 /// Returns Vec of (parent_repo_name, branch).
 pub async fn discover_worktrees(cwd: &Path) -> Result<Vec<(String, String)>> {
     let mut results = Vec::new();
@@ -443,20 +448,31 @@ pub async fn discover_worktrees(cwd: &Path) -> Result<Vec<(String, String)>> {
             Ok(iter) => iter,
             Err(_) => continue,
         };
+        // repo name = everything before .worktrees in the directory name
+        let repo_name = name.split(".worktrees").next().unwrap_or(&name).to_string();
+        let mut pending: Vec<(PathBuf, usize)> = Vec::new();
         while let Some(branch_entry) = wt_iter.next_entry().await? {
-            let branch_dir = branch_entry.path();
-            let git_dir = branch_dir.join(".git");
-            if !git_dir.exists() {
+            pending.push((branch_entry.path(), 1));
+        }
+        // A branch name containing `/` nests the worktree a level deeper, so stopping at the first
+        // level silently misses it. Descend until the directory holding `.git` is found.
+        while let Some((dir, depth)) = pending.pop() {
+            if !dir.is_dir() {
                 continue;
             }
-            // repo name = everything before .worktrees in the directory name
-            let repo_name = name
-                .split(".worktrees")
-                .next()
-                .unwrap_or(&name)
-                .to_string();
-            let branch = get_branch(&branch_dir).await.unwrap_or_else(|_| "?".to_string());
-            results.push((repo_name, branch));
+            if dir.join(".git").exists() {
+                let branch = get_branch(&dir).await.unwrap_or_else(|_| "?".to_string());
+                results.push((repo_name.clone(), branch));
+                continue;
+            }
+            if depth >= WORKTREE_NEST_LIMIT {
+                continue;
+            }
+            if let Ok(mut nested) = tokio::fs::read_dir(&dir).await {
+                while let Ok(Some(child)) = nested.next_entry().await {
+                    pending.push((child.path(), depth + 1));
+                }
+            }
         }
     }
 
@@ -631,6 +647,25 @@ pub async fn clone_repo(url: &str, dest: &Path) -> anyhow::Result<()> {
         .await?;
     if !output.status.success() {
         anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(())
+}
+
+/// Reconnect a moved repo and its worktrees. Passing each worktree's NEW path is what makes this
+/// work in both directions at once — git's own documentation is explicit that when the main
+/// worktree and its linked worktrees have all been moved manually, running `repair` in the main
+/// worktree with each new path reestablishes every connection. `--relative-paths` additionally
+/// converts the links to relative, so the next move of this subtree needs no repair at all.
+pub async fn repair_worktrees(repo: &Path, worktrees: &[PathBuf]) -> Result<(), String> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(repo).args(["worktree", "repair", "--relative-paths"]);
+    for path in worktrees {
+        command.arg(path);
+    }
+    let output =
+        command.output().await.map_err(|err| format!("running git worktree repair: {err}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     Ok(())
 }
@@ -3566,5 +3601,35 @@ detached
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod worktree_discovery_tests {
+    use super::*;
+
+    /// A branch name containing `/` nests the checkout a level deeper than a flat scan looks. Such
+    /// worktrees exist in the wild, and missing one means a move would strand it.
+    #[tokio::test]
+    async fn nested_branch_worktrees_are_found() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        // <repo>.worktrees/flat/.git  and  <repo>.worktrees/group/nested/.git
+        for relative in ["demo.worktrees/flat", "demo.worktrees/group/nested"] {
+            let dir = base.join(relative);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(".git"), "gitdir: /nowhere\n").unwrap();
+        }
+        let found = discover_worktrees(base).await.unwrap();
+        assert_eq!(found.len(), 2, "both the flat and the nested worktree must be seen: {found:?}");
+        assert!(found.iter().all(|(repo, _)| repo == "demo"));
+    }
+
+    /// A `.worktrees` directory holding no checkout contributes nothing rather than erroring.
+    #[tokio::test]
+    async fn an_empty_worktrees_dir_is_not_an_entry() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("demo.worktrees/half-made")).unwrap();
+        assert!(discover_worktrees(root.path()).await.unwrap().is_empty());
     }
 }

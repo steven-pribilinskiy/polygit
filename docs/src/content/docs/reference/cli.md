@@ -30,6 +30,7 @@ found repo. Use `--depth 1` (or `--no-recursive`) for the legacy single-level sc
 | `select` | `sel` | Resolve a [selector expression](#selector-expressions) to the repos it picks. |
 | `plan` | | Preview the directory layout a selector + template produce. Touches nothing. |
 | `clone` | | Clone the repos a selector picks, into that layout. |
+| `reorg` | | Move already-cloned repos (and their worktrees) into that layout. |
 | `orgs` | `owners` | Your account, orgs and enterprises, with how much of each is cloned. |
 | `ws` | `workspace`, `workspaces` | Interactive workspace picker; `ws ls` lists saved workspaces. |
 | `update` | `upgrade` | Self-update to the latest published release. |
@@ -109,6 +110,37 @@ prints the destinations and exits.
 ```bash
 polygit clone 'topic:cli AND is:missing' --owner acme -o ~/projects/acme
 polygit clone '' --owner acme --layout '{project}/{repo}' --blobless -y
+```
+
+## Reorganizing what you already have
+
+`polygit reorg` acts on the **move** rows: a repo that exists locally but not where the layout says
+it belongs. The repo and its `<repo>.worktrees/` sibling move as one unit, then
+`git worktree repair --relative-paths` reconnects both directions — and converts the links to
+relative, so the *next* move of that subtree needs no repair at all.
+
+Every gate is checked before anything is written, and a move that trips one is reported rather than
+attempted:
+
+- **Commit identity.** `~/.gitconfig` can switch your author email by path via
+  `includeIf "gitdir:…"`. Moving a repo across such a boundary changes what you commit, with no
+  error and no output — so it blocks by default. `--allow-identity-change` waives it.
+- **In use.** Any process whose working directory is inside the subtree (read from `/proc`).
+- **Locked worktrees**, an occupied destination, and a destination on another filesystem (where a
+  move stops being atomic and open file handles are left pointing at deleted files).
+
+polygit rewrites **its own** path-keyed state — the status and PR caches, favorites, workspace
+folders, per-branch base overrides, and the shared usage history. Everything else that names the old
+path is **reported, not edited**: session transcripts, other tools' registries and shell history all
+belong to tools polygit does not own, and editing them silently across config directories is where
+an unrecoverable mistake lives. `--emit-moves <file>` writes the `old → new` pairs plus every
+foreign reference found, for whatever fixes those.
+
+If a move fails partway, the completed renames are walked back before returning.
+
+```bash
+polygit reorg '' ~/projects/acme --layout '{project}/{repo}' --dry-run
+polygit reorg 'tf-*' ~/projects/acme --layout '{group}/{repo}' --emit-moves /tmp/moves.json -y
 ```
 
 Each row comes out as **clone** (not present locally), **keep** (already exactly there), **move**

@@ -142,7 +142,7 @@ pub struct ListPrefs {
     pub sort_column: SortColumn,
     /// Repo-list sort direction.
     pub sort_dir: SortDir,
-    /// Relative paths of repos marked as favorites.
+    /// Favorited repos, keyed by ABSOLUTE path (`favorite_key` in `app/types.rs`).
     pub favorites: Vec<String>,
     /// Pin a "★ Favorites" section to the top of the list.
     pub favorites_first: bool,

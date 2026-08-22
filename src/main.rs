@@ -19,6 +19,7 @@ mod persist;
 mod plain;
 mod pr_cache;
 mod profile;
+mod relocate;
 mod render;
 mod select;
 mod theme;
@@ -279,6 +280,44 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
         /// Skip the confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
+    /// Move already-cloned repos (and their worktrees) into the layout you choose
+    Reorg {
+        /// Selector expression. Empty selects everything in scope.
+        #[arg(default_value = "")]
+        expr: String,
+        #[command(flatten)]
+        scan: commands::ScanArgs,
+        /// Destination path template
+        #[arg(long, value_name = "TEMPLATE", default_value = "{repo}")]
+        layout: String,
+        /// Destination root (default: the first scan root)
+        #[arg(short = 'o', long, value_name = "DIR")]
+        output: Option<PathBuf>,
+        #[arg(long, value_name = "N", default_value = "1")]
+        prefix_depth: usize,
+        #[arg(long = "owner", value_name = "NAME")]
+        owners: Vec<String>,
+        #[arg(long)]
+        with_siblings: bool,
+        #[arg(long)]
+        include_forks: bool,
+        #[arg(long)]
+        include_archived: bool,
+        #[arg(long)]
+        refresh: bool,
+        /// Write the old -> new manifest, plus every foreign reference found, to this file
+        #[arg(long, value_name = "FILE")]
+        emit_moves: Option<PathBuf>,
+        /// Proceed even when the move would change which git identity applies
+        #[arg(long)]
+        allow_identity_change: bool,
+        /// Report what would move and exit
+        #[arg(long)]
+        dry_run: bool,
         #[arg(short = 'y', long)]
         yes: bool,
     },
@@ -1211,6 +1250,49 @@ async fn run() -> Result<i32> {
                     max_size: max_size.clone(),
                     yes: *yes,
                     dry_run: *dry_run,
+                },
+            )
+            .await;
+        }
+        Some(Commands::Reorg {
+            expr,
+            scan,
+            layout,
+            output,
+            prefix_depth,
+            owners,
+            with_siblings,
+            include_forks,
+            include_archived,
+            refresh,
+            emit_moves,
+            allow_identity_change,
+            dry_run,
+            yes,
+        }) => {
+            let (roots, _) = resolve_roots(&scan.dirs, scan.workspace.as_deref())?;
+            return commands::run_reorg(
+                roots,
+                scan.max_depth(),
+                commands::ReorgOpts {
+                    plan: commands::PlanOpts {
+                        select: commands::SelectOpts {
+                            expr: expr.clone(),
+                            owners: owners.clone(),
+                            with_siblings: *with_siblings,
+                            include_forks: *include_forks,
+                            include_archived: *include_archived,
+                            refresh: *refresh,
+                            json: false,
+                        },
+                        layout: layout.clone(),
+                        output: output.clone(),
+                        prefix_depth: *prefix_depth,
+                    },
+                    yes: *yes,
+                    dry_run: *dry_run,
+                    allow_identity_change: *allow_identity_change,
+                    emit_moves: emit_moves.clone(),
                 },
             )
             .await;

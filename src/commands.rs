@@ -113,6 +113,7 @@ pub(crate) const HELP_SECTIONS: &[(&str, &[HelpRow])] = &[
         ("select", "sel", "Resolve a selector expression to the repos it picks"),
         ("plan", "", "Preview the directory layout a selector + template produce"),
         ("clone", "", "Clone the repos a selector picks, into the layout you choose"),
+        ("reorg", "", "Move repos (and their worktrees) into the layout you choose"),
         ("orgs", "owners", "Your account, orgs and enterprises, with cloned counts"),
     ]),
     ("Workspaces", &[
@@ -907,6 +908,168 @@ fn confirm(question: &str) -> Result<bool> {
     let mut answer = String::new();
     io::stdin().read_line(&mut answer)?;
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+/// Options for `reorg`.
+pub struct ReorgOpts {
+    pub plan: PlanOpts,
+    pub yes: bool,
+    pub dry_run: bool,
+    pub allow_identity_change: bool,
+    /// Where to write the handoff manifest of `old -> new` pairs and foreign references.
+    pub emit_moves: Option<PathBuf>,
+}
+
+/// `polygit reorg` — move already-cloned repos into the layout, taking their worktrees with them.
+///
+/// polygit moves the subtree, repairs git, and rewrites its OWN state. Everything else that names
+/// the old path is reported into a manifest rather than edited: rewriting other tools' files,
+/// across config directories polygit does not own, is where an unrecoverable mistake lives.
+pub async fn run_reorg(roots: Vec<PathBuf>, max_depth: usize, opts: ReorgOpts) -> Result<i32> {
+    let color = stdout_color();
+    let facts = resolve_facts(&roots, max_depth, &opts.plan.select).await?;
+    let chosen = resolve_selection(&facts, &opts.plan.select)?;
+    let layout = crate::layout::LayoutTemplate::parse(&opts.plan.layout)
+        .map_err(|err| anyhow::anyhow!(err))?;
+    let context = crate::layout::LayoutContext::build(
+        &facts,
+        opts.plan.prefix_depth,
+        2,
+        &crate::select::ClusterOpts::default(),
+    );
+    let root = match &opts.plan.output {
+        Some(path) => path.clone(),
+        None => roots.first().cloned().unwrap_or_else(|| PathBuf::from(".")),
+    };
+    let plan = crate::layout::plan(&facts, &chosen, &layout, &context, &root);
+
+    let moves: Vec<(&crate::layout::PlanRow, PathBuf)> = plan
+        .rows
+        .iter()
+        .filter_map(|row| match &row.action {
+            crate::layout::Action::Move { from } => Some((row, from.clone())),
+            _ => None,
+        })
+        .collect();
+    if moves.is_empty() {
+        println!("{}", paint("Nothing to move — every selected repo is already in place.", DIM, color));
+        return Ok(0);
+    }
+
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let includes = if opts.allow_identity_change {
+        Vec::new()
+    } else {
+        let config = std::fs::read_to_string(home.join(".gitconfig")).unwrap_or_default();
+        crate::relocate::parse_gitdir_includes(&config, &home)
+    };
+
+    // Vet everything before anything is written, so the report is complete and the run is all-or-
+    // nothing per repo rather than discovering a blocker halfway.
+    let mut candidates = Vec::new();
+    for (row, from) in &moves {
+        candidates.push((row, crate::relocate::vet(from, &row.dest, &includes).await));
+    }
+    let movable: Vec<_> = candidates.iter().filter(|(_, vetted)| vetted.movable()).collect();
+    let blocked: Vec<_> = candidates.iter().filter(|(_, vetted)| !vetted.movable()).collect();
+
+    println!(
+        "{}",
+        paint(&format!("{} to move, {} blocked", movable.len(), blocked.len()), BOLD, color)
+    );
+    for (row, vetted) in &blocked {
+        println!(
+            "  {} {}  {}",
+            paint("!", RED, color),
+            row.name,
+            paint(&vetted.blockers.iter().map(crate::relocate::Blocker::label).collect::<Vec<_>>().join("; "), DIM, color)
+        );
+    }
+    for (row, vetted) in &movable {
+        let worktrees = vetted.unit.worktrees.len();
+        let tail = if worktrees > 0 { format!("  (+{worktrees} worktrees)") } else { String::new() };
+        println!(
+            "  {} {}  {}{}",
+            paint("\u{2192}", CYAN, color),
+            row.name,
+            paint(&format!("{} -> {}", vetted.unit.from.display(), vetted.unit.to.display()), DIM, color),
+            paint(&tail, DIM, color),
+        );
+    }
+
+    let mut manifest = crate::relocate::MoveManifest::default();
+    for (_, vetted) in &movable {
+        manifest.moves.push((vetted.unit.from.clone(), vetted.unit.to.clone()));
+        manifest.foreign.extend(crate::relocate::foreign_references(&home, &vetted.unit.from));
+    }
+    // A store that names many of the moved repos is one thing to fix, not one per repo.
+    manifest.foreign.sort_by(|left, right| {
+        left.location.cmp(&right.location).then_with(|| left.detail.cmp(&right.detail))
+    });
+    manifest.foreign.dedup_by(|left, right| {
+        left.location == right.location && left.detail == right.detail
+    });
+    if !manifest.foreign.is_empty() {
+        println!();
+        println!(
+            "{}",
+            paint(
+                &format!(
+                    "{} reference(s) in other tools will still name the old paths \u{2014} polygit reports these, it does not edit them",
+                    manifest.foreign.len()
+                ),
+                DIM,
+                color,
+            )
+        );
+        for reference in manifest.foreign.iter().take(8) {
+            println!("  {}  {}", paint(&reference.owner, DIM, color), reference.location);
+        }
+        if manifest.foreign.len() > 8 {
+            println!("  {}", paint(&format!("... and {} more", manifest.foreign.len() - 8), DIM, color));
+        }
+    }
+
+    if let Some(path) = &opts.emit_moves {
+        std::fs::write(path, serde_json::to_string_pretty(&manifest.to_json())?)?;
+        println!("{}", paint(&format!("manifest written to {}", path.display()), DIM, color));
+    }
+
+    if opts.dry_run || movable.is_empty() {
+        return Ok(0);
+    }
+    if !opts.yes && !confirm(&format!("Move {} repo(s)?", movable.len()))? {
+        println!("{}", paint("Aborted.", DIM, color));
+        return Ok(0);
+    }
+
+    let config_dir = crate::persist::config_dir().unwrap_or_else(|| home.join(".config/polygit"));
+    let history = home.join(".config/goto-repo/history");
+    let mut journal: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut moved = 0usize;
+    for (row, vetted) in &movable {
+        match crate::relocate::apply(vetted, &mut journal).await {
+            crate::relocate::MoveOutcome::Moved => {
+                moved += 1;
+                crate::relocate::rewrite_own_state(&config_dir, &vetted.unit.from, &vetted.unit.to);
+                crate::relocate::rewrite_history_file(&history, &vetted.unit.from, &vetted.unit.to);
+            }
+            other => {
+                // A failure part-way is walked back rather than left as a half-reorganized tree.
+                println!(
+                    "{}",
+                    paint(&format!("{} failed: {other:?} — rolling back", row.name), RED, color)
+                );
+                let errors = crate::relocate::roll_back(&journal).await;
+                for error in &errors {
+                    println!("  {}", paint(error, RED, color));
+                }
+                return Ok(1);
+            }
+        }
+    }
+    println!("{}", paint(&format!("Moved {moved} repo(s)."), BOLD, color));
+    Ok(0)
 }
 
 /// `polygit orgs` — your account, your orgs and your enterprises, with how much of each is cloned.
