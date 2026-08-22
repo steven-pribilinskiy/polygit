@@ -944,6 +944,67 @@ fn perf_panel_reports_its_own_cost() {
     assert!(!app.perf.overlay_cost.is_empty(), "rendering the panel records its own cost");
 }
 
+/// Seed enough per-second history that the graph has something to draw.
+fn app_with_perf_history() -> AppState {
+    use crate::perf::Metric;
+    use std::time::{Duration, Instant};
+
+    let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+        "demo",
+        std::path::PathBuf::from("/tmp/demo"),
+    )))];
+    let mut app = AppState::new(repos, Some(4), true);
+    app.perf.toggle_overlay();
+    app.perf.lag.record_us(500.0);
+    let epoch = Instant::now();
+    app.perf.series = crate::perf::Series::new(epoch, crate::perf::Series::MAX_SECONDS);
+    for second in 0..30_u64 {
+        let at = epoch + Duration::from_secs(second);
+        app.perf.series.record(at, Metric::FrameTime, 400.0 + (second as f64) * 20.0);
+        for _ in 0..20 {
+            app.perf.series.record(at, Metric::Fps, 1.0);
+        }
+    }
+    app
+}
+
+/// A sparkline auto-normalises, so a flat line at 20 fps and one at 120 fps are the same picture —
+/// the caption carrying the scale is the only thing that makes the graph mean anything. And
+/// asserting "the panel rendered" passes with an empty graph area, so this also requires an actual
+/// bar glyph to have reached the screen.
+#[test]
+fn perf_panel_graph_draws_bars_and_names_its_scale() {
+    let mut app = app_with_perf_history();
+    let screen = render_rows(&mut app, 150, 44).join("\n");
+
+    assert!(screen.contains("frame"), "the caption names the metric:\n{screen}");
+    assert!(screen.contains("ms · 1m"), "the caption carries the unit and window:\n{screen}");
+    let bars = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+    assert!(
+        bars.iter().any(|glyph| screen.contains(glyph)),
+        "at least one sparkline bar reached the screen:\n{screen}"
+    );
+}
+
+/// Losing the graph is a better outcome than losing the panel. At a height that fits the numbers
+/// but not the graph, the title and the verdict must survive and the bars must not be drawn —
+/// keeping this alongside the suppression cases below is what proves "degrade" did not quietly
+/// become "always draw".
+#[test]
+fn perf_panel_degrades_before_it_disappears() {
+    let mut app = app_with_perf_history();
+    let screen = render_rows(&mut app, 150, 22).join("\n");
+
+    assert!(screen.contains("perf ^T"), "the panel is still there:\n{screen}");
+    assert!(screen.contains("hover is keeping up"), "the verdict survives:\n{screen}");
+    assert!(screen.contains("hover lag"), "the core numbers survive:\n{screen}");
+    let bars = ["▁", "▂", "▃", "▄", "▅", "▆", "▇"];
+    assert!(
+        !bars.iter().any(|glyph| screen.contains(glyph)),
+        "the graph is the thing that was dropped:\n{screen}"
+    );
+}
+
 /// A terminal too short for the overlay must simply not draw it — never panic, and never leave a
 /// click region pointing at a box that was not rendered.
 #[test]

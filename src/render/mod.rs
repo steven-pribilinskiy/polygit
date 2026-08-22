@@ -1114,7 +1114,8 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     let events_per_sec = perf.event_rate.per_sec(now);
     let verdict = perf.verdict();
 
-    let mut rows: Vec<(String, String, Color)> = Vec::new();
+    // (label, value, colour, tier) — tier 0 is core, 1 is detail, 2 is a rate row.
+    let mut rows: Vec<(String, String, Color, u8)> = Vec::new();
     // Hover lag leads: it is the symptom the user actually reports, and its color is the alarm.
     let lag_p95 = perf.lag.p95();
     let lag_color = if perf.lag.is_empty() {
@@ -1130,26 +1131,31 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         "hover lag".into(),
         format!("{} {}", ms(lag_p95, !perf.lag.is_empty()), ms(perf.lag.p50(), !perf.lag.is_empty())),
         lag_color,
+        0,
     ));
     rows.push((
         "  build".into(),
         format!("{} {}", ms(perf.build.p95(), !perf.build.is_empty()), ms(perf.build.p50(), !perf.build.is_empty())),
         palette.fg,
+        0,
     ));
     rows.push((
         "  flush".into(),
         format!("{} {}", ms(perf.flush.p95(), !perf.flush.is_empty()), ms(perf.flush.p50(), !perf.flush.is_empty())),
         palette.fg,
+        0,
     ));
     rows.push((
         "  upkeep".into(),
         format!("{} {}", ms(perf.upkeep.p95(), !perf.upkeep.is_empty()), ms(perf.upkeep.p50(), !perf.upkeep.is_empty())),
         palette.muted,
+        1,
     ));
     rows.push((
         "  lock".into(),
         format!("{} {}", ms(perf.lock_wait.p95(), !perf.lock_wait.is_empty()), ms(perf.lock_wait.p50(), !perf.lock_wait.is_empty())),
         palette.muted,
+        1,
     ));
     // What this panel costs to draw. Shown because it is subtracted from `flush` — a reader who
     // cannot see the correction has to take it on trust.
@@ -1157,6 +1163,7 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         "overlay".into(),
         format!("{} {}", ms(perf.overlay_cost.p95(), !perf.overlay_cost.is_empty()), ms(perf.overlay_cost.p50(), !perf.overlay_cost.is_empty())),
         palette.faint,
+        1,
     ));
 
     // A backlog is the tell that the loop is structurally behind, so it gets the same alarm colors
@@ -1175,32 +1182,38 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         "backlog".into(),
         format!("{:>6.0} {:>6.0}", backlog_p95, perf.backlog.p50()),
         backlog_color,
+        0,
     ));
     rows.push((
         "dropped".into(),
         format!("{:>6.0} {:>6.0}", perf.coalesced.p95(), perf.coalesced.p50()),
         palette.muted,
+        1,
     ));
     rows.push((
         "motion/s".into(),
         format!("{motion_per_sec:>6} /s{:>4}", ""),
         palette.fg,
+        2,
     ));
     rows.push((
         "event/s".into(),
         format!("{events_per_sec:>6} /s{:>4}", ""),
         palette.muted,
+        2,
     ));
     rows.push((
         "frame/s".into(),
         format!("{frames_per_sec:>6} /s{:>4}", ""),
         palette.fg,
+        2,
     ));
     if let Some(rtt) = perf.terminal_rtt {
         rows.push((
             "term rtt".into(),
             format!("{:>6.2} ms{:>4}", rtt.as_secs_f64() * 1e3, ""),
             palette.muted,
+            2,
         ));
     }
 
@@ -1212,13 +1225,27 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     let verdict_lines = wrap_plain(verdict, body_width);
     let inner_width = body_width;
     let width = (inner_width + 2) as u16;
-    // rows + the column header + the rule + the verdict, plus the two border rows. Getting this
-    // one short silently clips the LAST line, which is the verdict — the one line the overlay
-    // exists to show.
-    let height = (rows.len() + verdict_lines.len() + 4) as u16;
-    if area.width < width + 2 || area.height < height + 1 {
+
+    // The verdict's height is RESERVED at the longest one, not taken from the current text. The
+    // string changes as the numbers move ("hover is keeping up" is one line; the backlog verdict is
+    // four), so sizing to the live text makes the panel grow and shrink under the reader's eyes
+    // while they are trying to read it.
+    let verdict_rows = crate::perf::Perf::max_verdict_rows(body_width) as u16;
+
+    let graph_rows = app.perf.graph.rows;
+    // Count the tiers that actually exist this frame — `term rtt` is only present when the
+    // terminal answered the probe, and planning for a row that is not there leaves a blank one.
+    let detail_rows = rows.iter().filter(|(_, _, _, tier)| *tier == 1).count() as u16;
+    let rate_rows = rows.iter().filter(|(_, _, _, tier)| *tier == 2).count() as u16;
+    let Some(plan) =
+        crate::perf::plan_panel(area.height, verdict_rows, graph_rows, detail_rows, rate_rows)
+    else {
+        return;
+    };
+    if area.width < width + 2 {
         return;
     }
+    let height = plan.height;
     // Top-right, one column in from the edge so it never collides with a pane scrollbar.
     let rect = Rect { x: area.width - width - 1, y: 1, width, height };
     frame.render_widget(Clear, rect);
@@ -1228,7 +1255,15 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         Span::styled(format!("{:<label_width$}", "channel"), Style::default().fg(palette.faint)),
         Span::styled(format!(" {:>6} {:>6}", "p95", "p50"), Style::default().fg(palette.faint)),
     ]));
-    for (label, value, color) in rows {
+    for (label, value, color, tier) in rows {
+        let keep = match tier {
+            1 => plan.detail,
+            2 => plan.rates,
+            _ => true,
+        };
+        if !keep {
+            continue;
+        }
         lines.push(Line::from(vec![
             Span::styled(format!("{label:<label_width$}"), Style::default().fg(palette.muted)),
             Span::styled(value, Style::default().fg(color)),
@@ -1238,12 +1273,16 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         "─".repeat(inner_width),
         Style::default().fg(palette.faint),
     )));
-    for line in verdict_lines {
-        lines.push(Line::from(Span::styled(
-            line,
-            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
-        )));
-    }
+    // The verdict is drawn as its own block at the bottom, below the graph — see the layout split.
+    let verdict_block: Vec<Line> = verdict_lines
+        .into_iter()
+        .map(|line| {
+            Line::from(Span::styled(
+                line,
+                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect();
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1251,7 +1290,41 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         .border_style(Style::default().fg(palette.accent))
         .style(Style::default().bg(palette.base_bg))
         .title(Span::styled(" perf ^T ", Style::default().fg(palette.accent)));
-    frame.render_widget(Paragraph::new(lines).block(block), rect);
+    let inner = block.inner(rect);
+    frame.render_widget(&block, rect);
+
+    // Top to bottom: the table, then the graph, then the verdict. The verdict sits LAST because its
+    // height is reserved at the tallest of the six possible strings — put anywhere else, the unused
+    // rows read as a hole in the middle of the panel; at the bottom they are simply the edge.
+    // The verdict's height is reserved at the tallest string, so a short verdict leaves rows over.
+    // Give them to the graph rather than leaving them blank: a sparkline that gains a row of
+    // resolution when the verdict shortens is a far quieter change than a panel that resizes.
+    let slack = verdict_rows.saturating_sub(verdict_block.len() as u16);
+    let graph_height =
+        if plan.graph { plan.graph_rows + 1 + slack } else { 0 };
+    let verdict_height = if plan.graph { verdict_rows - slack } else { verdict_rows };
+    let table_height =
+        inner.height.saturating_sub(graph_height).saturating_sub(verdict_height);
+    let table_area = Rect { height: table_height, ..inner };
+    frame.render_widget(Paragraph::new(lines), table_area);
+
+    if plan.graph && graph_height > 0 {
+        let graph_area = Rect {
+            x: inner.x,
+            y: inner.y + table_height,
+            width: inner.width,
+            height: graph_height,
+        };
+        render_perf_graph(frame, app, graph_area, &palette);
+    }
+
+    let verdict_area = Rect {
+        x: inner.x,
+        y: inner.y + table_height + graph_height,
+        width: inner.width,
+        height: verdict_height,
+    };
+    frame.render_widget(Paragraph::new(verdict_block), verdict_area);
 
     // The `[x]` closes the overlay by mouse, mirroring `Ctrl+T`. Captured, not recomputed, so it
     // stays correct if the box moves or resizes.
@@ -1279,6 +1352,60 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
             Style::default().bg(palette.hover_bg()),
         );
     }
+}
+
+/// The history graph: a caption naming the metric and its scale, then a sparkline of the window.
+///
+/// Drawn after the palette pass like the rest of the panel, so every style carries explicit RGB
+/// from the palette — a default-styled sparkline would inherit the post-`Clear` reset and render
+/// unthemed.
+fn render_perf_graph(
+    frame: &mut Frame,
+    app: &AppState,
+    area: Rect,
+    palette: &crate::theme::Palette,
+) {
+    use ratatui::widgets::{RenderDirection, Sparkline};
+
+    let graph = app.perf.graph;
+    let seconds = graph.seconds();
+    let columns = usize::from(area.width);
+    let data = app.perf.series.window(graph.metric, seconds, columns);
+    let range = app.perf.series.range(graph.metric, seconds);
+
+    // The caption is not decoration. A sparkline auto-normalises, so a flat line at 20 fps and a
+    // flat line at 120 fps are the same picture — without the scale the graph says nothing.
+    let scale = match range {
+        Some((low, high)) if graph.metric.is_duration() => {
+            format!("{:.1}–{:.1}{}", low / 1000.0, high / 1000.0, graph.metric.unit())
+        }
+        Some((low, high)) => format!("{low:.0}–{high:.0}{}", graph.metric.unit()),
+        None => "no data yet".to_string(),
+    };
+    let perturbed = app.perf.series.window_perturbed(seconds);
+    let caption = format!("{} {} · {}", graph.metric.label(), scale, graph.window_label());
+    let caption = clip_to_width(&caption, usize::from(area.width));
+    let caption_style = Style::default().fg(if perturbed { palette.warn } else { palette.faint });
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(caption, caption_style))),
+        Rect { height: 1, ..area },
+    );
+
+    let bars = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
+    if bars.height == 0 || data.is_empty() {
+        return;
+    }
+    frame.render_widget(
+        Sparkline::default()
+            .data(data)
+            .direction(RenderDirection::RightToLeft)
+            // A second in which nothing was observed is a GAP, not a zero — a zero would draw a
+            // floor-height bar and make an idle app look like a catastrophic stall.
+            .absent_value_symbol(" ")
+            .style(Style::default().fg(palette.accent))
+            .absent_value_style(Style::default().fg(palette.faint)),
+        bars,
+    );
 }
 
 /// Greedy word wrap to `width`, used by the perf overlay's verdict line. Falls back to a hard

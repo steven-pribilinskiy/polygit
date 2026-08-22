@@ -1900,6 +1900,7 @@ async fn run_event_loop(
                     perf::attribute_frame(whole, app.perf.last_build, app.perf.last_overlay);
                 app.perf.frame.record(frame_took);
                 app.perf.flush.record(flush_took);
+                app.perf.observe_frame(Instant::now(), frame_took, flush_took);
                 app.perf.frame_done(Instant::now());
                 let iter = iter_started.elapsed();
                 app.perf.upkeep.record(iter.saturating_sub(whole));
