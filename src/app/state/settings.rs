@@ -15,55 +15,74 @@ impl AppState {
     pub fn set_setting_option(&mut self, row_idx: usize, option_idx: usize) {
         // Rows are in alphabetical-section order (see SETTINGS_LABELS): Agent · Interaction · Layout
         // · Lists · Pull requests · Sync · Theming · Tooltips.
-        match (row_idx, option_idx) {
+        let Some(&label) = crate::app::SETTINGS_LABELS.get(row_idx) else {
+            return;
+        };
+        match (label, option_idx) {
             // Agent
-            (0, 0) => self.claude_agent = ClaudeAgent::Claude,
-            (0, 1) => self.claude_agent = ClaudeAgent::Codex,
-            (0, 2) => self.claude_agent = ClaudeAgent::Gemini,
-            (1, 0) => self.claude_skip_permissions = true,
-            (1, 1) => self.claude_skip_permissions = false,
+            ("AI agent", 0) => self.claude_agent = ClaudeAgent::Claude,
+            ("AI agent", 1) => self.claude_agent = ClaudeAgent::Codex,
+            ("AI agent", 2) => self.claude_agent = ClaudeAgent::Gemini,
+            ("Skip permissions", 0) => self.claude_skip_permissions = true,
+            ("Skip permissions", 1) => self.claude_skip_permissions = false,
+            // Cloning
+            ("Clone history", 0) => self.coverage_prefs.blobless = false,
+            ("Clone history", 1) => self.coverage_prefs.blobless = true,
+            ("Clone size cap", index) => {
+                self.coverage_prefs.max_size_kb = Self::CLONE_SIZE_CAPS_KB
+                    .get(index)
+                    .copied()
+                    .unwrap_or(0);
+            }
+            ("Fork placement", 0) => self.coverage_prefs.forks_subdir = "forks".to_string(),
+            ("Fork placement", 1) => self.coverage_prefs.forks_subdir = String::new(),
+            ("Layout", index) => {
+                self.coverage_prefs.layout =
+                    Self::CLONE_LAYOUTS.get(index).copied().unwrap_or("{repo}").to_string();
+            }
+            ("Prefix depth", index) => self.coverage_prefs.prefix_depth = index + 1,
             // Interaction
-            (2, 0) => self.hover_effects = true,
-            (2, 1) => self.hover_effects = false,
-            (3, 0) => self.changed_row_effect = ChangedRowEffect::Off,
-            (3, 1) => self.changed_row_effect = ChangedRowEffect::Flash,
-            (3, 2) => self.changed_row_effect = ChangedRowEffect::Highlight,
+            ("Hover effects", 0) => self.hover_effects = true,
+            ("Hover effects", 1) => self.hover_effects = false,
+            ("Changed-row effect", 0) => self.changed_row_effect = ChangedRowEffect::Off,
+            ("Changed-row effect", 1) => self.changed_row_effect = ChangedRowEffect::Flash,
+            ("Changed-row effect", 2) => self.changed_row_effect = ChangedRowEffect::Highlight,
             // Layout
-            (4, 0) => self.panel_padding = true,
-            (4, 1) => self.panel_padding = false,
-            (5, 0) => self.show_borders = true,
-            (5, 1) => self.show_borders = false,
-            (6, 0) => self.splitter_mode = SplitterMode::Dedicated,
-            (6, 1) => self.splitter_mode = SplitterMode::Hover,
-            (7, 0) => {
+            ("Panel padding", 0) => self.panel_padding = true,
+            ("Panel padding", 1) => self.panel_padding = false,
+            ("Borders", 0) => self.show_borders = true,
+            ("Borders", 1) => self.show_borders = false,
+            ("Pane splitter", 0) => self.splitter_mode = SplitterMode::Dedicated,
+            ("Pane splitter", 1) => self.splitter_mode = SplitterMode::Hover,
+            ("Repo page tabs", 0) => {
                 self.repo_page_tabs = RepoTabsMode::Off;
                 self.repo_page_tabbed_override = None; // changing the preference clears any `v` flip
             }
-            (7, 1) => {
+            ("Repo page tabs", 1) => {
                 self.repo_page_tabs = RepoTabsMode::Auto;
                 self.repo_page_tabbed_override = None;
             }
-            (8, 0) => self.branch_check = BranchCheck::Off,
-            (8, 1) => self.branch_check = BranchCheck::Auto,
-            (9, 0) => self.info_layout = crate::app::InfoLayout::Sections,
-            (9, 1) => self.info_layout = crate::app::InfoLayout::Groups,
-            (9, 2) => self.info_layout = crate::app::InfoLayout::Flat,
+            ("Auto branch-check", 0) => self.branch_check = BranchCheck::Off,
+            ("Auto branch-check", 1) => self.branch_check = BranchCheck::Auto,
+            ("Info layout", 0) => self.info_layout = crate::app::InfoLayout::Sections,
+            ("Info layout", 1) => self.info_layout = crate::app::InfoLayout::Groups,
+            ("Info layout", 2) => self.info_layout = crate::app::InfoLayout::Flat,
             // Layout density preset (derived, not stored — see `layout_density`). Compact/Spacious
             // apply their bundle to the three fields above; Custom has no bundle of its own, so
             // clicking it is a no-op.
-            (10, 0) => {
+            ("Layout density", 0) => {
                 self.panel_padding = false;
                 self.show_borders = false;
                 self.splitter_mode = SplitterMode::Hover;
             }
-            (10, 1) => {
+            ("Layout density", 1) => {
                 self.panel_padding = true;
                 self.show_borders = true;
                 self.splitter_mode = SplitterMode::Dedicated;
             }
-            (10, 2) => {}
+            ("Layout density", 2) => {}
             // Lists
-            (11, 0) | (11, 1) => {
+            ("Grouping", 0) | ("Grouping", 1) => {
                 let enable = option_idx == 0;
                 if self.grouping_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -71,7 +90,7 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
-            (12, 0) | (12, 1) => {
+            ("Tree view", 0) | ("Tree view", 1) => {
                 let enable = option_idx == 0;
                 if self.tree_enabled != enable {
                     let prev = self.selected_repo_index();
@@ -79,62 +98,62 @@ impl AppState {
                     self.reselect_repo(prev);
                 }
             }
-            (13, 0) => self.hide_folder_lines = true,
-            (13, 1) => self.hide_folder_lines = false,
+            ("Hide folder lines", 0) => self.hide_folder_lines = true,
+            ("Hide folder lines", 1) => self.hide_folder_lines = false,
             // Pull requests
-            (14, 0) => self.show_merged_prs = true,
-            (14, 1) => self.show_merged_prs = false,
+            ("Merged PRs", 0) => self.show_merged_prs = true,
+            ("Merged PRs", 1) => self.show_merged_prs = false,
             // Sync
-            (15, 0) => self.auto_pull_on_launch = true,
-            (15, 1) => self.auto_pull_on_launch = false,
-            (16, 0) => self.auto_pull_max_repos = 50,
-            (16, 1) => self.auto_pull_max_repos = 100,
-            (16, 2) => self.auto_pull_max_repos = 250,
-            (16, 3) => self.auto_pull_max_repos = 0,
-            (17, 0) => self.auto_pull_in_tree = true,
-            (17, 1) => self.auto_pull_in_tree = false,
+            ("Auto-pull on launch", 0) => self.auto_pull_on_launch = true,
+            ("Auto-pull on launch", 1) => self.auto_pull_on_launch = false,
+            ("Auto-pull limit", 0) => self.auto_pull_max_repos = 50,
+            ("Auto-pull limit", 1) => self.auto_pull_max_repos = 100,
+            ("Auto-pull limit", 2) => self.auto_pull_max_repos = 250,
+            ("Auto-pull limit", 3) => self.auto_pull_max_repos = 0,
+            ("Auto-pull in tree", 0) => self.auto_pull_in_tree = true,
+            ("Auto-pull in tree", 1) => self.auto_pull_in_tree = false,
             // Theming
-            (18, 0) => self.icon_style = IconStyle::Unicode,
-            (18, 1) => self.icon_style = IconStyle::Emoji,
+            ("Icons", 0) => self.icon_style = IconStyle::Unicode,
+            ("Icons", 1) => self.icon_style = IconStyle::Emoji,
             // Hide zeros is forced on (and inert) in emoji mode — ignore clicks then.
-            (19, 0) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = true,
-            (19, 1) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = false,
-            (20, 0) => self.theme = Theme::Auto,
-            (20, 1) => self.theme = Theme::Dark,
-            (20, 2) => self.theme = Theme::Light,
-            (21, 0) => self.background = Background::Normal,
-            (21, 1) => self.background = Background::Soft,
-            (21, 2) => self.background = Background::Terminal,
-            (22, 0) => self.contrast = Contrast::Normal,
-            (22, 1) => self.contrast = Contrast::Soft,
-            (23, 0) => self.selection_style = SelectionStyle::Blue,
-            (23, 1) => self.selection_style = SelectionStyle::Subtle,
-            (24, 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
-            (24, 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
+            ("Hide zeros", 0) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = true,
+            ("Hide zeros", 1) if self.icon_style != IconStyle::Emoji => self.hide_zero_counts = false,
+            ("Theme", 0) => self.theme = Theme::Auto,
+            ("Theme", 1) => self.theme = Theme::Dark,
+            ("Theme", 2) => self.theme = Theme::Light,
+            ("Background", 0) => self.background = Background::Normal,
+            ("Background", 1) => self.background = Background::Soft,
+            ("Background", 2) => self.background = Background::Terminal,
+            ("Contrast", 0) => self.contrast = Contrast::Normal,
+            ("Contrast", 1) => self.contrast = Contrast::Soft,
+            ("List selection", 0) => self.selection_style = SelectionStyle::Blue,
+            ("List selection", 1) => self.selection_style = SelectionStyle::Subtle,
+            ("Button hover", 0) => self.button_hover_style = ButtonHoverStyle::Inverted,
+            ("Button hover", 1) => self.button_hover_style = ButtonHoverStyle::Subtle,
             // Tooltips
-            (25, 0) => self.tooltips.set_all(true),
-            (25, 1) => self.tooltips.set_all(false),
-            (26, 0) => self.tooltips.footer = true,
-            (26, 1) => self.tooltips.footer = false,
-            (27, 0) => self.tooltips.headers = true,
-            (27, 1) => self.tooltips.headers = false,
-            (28, 0) => self.tooltips.counts = true,
-            (28, 1) => self.tooltips.counts = false,
-            (29, 0) => self.tooltips.settings = true,
-            (29, 1) => self.tooltips.settings = false,
-            (30, 0) => self.tooltips.links = true,
-            (30, 1) => self.tooltips.links = false,
+            ("All tooltips", 0) => self.tooltips.set_all(true),
+            ("All tooltips", 1) => self.tooltips.set_all(false),
+            ("Footer commands", 0) => self.tooltips.footer = true,
+            ("Footer commands", 1) => self.tooltips.footer = false,
+            ("Column headers", 0) => self.tooltips.headers = true,
+            ("Column headers", 1) => self.tooltips.headers = false,
+            ("Group counts", 0) => self.tooltips.counts = true,
+            ("Group counts", 1) => self.tooltips.counts = false,
+            ("Settings rows", 0) => self.tooltips.settings = true,
+            ("Settings rows", 1) => self.tooltips.settings = false,
+            ("Help links", 0) => self.tooltips.links = true,
+            ("Help links", 1) => self.tooltips.links = false,
             // Updates
-            (31, 0) => self.auto_update = AutoUpdate::Off,
-            (31, 1) => self.auto_update = AutoUpdate::Notify,
-            (31, 2) => self.auto_update = AutoUpdate::Install,
-            (32, 0) => self.update_interval = UpdateInterval::Daily,
-            (32, 1) => self.update_interval = UpdateInterval::Weekly,
+            ("Auto-update", 0) => self.auto_update = AutoUpdate::Off,
+            ("Auto-update", 1) => self.auto_update = AutoUpdate::Notify,
+            ("Auto-update", 2) => self.auto_update = AutoUpdate::Install,
+            ("Update check", 0) => self.update_interval = UpdateInterval::Daily,
+            ("Update check", 1) => self.update_interval = UpdateInterval::Weekly,
             // Workers
-            (33, 0) => self.set_max_pull_mode(crate::app::MaxPullMode::Exact),
-            (33, 1) => self.set_max_pull_mode(crate::app::MaxPullMode::Percent),
+            ("Parallel pulls", 0) => self.set_max_pull_mode(crate::app::MaxPullMode::Exact),
+            ("Parallel pulls", 1) => self.set_max_pull_mode(crate::app::MaxPullMode::Percent),
             // The value is picked from a dropdown, not a radio — a no-op here keeps the round-trip.
-            (34, _) => {}
+            ("Parallel value", _) => {}
             _ => return,
         }
         self.save_state();
@@ -154,88 +173,103 @@ impl AppState {
     }
 
     pub fn settings_active_option(&self, row_idx: usize) -> usize {
-        match row_idx {
+        let Some(&label) = crate::app::SETTINGS_LABELS.get(row_idx) else {
+            return 0;
+        };
+        match label {
             // Agent
-            0 => match self.claude_agent {
+            "AI agent" => match self.claude_agent {
                 ClaudeAgent::Claude => 0,
                 ClaudeAgent::Codex => 1,
                 ClaudeAgent::Gemini => 2,
             },
-            1 => usize::from(!self.claude_skip_permissions),
+            "Skip permissions" => usize::from(!self.claude_skip_permissions),
+            // Cloning
+            "Clone history" => usize::from(self.coverage_prefs.blobless),
+            "Clone size cap" => Self::CLONE_SIZE_CAPS_KB
+                .iter()
+                .position(|cap| *cap == self.coverage_prefs.max_size_kb)
+                .unwrap_or(0),
+            "Fork placement" => usize::from(self.coverage_prefs.forks_subdir.is_empty()),
+            "Layout" => Self::CLONE_LAYOUTS
+                .iter()
+                .position(|template| *template == self.coverage_prefs.layout)
+                .unwrap_or(0),
+            "Prefix depth" => self.coverage_prefs.prefix_depth.saturating_sub(1).min(2),
             // Interaction
-            2 => usize::from(!self.hover_effects),
-            3 => match self.changed_row_effect {
+            "Hover effects" => usize::from(!self.hover_effects),
+            "Changed-row effect" => match self.changed_row_effect {
                 ChangedRowEffect::Off => 0,
                 ChangedRowEffect::Flash => 1,
                 ChangedRowEffect::Highlight => 2,
             },
             // Layout
-            4 => usize::from(!self.panel_padding),
-            5 => usize::from(!self.show_borders),
-            6 => match self.splitter_mode {
+            "Panel padding" => usize::from(!self.panel_padding),
+            "Borders" => usize::from(!self.show_borders),
+            "Pane splitter" => match self.splitter_mode {
                 SplitterMode::Dedicated => 0,
                 SplitterMode::Hover => 1,
             },
-            7 => match self.repo_page_tabs {
+            "Repo page tabs" => match self.repo_page_tabs {
                 RepoTabsMode::Off => 0,
                 RepoTabsMode::Auto => 1,
             },
-            8 => match self.branch_check {
+            "Auto branch-check" => match self.branch_check {
                 BranchCheck::Off => 0,
                 BranchCheck::Auto => 1,
             },
-            9 => match self.info_layout {
+            "Info layout" => match self.info_layout {
                 crate::app::InfoLayout::Sections => 0,
                 crate::app::InfoLayout::Groups => 1,
                 crate::app::InfoLayout::Flat => 2,
             },
-            10 => self.layout_density(),
+            "Layout density" => self.layout_density(),
             // Lists
-            11 => usize::from(!self.grouping_enabled),
-            12 => usize::from(!self.tree_enabled),
-            13 => usize::from(!self.hide_folder_lines),
+            "Grouping" => usize::from(!self.grouping_enabled),
+            "Tree view" => usize::from(!self.tree_enabled),
+            "Hide folder lines" => usize::from(!self.hide_folder_lines),
             // Pull requests
-            14 => usize::from(!self.show_merged_prs),
+            "Merged PRs" => usize::from(!self.show_merged_prs),
             // Sync
-            15 => usize::from(!self.auto_pull_on_launch),
-            16 => match self.auto_pull_max_repos {
+            "Auto-pull on launch" => usize::from(!self.auto_pull_on_launch),
+            "Auto-pull limit" => match self.auto_pull_max_repos {
                 50 => 0,
                 100 => 1,
                 250 => 2,
                 _ => 3,
             },
-            17 => usize::from(!self.auto_pull_in_tree),
+            "Auto-pull in tree" => usize::from(!self.auto_pull_in_tree),
             // Theming
-            18 => match self.icon_style {
+            "Icons" => match self.icon_style {
                 IconStyle::Unicode => 0,
                 IconStyle::Emoji => 1,
             },
             // Emoji always hides zeros → force-selected "on" regardless of the stored flag.
-            19 => usize::from(!(self.hide_zero_counts || self.icon_style == IconStyle::Emoji)),
-            20 => match self.theme {
+            "Hide zeros" => usize::from(!(self.hide_zero_counts || self.icon_style == IconStyle::Emoji)),
+            "Theme" => match self.theme {
                 Theme::Auto => 0,
                 Theme::Dark => 1,
                 Theme::Light => 2,
             },
-            21 => match self.background {
+            "Background" => match self.background {
                 Background::Normal => 0,
                 Background::Soft => 1,
                 Background::Terminal => 2,
             },
-            22 => match self.contrast {
+            "Contrast" => match self.contrast {
                 Contrast::Normal => 0,
                 Contrast::Soft => 1,
             },
-            23 => match self.selection_style {
+            "List selection" => match self.selection_style {
                 SelectionStyle::Blue => 0,
                 SelectionStyle::Subtle => 1,
             },
-            24 => match self.button_hover_style {
+            "Button hover" => match self.button_hover_style {
                 ButtonHoverStyle::Inverted => 0,
                 ButtonHoverStyle::Subtle => 1,
             },
             // Tooltips — All tooltips: 0 = all on, 1 = all off, 2 = mixed (neither radio active).
-            25 => {
+            "All tooltips" => {
                 if self.tooltips.all_on() {
                     0
                 } else if self.tooltips.all_off() {
@@ -244,71 +278,85 @@ impl AppState {
                     2
                 }
             }
-            26 => usize::from(!self.tooltips.footer),
-            27 => usize::from(!self.tooltips.headers),
-            28 => usize::from(!self.tooltips.counts),
-            29 => usize::from(!self.tooltips.settings),
-            30 => usize::from(!self.tooltips.links),
+            "Footer commands" => usize::from(!self.tooltips.footer),
+            "Column headers" => usize::from(!self.tooltips.headers),
+            "Group counts" => usize::from(!self.tooltips.counts),
+            "Settings rows" => usize::from(!self.tooltips.settings),
+            "Help links" => usize::from(!self.tooltips.links),
             // Updates
-            31 => match self.auto_update {
+            "Auto-update" => match self.auto_update {
                 AutoUpdate::Off => 0,
                 AutoUpdate::Notify => 1,
                 AutoUpdate::Install => 2,
             },
-            32 => match self.update_interval {
+            "Update check" => match self.update_interval {
                 UpdateInterval::Daily => 0,
                 UpdateInterval::Weekly => 1,
             },
             // Workers — row 33 mode (exact/percent); row 34 is the dropdown value (single chip).
-            33 => match self.max_pull_mode {
+            "Parallel pulls" => match self.max_pull_mode {
                 crate::app::MaxPullMode::Exact => 0,
                 crate::app::MaxPullMode::Percent => 1,
             },
-            34 => 0,
+            "Parallel value" => 0,
             _ => 0,
         }
     }
 
     pub fn settings_option_labels(row: usize) -> &'static [&'static str] {
-        match row {
-            0 => &["claude", "codex", "gemini"],
-            3 => &["off", "flash", "highlight"],
-            6 => &["dedicated", "on hover"],
-            7 => &["off", "auto"],
-            8 => &["off", "auto"],
-            9 => &["titled", "spaced", "flat"],
-            10 => &["compact", "spacious", "custom"],
-            16 => &["50", "100", "250", "\u{221e}"],
-            18 => &["unicode", "emoji"],
-            20 => &["auto", "dark", "light"],
-            21 => &["normal", "soft", "terminal"],
-            22 => &["normal", "soft"],
-            23 => &["blue", "subtle"],
-            24 => &["inverted", "subtle"],
-            31 => &["off", "notify", "install"],
-            32 => &["daily", "weekly"],
-            33 => &["exact", "percent"],
+        let Some(&label) = crate::app::SETTINGS_LABELS.get(row) else {
+            return Default::default();
+        };
+        match label {
+            "AI agent" => &["claude", "codex", "gemini"],
+            "Clone history" => &["full", "blobless"],
+            "Clone size cap" => &["off", "1 GB", "2 GB", "5 GB"],
+            "Fork placement" => &["subdir", "alongside"],
+            "Layout" => &["flat", "by project", "by family", "by owner"],
+            "Prefix depth" => &["1", "2", "3"],
+            "Changed-row effect" => &["off", "flash", "highlight"],
+            "Pane splitter" => &["dedicated", "on hover"],
+            "Repo page tabs" => &["off", "auto"],
+            "Auto branch-check" => &["off", "auto"],
+            "Info layout" => &["titled", "spaced", "flat"],
+            "Layout density" => &["compact", "spacious", "custom"],
+            "Auto-pull limit" => &["50", "100", "250", "\u{221e}"],
+            "Icons" => &["unicode", "emoji"],
+            "Theme" => &["auto", "dark", "light"],
+            "Background" => &["normal", "soft", "terminal"],
+            "Contrast" => &["normal", "soft"],
+            "List selection" => &["blue", "subtle"],
+            "Button hover" => &["inverted", "subtle"],
+            "Auto-update" => &["off", "notify", "install"],
+            "Update check" => &["daily", "weekly"],
+            "Parallel pulls" => &["exact", "percent"],
             // The value row is a dropdown, not radio chips; this static placeholder just satisfies
             // the "one option, round-trips" invariant — the real chip label is built at render time.
-            34 => &["value"],
+            "Parallel value" => &["value"],
             _ => &["on", "off"],
         }
     }
 
     pub fn settings_default_option(row: usize) -> usize {
-        match row {
+        let Some(&label) = crate::app::SETTINGS_LABELS.get(row) else {
+            return Default::default();
+        };
+        match label {
             // Rows whose DEFAULT is the first option (index 0). Agent: AI agent→claude(0). Interaction:
             // hover on(2). Layout: panel padding on(4), borders on(5), branch-check off(8), info layout
             // titled(9). Lists: grouping on(11). Sync: auto-pull-on-launch(15). Theming: icons unicode(18),
             // theme auto(20), background normal(21), contrast normal(22), selection blue(23). Tooltips
             // (25–30) all on.
-            // Updates: update-check daily(32) defaults to option 0; auto-update(31) defaults to
-            // option 1 (notify) — handled by the `_ => 1` arm below.
-            0 | 2 | 4 | 5 | 8 | 9 | 11 | 15 | 18 | 20 | 21 | 22 | 23 | 25 | 26 | 27 | 28 | 29 | 30 | 32 | 34 => 0,
+            // Updates: update-check daily defaults to option 0; auto-update defaults to option 1
+            // (notify) — handled by the `_ => 1` arm below.
+            // Cloning: every row's default is its first option — full history, no size cap, forks in
+            // a subdir, flat layout, prefix depth 1.
+            "Clone history" | "Clone size cap" | "Fork placement" | "Layout" | "Prefix depth"
+            | "AI agent" | "Hover effects" | "Panel padding" | "Borders" | "Auto branch-check" | "Info layout" | "Grouping" | "Auto-pull on launch" | "Icons" | "Theme" | "Background" | "Contrast" | "List selection" | "All tooltips" | "Footer commands" | "Column headers" | "Group counts" | "Settings rows" | "Help links" | "Update check" | "Parallel value" => 0,
             // Layout density(10) — derived; the shipped/reset field values (padding+borders on,
             // splitter on-hover) don't exactly match either named bundle, so its "default" is
             // custom(2), not compact/spacious. See `layout_density`.
-            10 => 2,
+            "Layout density" => 2,
             // Index-1 defaults: changed-row effect flash(3), pane splitter on-hover(6), repo-page-tabs
             // auto(7), auto-pull-limit 100(16), button-hover subtle(24), parallel-pulls mode percent(33),
             // and every remaining boolean off.
@@ -403,7 +451,7 @@ impl AppState {
         });
     }
 
-    pub const SETTINGS_ROWS: usize = 35;
+    pub const SETTINGS_ROWS: usize = 40;
 
     /// One-line tooltip for a settings row (or a specific option, where it adds something) —
     /// shown after ~1s of hovering, like the footer command tooltips. Keyed by the global row
@@ -678,28 +726,70 @@ impl AppState {
         }
     }
 
+    /// Size caps offered by the **Clone size cap** row, in kilobytes. Index 0 is "no limit", which
+    /// is the default: skipping large repos silently is how the shell script this replaces lost
+    /// them, so the cap is opt-in and always reported.
+    pub const CLONE_SIZE_CAPS_KB: [u64; 4] = [0, 1024 * 1024, 2 * 1024 * 1024, 5 * 1024 * 1024];
+
+    /// Templates offered by the **Layout** row. Flat is first because it is the default — most
+    /// repos in a real org cluster with nothing, so an eager grouping scatters them.
+    pub const CLONE_LAYOUTS: [&str; 4] =
+        ["{repo}", "{project}/{repo}", "{group}/{repo}", "{owner}/{repo}"];
+
     pub fn toggle_selected_setting(&mut self) {
-        match self.settings_selected {
+        let Some(&label) = crate::app::SETTINGS_LABELS.get(self.settings_selected) else {
+            return;
+        };
+        match label {
             // Agent
-            0 => self.claude_agent = self.claude_agent.cycle(),
-            1 => self.claude_skip_permissions = !self.claude_skip_permissions,
+            "AI agent" => self.claude_agent = self.claude_agent.cycle(),
+            "Skip permissions" => self.claude_skip_permissions = !self.claude_skip_permissions,
+            // Cloning
+            "Clone history" => self.coverage_prefs.blobless = !self.coverage_prefs.blobless,
+            "Clone size cap" => {
+                let next = Self::CLONE_SIZE_CAPS_KB
+                    .iter()
+                    .position(|cap| *cap == self.coverage_prefs.max_size_kb)
+                    .map(|index| (index + 1) % Self::CLONE_SIZE_CAPS_KB.len())
+                    .unwrap_or(0);
+                self.coverage_prefs.max_size_kb = Self::CLONE_SIZE_CAPS_KB[next];
+            }
+            "Fork placement" => {
+                self.coverage_prefs.forks_subdir = if self.coverage_prefs.forks_subdir.is_empty() {
+                    "forks".to_string()
+                } else {
+                    String::new()
+                };
+            }
+            "Layout" => {
+                let next = Self::CLONE_LAYOUTS
+                    .iter()
+                    .position(|template| *template == self.coverage_prefs.layout)
+                    .map(|index| (index + 1) % Self::CLONE_LAYOUTS.len())
+                    .unwrap_or(0);
+                self.coverage_prefs.layout = Self::CLONE_LAYOUTS[next].to_string();
+            }
+            "Prefix depth" => {
+                self.coverage_prefs.prefix_depth =
+                    if self.coverage_prefs.prefix_depth >= 3 { 1 } else { self.coverage_prefs.prefix_depth + 1 };
+            }
             // Interaction
-            2 => self.hover_effects = !self.hover_effects,
-            3 => self.changed_row_effect = self.changed_row_effect.cycle(),
+            "Hover effects" => self.hover_effects = !self.hover_effects,
+            "Changed-row effect" => self.changed_row_effect = self.changed_row_effect.cycle(),
             // Layout
-            4 => self.panel_padding = !self.panel_padding,
-            5 => self.show_borders = !self.show_borders,
-            6 => self.splitter_mode = self.splitter_mode.cycle(),
-            7 => {
+            "Panel padding" => self.panel_padding = !self.panel_padding,
+            "Borders" => self.show_borders = !self.show_borders,
+            "Pane splitter" => self.splitter_mode = self.splitter_mode.cycle(),
+            "Repo page tabs" => {
                 self.repo_page_tabs = self.repo_page_tabs.cycle();
                 self.repo_page_tabbed_override = None; // changing the preference clears any `v` flip
             }
-            8 => self.branch_check = self.branch_check.cycle(),
-            9 => self.info_layout = self.info_layout.cycle(),
+            "Auto branch-check" => self.branch_check = self.branch_check.cycle(),
+            "Info layout" => self.info_layout = self.info_layout.cycle(),
             // Layout density preset (derived) — cycles Compact ⇄ Spacious; Custom isn't a cycle
             // target since it has no bundle of its own (see `layout_density`). Mirrors
             // `set_setting_option`'s (10, 0)/(10, 1) bundles directly (no double save_state).
-            10 => {
+            "Layout density" => {
                 if self.layout_density() == 1 {
                     self.panel_padding = false;
                     self.show_borders = false;
@@ -711,52 +801,52 @@ impl AppState {
                 }
             }
             // Lists
-            11 => {
+            "Grouping" => {
                 let prev = self.selected_repo_index();
                 self.grouping_enabled = !self.grouping_enabled;
                 self.reselect_repo(prev);
             }
-            12 => {
+            "Tree view" => {
                 let prev = self.selected_repo_index();
                 self.tree_enabled = !self.tree_enabled;
                 self.reselect_repo(prev);
             }
-            13 => self.hide_folder_lines = !self.hide_folder_lines,
+            "Hide folder lines" => self.hide_folder_lines = !self.hide_folder_lines,
             // Pull requests
-            14 => self.show_merged_prs = !self.show_merged_prs,
+            "Merged PRs" => self.show_merged_prs = !self.show_merged_prs,
             // Sync
-            15 => self.auto_pull_on_launch = !self.auto_pull_on_launch,
-            16 => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
-            17 => self.auto_pull_in_tree = !self.auto_pull_in_tree,
+            "Auto-pull on launch" => self.auto_pull_on_launch = !self.auto_pull_on_launch,
+            "Auto-pull limit" => self.auto_pull_max_repos = next_auto_pull_limit(self.auto_pull_max_repos),
+            "Auto-pull in tree" => self.auto_pull_in_tree = !self.auto_pull_in_tree,
             // Theming
-            18 => {
+            "Icons" => {
                 self.icon_style = match self.icon_style {
                     IconStyle::Unicode => IconStyle::Emoji,
                     IconStyle::Emoji => IconStyle::Unicode,
                 };
             }
             // Inert in emoji mode (always hides zeros); only togglable with the Unicode set.
-            19 if self.icon_style != IconStyle::Emoji => {
+            "Hide zeros" if self.icon_style != IconStyle::Emoji => {
                 self.hide_zero_counts = !self.hide_zero_counts;
             }
-            20 => self.theme = self.theme.cycle(),
-            21 => self.background = self.background.cycle(),
-            22 => self.contrast = self.contrast.cycle(),
-            23 => self.selection_style = self.selection_style.cycle(),
-            24 => self.button_hover_style = self.button_hover_style.cycle(),
+            "Theme" => self.theme = self.theme.cycle(),
+            "Background" => self.background = self.background.cycle(),
+            "Contrast" => self.contrast = self.contrast.cycle(),
+            "List selection" => self.selection_style = self.selection_style.cycle(),
+            "Button hover" => self.button_hover_style = self.button_hover_style.cycle(),
             // Tooltips
-            25 => self.tooltips.set_all(!self.tooltips.all_on()),
-            26 => self.tooltips.footer = !self.tooltips.footer,
-            27 => self.tooltips.headers = !self.tooltips.headers,
-            28 => self.tooltips.counts = !self.tooltips.counts,
-            29 => self.tooltips.settings = !self.tooltips.settings,
-            30 => self.tooltips.links = !self.tooltips.links,
+            "All tooltips" => self.tooltips.set_all(!self.tooltips.all_on()),
+            "Footer commands" => self.tooltips.footer = !self.tooltips.footer,
+            "Column headers" => self.tooltips.headers = !self.tooltips.headers,
+            "Group counts" => self.tooltips.counts = !self.tooltips.counts,
+            "Settings rows" => self.tooltips.settings = !self.tooltips.settings,
+            "Help links" => self.tooltips.links = !self.tooltips.links,
             // Updates
-            31 => self.auto_update = self.auto_update.cycle(),
-            32 => self.update_interval = self.update_interval.cycle(),
+            "Auto-update" => self.auto_update = self.auto_update.cycle(),
+            "Update check" => self.update_interval = self.update_interval.cycle(),
             // Workers — mode row cycles Exact↔Percent; value row opens its dropdown.
-            33 => self.toggle_max_pull_mode(),
-            34 => self.open_parallel_value_dropdown(),
+            "Parallel pulls" => self.toggle_max_pull_mode(),
+            "Parallel value" => self.open_parallel_value_dropdown(),
             _ => {}
         }
         self.save_state();

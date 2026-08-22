@@ -1221,6 +1221,9 @@ pub enum DropdownKind {
     ParallelValue,
     /// The filter bar's "+ add filter" menu — rows are the `FilterKind`s not currently active.
     FilterAdd,
+    /// The coverage panel's axis menu — rows are selector axes, ordered by how much each one
+    /// actually discriminates among the repos in view.
+    CoverageAxis,
 }
 
 impl DropdownKind {
@@ -2002,6 +2005,7 @@ impl RepoTabsMode {
 /// here, and add the option/handler arms.
 pub const SETTINGS_TABS: &[(&str, usize)] = &[
     ("Agent", 2),
+    ("Cloning", 5),
     ("Interaction", 2),
     ("Layout", 7),
     ("Lists", 3),
@@ -2029,10 +2033,36 @@ pub struct SettingInfo {
 
 /// Every settings row in global (alphabetical-section) order — see `SETTINGS_TABS`. The ONLY place
 /// row labels + tips live; everything else derives from this or is asserted against it.
-pub const SETTINGS: [SettingInfo; 35] = [
+pub const SETTINGS: [SettingInfo; 40] = [
     // Agent
     SettingInfo { label: "AI agent", tip: "Which AI agent `c` launches for the selected repo, run in its directory", option_tips: &[] },
     SettingInfo { label: "Skip permissions", tip: "Launch the agent with its skip-permissions flag (e.g. claude's --dangerously-skip-permissions)", option_tips: &[] },
+    // Cloning
+    SettingInfo { label: "Clone history", tip: "Full clones carry every object. `blobless` (`--filter=blob:none`) keeps the full commit history but fetches file contents on demand — dramatically faster across a large org, and unlike a shallow clone it truncates nothing.", option_tips: &[
+        "Every object, fetched up front",
+        "Full history, file contents on demand",
+    ] },
+    SettingInfo { label: "Clone size cap", tip: "Skip repos larger than this. Off by default — and whatever it skips is always listed, never dropped silently.", option_tips: &[
+        "Clone every repo, whatever its size",
+        "Skip anything over 1 GB",
+        "Skip anything over 2 GB",
+        "Skip anything over 5 GB",
+    ] },
+    SettingInfo { label: "Fork placement", tip: "Where forked repos land relative to the clone root.", option_tips: &[
+        "In a `forks/` subdirectory",
+        "Alongside everything else",
+    ] },
+    SettingInfo { label: "Layout", tip: "The destination path each cloned or moved repo gets. A placeholder that resolves to nothing drops its whole path segment, so repos belonging to no cluster stay flat instead of each getting a folder.", option_tips: &[
+        "Everything directly under the root",
+        "Group repos of one project together",
+        "Group by name-prefix family",
+        "Group by GitHub owner",
+    ] },
+    SettingInfo { label: "Prefix depth", tip: "How many name tokens form a prefix family. Depth 1 merges everything sharing a first token; depth 2 splits those into finer families — and can split a single project in two. The panel shows the resulting group sizes so you can see which is right for an owner.", option_tips: &[
+        "The first token",
+        "The first two tokens",
+        "The first three tokens",
+    ] },
     // Interaction
     SettingInfo { label: "Hover effects", tip: "Highlight actionable elements under the cursor (enables all-motion mouse tracking, which takes over terminal text selection)", option_tips: &[] },
     SettingInfo { label: "Changed-row effect", tip: "Post-change attention indicator on a row's changed cells after a pull/refresh: off, a brief flash, or a steady highlight. The status text column (t u) also marks what changed.", option_tips: &[
@@ -2477,6 +2507,8 @@ pub struct CoverageState {
     pub extra_owners: Vec<String>,
     /// Live text of the add-owner prompt, while it is open.
     pub owner_input: Option<String>,
+    /// Widen the match to every repo sharing a project stem with it — the clustering operator.
+    pub with_siblings: bool,
     /// Rows the list pane drew last frame — captured so navigation clamps against the real
     /// viewport rather than a guess.
     pub viewport_rows: usize,

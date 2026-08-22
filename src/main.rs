@@ -1124,6 +1124,11 @@ fn coverage_hint_action(
         crate::app::HintKey::Char('f') => app.coverage_toggle_forks(),
         crate::app::HintKey::Char('x') => app.coverage_toggle_archived(),
         crate::app::HintKey::Char('+') => app.coverage_owner_prompt(),
+        crate::app::HintKey::Char('s') => {
+            let (col, row) = app.coverage_axis_anchor();
+            app.open_dropdown(crate::app::DropdownKind::CoverageAxis, col, row);
+        }
+        crate::app::HintKey::Char('S') => app.coverage_toggle_siblings(),
         crate::app::HintKey::Char('c') => {
             if app.coverage_modal.as_ref().is_some_and(|state| state.cloning) {
                 app.show_toast("Clone already in progress");
@@ -4887,7 +4892,7 @@ async fn run_event_loop(
                 // otherwise Tab/Shift-Tab switch owner tabs, ↑↓/jk move, space toggles a row's
                 // checkbox, a/A select/clear all, f toggles forks, x toggles archived, r refreshes,
                 // Esc/q closes. (The clone action is wired in a later step.)
-                if app.coverage_modal.is_some() {
+                if app.coverage_modal.is_some() && app.dropdown.is_none() {
                     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
                         drop(app);
@@ -4943,6 +4948,11 @@ async fn run_event_loop(
                             }
                         }
                         KeyCode::Char('+') => app.coverage_owner_prompt(),
+                        KeyCode::Char('s') => {
+                            let (col, row) = app.coverage_axis_anchor();
+                            app.open_dropdown(app::DropdownKind::CoverageAxis, col, row);
+                        }
+                        KeyCode::Char('S') => app.coverage_toggle_siblings(),
                         KeyCode::Char(' ') => app.coverage_toggle_check(),
                         KeyCode::Char('a') => app.coverage_set_all(true),
                         KeyCode::Char('A') => app.coverage_set_all(false),

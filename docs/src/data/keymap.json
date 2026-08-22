@@ -1615,10 +1615,26 @@
       },
       {
         "keys": [
+          "s"
+        ],
+        "action": "Add a selector",
+        "note": "opens a menu of axes ordered by how much each one actually discriminates among the repos in view, with its coverage \u2014 topics are a strong axis in a well-tagged org and near-useless in one whose topics are machine-generated markers",
+        "group": "Select"
+      },
+      {
+        "keys": [
+          "S"
+        ],
+        "action": "Widen to project siblings",
+        "note": "matching one repo of a project pulls in its infrastructure and deploy repos; shown as `siblings:on` in the toggle row",
+        "group": "Select"
+      },
+      {
+        "keys": [
           "/"
         ],
-        "action": "Filter by name or topic",
-        "note": "`topic:<t>` and `-topic:<t>` include and exclude by GitHub topic; plain words match the name",
+        "action": "Edit the selector expression",
+        "note": "the same grammar `polygit select` takes \u2014 globs, `topic:`, `lang:`, `prefix:`, `suffix:`, `is:` state and boolean composition; a bad expression is reported inline rather than silently matching nothing",
         "group": "Filter"
       },
       {

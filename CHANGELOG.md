@@ -3,6 +3,41 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.21.0 — 2026-08-22
+Build the selector in the panel, and see where it lands before you commit to it
+
+v3.20.0 put the selector grammar behind `polygit select` and left the panel with the older, smaller
+filter it had always had — names and `topic:`, and nothing else. Two grammars for one job, and the
+better one only reachable from the command line. They are now one.
+
+**The panel's filter IS the selector expression.** `/` takes exactly what `polygit select` takes —
+globs, regex, `prefix:`, `suffix:`, `token:`, `topic:`, `lang:`, `owner:`, `is:` state and explicit
+lists, composed with `AND`/`OR`/`NOT` and parentheses. A half-typed expression keeps showing
+everything and reports its error beside the input, rather than silently matching nothing, which is
+indistinguishable from a filter that legitimately found none.
+
+**`s` builds the expression for you.** It opens a menu of axes ordered by how much each one actually
+discriminates among the repos in view, each labelled with its coverage: `topic: 100% tagged, 208
+distinct (rich)` in one org, `prefix: 42% of repos, 97 families` in another. That ordering is
+computed per owner because no fixed one is right for both — the same org whose topics are a strong
+primary axis has a sibling whose topics are four machine-generated markers on 36% of repos. Picking
+a row appends its term; `S` widens the match to project siblings.
+
+**The preview pane.** On a wide terminal the panel's right-hand column now renders the directory tree
+your layout would produce, each repo badged `+` clone, `·` keep or `→` move, with the counts above
+it. It is built from the same plan `polygit plan` prints and the same tree builder the repo list
+uses, so what the panel shows and what an apply does cannot disagree about shape.
+
+**Settings → Cloning.** Clone history (full / blobless), size cap, fork placement, layout template
+and prefix depth are now settings rather than flags you retype. They drive the panel's preview and
+its clone action directly.
+
+Getting there needed one piece of housekeeping worth naming: every settings handler keyed on a
+hardcoded row index, and rows render in alphabetical-section order — so adding a section that sorts
+anywhere but last silently shifted ~90 match arms onto the wrong rows. That has bitten this file
+twice before. All five handlers now key on the row's LABEL, which is what makes a new section free,
+and the search-header test that hardcoded a row index was rewritten to derive it.
+
 ## v3.20.0 — 2026-08-22
 Pick repos by rule, see where they would land, then clone or move them there
 

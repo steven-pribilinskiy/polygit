@@ -561,12 +561,20 @@
 
     #[test]
     fn settings_search_items_new_section_gets_its_own_header() {
-        // Row 0 ("Agent") and row 33 (last row, "Workers", the final SETTINGS_TABS section) are in
-        // different sections — a gap between matches emits a header for each.
-        let items = settings_search_items(&[0, 33]);
+        // The first row and a row in the LAST section are in different sections, so a gap between
+        // matches emits a header for each. Derived rather than hardcoded: adding a section used to
+        // break this test for the wrong reason.
+        let last_row = crate::app::AppState::SETTINGS_ROWS - 1;
+        let last_section = crate::app::SETTINGS_TABS.len() - 1;
+        let items = settings_search_items(&[0, last_row]);
         assert_eq!(
             items,
-            vec![SearchItem::Header(0), SearchItem::Row(0), SearchItem::Header(9), SearchItem::Row(33)]
+            vec![
+                SearchItem::Header(0),
+                SearchItem::Row(0),
+                SearchItem::Header(last_section),
+                SearchItem::Row(last_row)
+            ]
         );
     }
 

@@ -174,6 +174,16 @@ impl AppState {
                     DropdownItem { label, on: selected, mnemonic, enabled: true }
                 })
                 .collect(),
+            DropdownKind::CoverageAxis => self
+                .coverage_axis_candidates()
+                .into_iter()
+                .map(|(mnemonic, label, _term)| DropdownItem {
+                    label,
+                    on: false,
+                    mnemonic,
+                    enabled: true,
+                })
+                .collect(),
             DropdownKind::FilterAdd => self
                 .filter_add_candidates()
                 .into_iter()
@@ -258,6 +268,7 @@ impl AppState {
             DropdownKind::ExplorerColumns => crate::explorer::ExplorerColumn::ALL.len(),
             DropdownKind::ExplorerSort => crate::explorer::SortKey::ALL.len(),
             DropdownKind::ParallelValue => self.max_pull_value_choices().len(),
+            DropdownKind::CoverageAxis => self.coverage_axis_candidates().len(),
             DropdownKind::FilterAdd => self.filter_add_candidates().len(),
         })
     }
@@ -443,6 +454,14 @@ impl AppState {
             DropdownKind::ParallelValue => {
                 if let Some(&(value, ..)) = self.max_pull_value_choices().get(index) {
                     self.set_max_pull_value(value);
+                }
+                true
+            }
+            DropdownKind::CoverageAxis => {
+                if let Some((_key, _label, term)) =
+                    self.coverage_axis_candidates().get(index).cloned()
+                {
+                    self.coverage_append_term(&term);
                 }
                 true
             }

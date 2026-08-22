@@ -20,6 +20,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
             | DropdownKind::ExplorerSort
             | DropdownKind::ParallelValue
             | DropdownKind::FilterAdd
+            | DropdownKind::CoverageAxis
     );
     let title = match dropdown.kind {
         DropdownKind::ListColumns
@@ -30,6 +31,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         DropdownKind::ListFilter => " filter ",
         DropdownKind::ParallelValue => " parallel pulls ",
         DropdownKind::FilterAdd => " add filter ",
+        DropdownKind::CoverageAxis => " add selector ",
     };
     // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for a radio (`● `)
     // and 4 for columns (`[x] `), plus the mnemonic key and a space.
@@ -699,6 +701,68 @@ fn pr_comment_section(
 /// Render the org-coverage panel: owner tabs with `N/N` badges, a filtered repo list with
 /// checkboxes (missing repos highlighted), and a keys footer. Keyboard-driven — input is handled by
 /// the coverage block in the event loop.
+/// Draw the planned directory tree beside the repo list: folders from the layout template, each
+/// repo badged with what would happen to it. Built by the same `build_tree` the repo list uses, so
+/// the preview and the real thing cannot disagree about shape.
+fn render_plan_preview(
+    frame: &mut Frame,
+    plan: &crate::layout::Plan,
+    area: Rect,
+    template: &str,
+    dim: Style,
+) {
+    let counts = plan.counts();
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(format!(" {template}"), Style::default().fg(Color::Cyan))),
+        Line::from(Span::styled(
+            format!(
+                " {} clone · {} move · {} keep",
+                counts.clone_rows, counts.moves, counts.keep
+            ),
+            dim,
+        )),
+    ];
+    let badge = |row: &crate::layout::PlanRow| match &row.action {
+        crate::layout::Action::Clone => ("+", Color::Green),
+        crate::layout::Action::Keep => ("\u{b7}", Color::DarkGray),
+        crate::layout::Action::Move { .. } => ("\u{2192}", Color::Cyan),
+        crate::layout::Action::Skip(_) => ("!", Color::Red),
+    };
+    let nodes = plan.tree();
+    let mut in_folder: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for node in &nodes {
+        in_folder.extend(node.repos.iter().copied());
+    }
+    let push_repo = |lines: &mut Vec<Line>, row: &crate::layout::PlanRow, depth: usize| {
+        let (glyph, color) = badge(row);
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(depth * 2 + 1)),
+            Span::styled(format!("{glyph} "), Style::default().fg(color)),
+            Span::raw(row.name.clone()),
+        ]));
+    };
+    for (position, row) in plan.rows.iter().enumerate() {
+        if !in_folder.contains(&position) && !row.rel_dest.is_empty() {
+            push_repo(&mut lines, row, 0);
+        }
+    }
+    for node in &nodes {
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(node.depth as usize * 2 + 1)),
+            Span::styled(
+                format!("{}/", node.name),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  ({})", node.repos.len()), dim),
+        ]));
+        for position in &node.repos {
+            push_repo(&mut lines, &plan.rows[*position], node.depth as usize + 1);
+        }
+    }
+    lines.truncate(area.height as usize);
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 pub(crate) fn render_coverage(frame: &mut Frame, app: &mut AppState, area: Rect, tick: u64) {
     let Some(state) = app.coverage_modal.clone() else {
         return;
@@ -839,8 +903,9 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &mut AppState, area: Rect,
         );
     } else {
     // Filter line + fork/archived toggle state.
+    let error = state.filter_error();
     let filter_span = if state.filter.is_empty() && !state.filter_focused {
-        Span::styled("  (all) — / to filter by name or topic:<t> / -topic:<t>", dim)
+        Span::styled("  (all) — / expression · s add selector · S siblings", dim)
     } else {
         Span::styled(
             format!("  / {}{}", state.filter, if state.filter_focused { "▏" } else { "" }),
@@ -849,18 +914,41 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &mut AppState, area: Rect,
     };
     let toggles = Span::styled(
         format!(
-            "   [forks:{} · archived:{}]",
+            "   [forks:{} · archived:{}{}]",
             if state.include_forks { "on" } else { "off" },
             if state.include_archived { "on" } else { "off" },
+            if state.with_siblings { " · siblings:on" } else { "" },
         ),
-        dim,
+        if state.with_siblings { Style::default().fg(Color::Cyan) } else { dim },
     );
-    frame.render_widget(Paragraph::new(Line::from(vec![filter_span, toggles])), filter_area);
+    // A bad expression says so rather than silently matching nothing — the list keeps showing
+    // everything while it is being typed.
+    let trailing = match &error {
+        Some(message) => Span::styled(format!("   {message}"), Style::default().fg(Color::Red)),
+        None => Span::raw(""),
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![filter_span, toggles, trailing])),
+        filter_area,
+    );
     }
 
-    // Repo list for the active owner, windowed to keep the cursor visible.
+    // Repo list for the active owner, windowed to keep the cursor visible. On a wide panel the
+    // right-hand column previews where the matched repos would land — the same plan `polygit plan`
+    // prints, so what you see here is what an apply does.
     let owner_name = state.owners[state.active_tab].owner.clone();
     let repos = state.visible_rows();
+    let preview = (list_area.width >= 96).then(|| app.coverage_plan()).flatten();
+    let (list_area, preview_area) = match &preview {
+        Some(_) => {
+            let split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(40), Constraint::Percentage(38)])
+                .split(list_area);
+            (split[0], Some(split[1]))
+        }
+        None => (list_area, None),
+    };
     let list_region = super::scroll_inside(list_area);
     let list_content = list_region.content();
     let list_h = (list_content.height as usize).max(1);
@@ -935,6 +1023,10 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &mut AppState, area: Rect,
         crate::app::ScrollKind::Coverage,
     );
 
+    if let (Some(area), Some(plan)) = (preview_area, preview.as_ref()) {
+        render_plan_preview(frame, plan, area, &app.coverage_prefs.layout, dim);
+    }
+
     let footer = if state.cloning {
         Line::from(vec![
             Span::styled(format!("  {} ", super::spinner_frame(tick, icons)), Style::default().fg(Color::Cyan)),
@@ -947,6 +1039,8 @@ pub(crate) fn render_coverage(frame: &mut Frame, app: &mut AppState, area: Rect,
             ("a/A", " all", HintKey::Char('a')),
             ("tab", " owner", HintKey::Tab),
             ("/", " filter", HintKey::Char('/')),
+            ("s", " selector", HintKey::Char('s')),
+            ("S", " siblings", HintKey::Char('S')),
             ("f", " forks", HintKey::Char('f')),
             ("x", " archived", HintKey::Char('x')),
             ("+", " add owner", HintKey::Char('+')),
@@ -2106,20 +2200,56 @@ pub(crate) fn render_settings(frame: &mut Frame, app: &mut AppState, area: Rect)
     let emoji = app.icon_style == crate::app::IconStyle::Emoji;
     let hide_zero = app.hide_zero_counts;
     let hide_lines = app.hide_folder_lines;
-    // Sections of (label, option chips). Global row indices run across sections and must
-    // match `set_setting_option` / `toggle_selected_setting`:
-    // 0 grouping · 1 tree · 2 hide-folder-lines (Lists), 3 icons · 4 hide-zeros · 5 theme ·
-    // 6 background · 7 contrast · 8 selection · 9 button-hover (Theming), 10 auto-pull · 11 limit ·
-    // 12 auto-pull-in-tree (Sync), 13 hover · 14 changed-row flash · 15 changed-row highlight
-    // (Interaction), 16 padding · 17 borders · 18 splitter · 19 repo-page tabs ·
-    // 20 repo-page (restored/maximized) · 21 branch-check (Layout), 22 all-tooltips · 23 footer ·
-    // 24 headers · 25 counts · 26 settings · 27 links (Tooltips), 28 AI-agent · 29 skip-permissions
-    // (Agent), 30 merged-PRs (Pull requests).
+    // Sections of (label, option chips). Written in any order — the vec is sorted by section name
+    // below, and every handler keys on the row's LABEL, so nothing here depends on position.
     type SettingsRow<'a> = (&'a str, Vec<(&'a str, bool)>);
     // The parallel-value chip is a dropdown trigger showing the current value + `▾`; its label is
     // dynamic, so build it into a local the sections vec can borrow for the frame.
     let parallel_value_chip = format!("{} ▾", app.max_pull_value_label());
+    let blobless = app.coverage_prefs.blobless;
+    let size_cap = crate::app::AppState::CLONE_SIZE_CAPS_KB
+        .iter()
+        .position(|cap| *cap == app.coverage_prefs.max_size_kb)
+        .unwrap_or(0);
+    let layout_pick = crate::app::AppState::CLONE_LAYOUTS
+        .iter()
+        .position(|template| *template == app.coverage_prefs.layout)
+        .unwrap_or(0);
+    let depth_pick = app.coverage_prefs.prefix_depth.saturating_sub(1).min(2);
+    let forks_alongside = app.coverage_prefs.forks_subdir.is_empty();
     let mut sections: Vec<(&str, Vec<SettingsRow>)> = vec![
+        (
+            "Cloning",
+            vec![
+                ("Clone history", vec![("full", !blobless), ("blobless", blobless)]),
+                (
+                    "Clone size cap",
+                    vec![
+                        ("off", size_cap == 0),
+                        ("1 GB", size_cap == 1),
+                        ("2 GB", size_cap == 2),
+                        ("5 GB", size_cap == 3),
+                    ],
+                ),
+                (
+                    "Fork placement",
+                    vec![("subdir", !forks_alongside), ("alongside", forks_alongside)],
+                ),
+                (
+                    "Layout",
+                    vec![
+                        ("flat", layout_pick == 0),
+                        ("by project", layout_pick == 1),
+                        ("by family", layout_pick == 2),
+                        ("by owner", layout_pick == 3),
+                    ],
+                ),
+                (
+                    "Prefix depth",
+                    vec![("1", depth_pick == 0), ("2", depth_pick == 1), ("3", depth_pick == 2)],
+                ),
+            ],
+        ),
         (
             "Lists",
             vec![

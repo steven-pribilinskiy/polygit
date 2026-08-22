@@ -53,18 +53,36 @@ pub struct AgentPrefs {
     pub claude_skip_permissions: bool,
 }
 
-/// Org-coverage panel (the `C` hotkey): where the clone action places repos.
+/// Org-coverage panel (the `C` hotkey): what the clone and layout actions do.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CoveragePrefs {
-    /// Subdirectory (under the scan root) that forked repos are cloned into — non-forks clone
-    /// directly under the root. Default `forks`.
+    /// Subdirectory (under the scan root) that forked repos are cloned into. Empty puts them
+    /// alongside everything else. Default `forks`.
     pub forks_subdir: String,
+    /// Destination path template — see `layout::LayoutTemplate`. Default `{repo}` (flat), because
+    /// most repos in a real org cluster with nothing and an eager default scatters them.
+    pub layout: String,
+    /// How many name tokens form a prefix-family key.
+    pub prefix_depth: usize,
+    /// Clone with `--filter=blob:none`: full history, file contents on demand.
+    pub blobless: bool,
+    /// Skip repos larger than this many kilobytes. `0` = no limit.
+    pub max_size_kb: u64,
+    /// Where clones land, when it should not follow the scan root.
+    pub clone_root: Option<PathBuf>,
 }
 
 impl Default for CoveragePrefs {
     fn default() -> Self {
-        Self { forks_subdir: "forks".to_string() }
+        Self {
+            forks_subdir: "forks".to_string(),
+            layout: "{repo}".to_string(),
+            prefix_depth: 1,
+            blobless: false,
+            max_size_kb: 0,
+            clone_root: None,
+        }
     }
 }
 
