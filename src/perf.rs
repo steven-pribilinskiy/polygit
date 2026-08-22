@@ -306,6 +306,19 @@ impl Series {
         }
     }
 
+    /// Flag the current second as disturbed by the panel's own use.
+    ///
+    /// Dragging the panel emits `Drag` reports, which the motion coalescer does not fold (it folds
+    /// only bare `Moved`), so one full frame is drawn per report — the panel inflates the very
+    /// numbers it is plotting, precisely while you are handling it. A flagged second is shown muted
+    /// rather than dropped: the reading is real, it just is not about your app.
+    pub fn mark_perturbed(&mut self, now: Instant) {
+        self.advance_to(now);
+        if let Some(bucket) = self.buckets.back_mut() {
+            bucket.get_or_insert_with(Bucket::default).perturbed = true;
+        }
+    }
+
     /// One value per second for `metric`, oldest first, over the last `seconds`.
     fn seconds(&self, metric: Metric, seconds: usize) -> Vec<Option<f64>> {
         let slot = metric as usize;
@@ -380,6 +393,102 @@ impl Series {
     }
 }
 
+/// Which corner the panel is measured from, in a form this app can persist.
+///
+/// [`tuilith::float::Anchor`] is the real type; tuilith owns no serialization by design — it has no
+/// serde dependency and adding one would make it a feature — so the stored shape lives here and
+/// converts at the boundary. Four variants, so the mapping is exhaustive in both directions and a
+/// new corner cannot be added on one side only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Corner {
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl From<Corner> for tuilith::float::Anchor {
+    fn from(corner: Corner) -> Self {
+        match corner {
+            Corner::TopLeft => Self::TopLeft,
+            Corner::TopRight => Self::TopRight,
+            Corner::BottomLeft => Self::BottomLeft,
+            Corner::BottomRight => Self::BottomRight,
+        }
+    }
+}
+
+impl From<tuilith::float::Anchor> for Corner {
+    fn from(anchor: tuilith::float::Anchor) -> Self {
+        match anchor {
+            tuilith::float::Anchor::TopLeft => Self::TopLeft,
+            tuilith::float::Anchor::TopRight => Self::TopRight,
+            tuilith::float::Anchor::BottomLeft => Self::BottomLeft,
+            tuilith::float::Anchor::BottomRight => Self::BottomRight,
+        }
+    }
+}
+
+impl Corner {
+    /// Every corner, in the order the picker offers them.
+    pub const ALL: [Corner; 4] =
+        [Corner::TopLeft, Corner::TopRight, Corner::BottomLeft, Corner::BottomRight];
+
+    pub fn label(self) -> &'static str {
+        tuilith::float::Anchor::from(self).label()
+    }
+}
+
+/// Where the panel sits and where "reset" puts it back to. Persisted.
+///
+/// Stored as a corner plus how far in from it, never as a rect: the panel's height changes at
+/// runtime as the verdict rewraps, and a remembered rect is only meaningful at the terminal size it
+/// was written at. See `tuilith::float` for why a stored rect also loses the position outright the
+/// first time the terminal shrinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PlacementPrefs {
+    pub corner: Corner,
+    pub dx: u16,
+    pub dy: u16,
+    /// Where `reset` returns to, and the corner a fresh placement starts from.
+    pub default_corner: Corner,
+}
+
+impl Default for PlacementPrefs {
+    fn default() -> Self {
+        // One cell in from the top right — the position the panel had before it could be moved.
+        Self { corner: Corner::TopRight, dx: 1, dy: 1, default_corner: Corner::TopRight }
+    }
+}
+
+impl PlacementPrefs {
+    pub fn placement(self) -> tuilith::float::Placement {
+        tuilith::float::Placement::new(self.corner.into(), self.dx, self.dy)
+    }
+
+    pub fn set_placement(&mut self, placement: tuilith::float::Placement) {
+        let (dx, dy) = placement.offset();
+        self.corner = placement.anchor().into();
+        self.dx = dx;
+        self.dy = dy;
+    }
+
+    /// Jump to a corner, keeping the inset — picking "bottom left" should not also move the panel
+    /// flush against the edge.
+    pub fn move_to_corner(&mut self, corner: Corner) {
+        self.corner = corner;
+    }
+
+    /// Back to the default corner at the default inset.
+    pub fn reset(&mut self) {
+        let default_corner = self.default_corner;
+        *self = Self { corner: default_corner, default_corner, ..Self::default() };
+    }
+}
+
 /// What the history graph is showing. Persisted, so the panel comes back the way it was left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -405,6 +514,8 @@ impl GraphPrefs {
     /// The windows the picker offers, and their labels.
     pub const WINDOWS: [(u16, &'static str); 4] =
         [(30, "30s"), (60, "1m"), (300, "5m"), (900, "15m")];
+    /// The graph heights the picker offers.
+    pub const HEIGHTS: [u16; 3] = [3, 5, 8];
 
     /// The window clamped to what the ring can actually hold — a persisted value from a future
     /// build must not make the graph read past the end of its own history.
@@ -485,6 +596,8 @@ pub struct Perf {
     pub series: Series,
     /// What the graph is showing.
     pub graph: GraphPrefs,
+    /// Where the panel sits.
+    pub placement: PlacementPrefs,
 
     /// When the oldest not-yet-drawn motion report was read. Cleared by the frame that draws it.
     pending_motion: Option<Instant>,
@@ -493,6 +606,12 @@ pub struct Perf {
 }
 
 impl Perf {
+    /// A fresh collector holding restored preferences. Measurements start empty — only what the
+    /// user chose survives a restart, never what the last session measured.
+    pub fn with_prefs(placement: PlacementPrefs, graph: GraphPrefs) -> Self {
+        Self { placement, graph, ..Self::default() }
+    }
+
     /// Start collecting. Idempotent.
     pub fn enable(&mut self) {
         self.enabled = true;

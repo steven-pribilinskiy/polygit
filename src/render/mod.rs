@@ -1112,6 +1112,8 @@ fn truncate_left(s: &str, max_width: usize) -> String {
 /// over the list, so it must not sit under the cursor or cover the rows being hovered.
 fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     app.perf_close_click = None;
+    app.perf_menu_click = None;
+    app.perf_drag_area = Rect::default();
     app.perf_panel_rect = Rect::default();
     if !app.perf.overlay {
         return;
@@ -1270,8 +1272,10 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
         return;
     }
     let height = plan.height;
-    // Top-right, one column in from the edge so it never collides with a pane scrollbar.
-    let rect = Rect { x: area.width - width - 1, y: 1, width, height };
+    // Resolved from the placement every frame, never stored as a rect. The panel's height changes
+    // as the verdict rewraps, and `resolve` clamps for this frame without writing anything back —
+    // so a terminal that shrinks and grows again puts the panel back where the user left it.
+    let rect = app.perf.placement.placement().resolve(area, (width, height));
     frame.render_widget(Clear, rect);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -1323,10 +1327,15 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     // The verdict's height is reserved at the tallest string, so a short verdict leaves rows over.
     // Give them to the graph rather than leaving them blank: a sparkline that gains a row of
     // resolution when the verdict shortens is a far quieter change than a panel that resizes.
+    let verdict_used = verdict_block.len();
     let slack = verdict_rows.saturating_sub(verdict_block.len() as u16);
+    // One spare row is kept back from the graph for the controls hint; the rest of the verdict's
+    // unused height still goes to the graph rather than sitting blank.
+    let hint_row = u16::from(slack > 0);
     let graph_height =
-        if plan.graph { plan.graph_rows + 1 + slack } else { 0 };
-    let verdict_height = if plan.graph { verdict_rows - slack } else { verdict_rows };
+        if plan.graph { plan.graph_rows + 1 + slack.saturating_sub(hint_row) } else { 0 };
+    let verdict_height =
+        if plan.graph { verdict_rows - slack.saturating_sub(hint_row) } else { verdict_rows };
     let table_height =
         inner.height.saturating_sub(graph_height).saturating_sub(verdict_height);
     let table_area = Rect { height: table_height, ..inner };
@@ -1350,14 +1359,36 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     };
     frame.render_widget(Paragraph::new(verdict_block), verdict_area);
 
+    // The panel advertises its own controls, footer-hint style — the keys exist whether or not
+    // anyone opens the help modal, and a draggable surface with no visible affordance is one nobody
+    // discovers. Only drawn when there is a spare row, since the verdict outranks it.
+    if verdict_height > u16::try_from(verdict_used).unwrap_or(u16::MAX) {
+        let hint = clip_to_width("drag title · alt+↔ move", usize::from(inner.width));
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(palette.faint)))),
+            Rect { y: verdict_area.y + verdict_area.height.saturating_sub(1), height: 1, ..verdict_area },
+        );
+    }
+
     // The `[x]` closes the overlay by mouse, mirroring `Ctrl+T`. Captured, not recomputed, so it
     // stays correct if the box moves or resizes.
-    let (close_line, close_region) = modal_close_button(rect);
+    let (close_line, close_region) = perf_title_buttons(rect);
     frame.render_widget(
         Paragraph::new(close_line),
         Rect { x: rect.x, y: rect.y, width: rect.width, height: 1 },
     );
+    let (close_region, menu_region) = close_region;
     app.perf_close_click = close_region;
+    app.perf_menu_click = menu_region;
+    // The title row left of the buttons drags the panel. Captured, not recomputed — it moves with
+    // the panel, and a hardcoded offset would be right only at the corner it was written for.
+    let buttons_start = menu_region.map_or(rect.x + rect.width, |(_, start, _)| start);
+    app.perf_drag_area = Rect {
+        x: rect.x + 1,
+        y: rect.y,
+        width: buttons_start.saturating_sub(rect.x + 1),
+        height: 1,
+    };
     // The whole panel is registered, not just the button: every mouse event inside it belongs to
     // the panel, and without this a click in the middle of it selects the repo row behind it.
     app.perf_panel_rect = rect;
@@ -1366,16 +1397,49 @@ fn render_perf_overlay(frame: &mut Frame, app: &mut AppState) {
     // `Clear` over the same cells, which resets them — so a highlight applied there is computed
     // and then wiped, leaving a button that is clickable and dead on hover. Doing it here also
     // means the highlight cannot lag a frame behind a panel that has just moved.
-    if let (Some((row, start, end)), Some((hover_col, hover_row))) = (close_region, app.hover)
-        && hover_row == row
-        && hover_col >= start
-        && hover_col < end
-    {
-        frame.buffer_mut().set_style(
-            Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 },
-            Style::default().bg(palette.hover_bg()),
-        );
+    if let Some((hover_col, hover_row)) = app.hover {
+        let over = |region: Option<(u16, u16, u16)>| {
+            region.filter(|&(row, start, end)| {
+                hover_row == row && hover_col >= start && hover_col < end
+            })
+        };
+        let tint = |frame: &mut Frame, row: u16, start: u16, end: u16| {
+            frame.buffer_mut().set_style(
+                Rect { x: start, y: row, width: end.saturating_sub(start), height: 1 },
+                Style::default().bg(palette.hover_bg()),
+            );
+        };
+        if let Some((row, start, end)) = over(close_region) {
+            tint(frame, row, start, end);
+        } else if let Some((row, start, end)) = over(menu_region) {
+            tint(frame, row, start, end);
+        } else if crate::app::point_in(app.perf_drag_area, hover_col, hover_row) {
+            // A softer tint on the title strip: it is a draggable surface, not a button.
+            tint(frame, app.perf_drag_area.y, app.perf_drag_area.x, app.perf_drag_area.right());
+        }
     }
+}
+
+/// The panel's title-bar button regions: `(close, menu)`.
+type PerfTitleRegions = (BtnRegion, BtnRegion);
+
+/// The panel's title-bar controls: `[menu]` opens its menu, `[x]` closes it. Returns the line and
+/// its two click regions.
+fn perf_title_buttons(rect: Rect) -> (Line<'static>, PerfTitleRegions) {
+    let close = "[x]";
+    let menu = "[menu]";
+    let dim = Style::default().fg(Color::DarkGray);
+    let line = Line::from(vec![
+        Span::styled(menu, dim),
+        Span::raw(" "),
+        Span::styled(close, dim.add_modifier(Modifier::BOLD)),
+    ])
+    .right_aligned();
+    let col_end = rect.x + rect.width.saturating_sub(1);
+    let close_start = col_end.saturating_sub(close.len() as u16);
+    let menu_end = close_start.saturating_sub(1);
+    let menu_start = menu_end.saturating_sub(menu.len() as u16);
+    (line, (Some((rect.y, close_start, col_end)), Some((rect.y, menu_start, menu_end))))
 }
 
 /// The history graph: a caption naming the metric and its scale, then a sparkline of the window.
@@ -1463,6 +1527,10 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
 /// Render a single frame into `frame`: draw every widget with semantic ANSI colors, then
 /// remap the whole buffer to the active theme + contrast palette.
 pub fn render(frame: &mut Frame, app: &mut AppState, tick: u64) {
+    // Captured before anything can return early: the perf panel floats over every view including
+    // the repo page, and its bounds are the terminal, not the docked main area.
+    app.frame_area = frame.area();
+
     // Instrumented only while the perf overlay/report is on: an `Instant::now()` per pass is cheap,
     // but a disabled session should pay nothing beyond the branch.
     if !app.perf.enabled {

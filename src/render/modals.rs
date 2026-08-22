@@ -32,6 +32,7 @@ pub(crate) fn render_dropdown(frame: &mut Frame, app: &mut AppState, area: Rect)
         DropdownKind::ParallelValue => " parallel pulls ",
         DropdownKind::FilterAdd => " add filter ",
         DropdownKind::CoverageAxis => " add selector ",
+        DropdownKind::PerfPanel => " perf panel ",
     };
     // Each row renders `marker + mnemonic + " " + label`; the marker is 2 cells for a radio (`● `)
     // and 4 for columns (`[x] `), plus the mnemonic key and a space.

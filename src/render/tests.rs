@@ -847,6 +847,7 @@ fn perf_overlay_shows_its_verdict_and_close_button() {
         std::path::PathBuf::from("/tmp/demo"),
     )))];
     let mut app = AppState::new(repos, Some(4), true);
+    pin_perf_prefs(&mut app);
     app.perf.toggle_overlay();
     // A sampled lag well under the alarm thresholds, so the verdict is the quiet one.
     for _ in 0..8 {
@@ -886,6 +887,7 @@ fn perf_panel_paints_its_own_hover() {
         std::path::PathBuf::from("/tmp/demo"),
     )))];
     let mut app = AppState::new(repos, Some(4), true);
+    pin_perf_prefs(&mut app);
     app.perf.toggle_overlay();
     app.perf.lag.record_us(500.0);
 
@@ -977,6 +979,7 @@ fn perf_panel_registers_its_whole_rect_not_just_the_close_button() {
         std::path::PathBuf::from("/tmp/demo"),
     )))];
     let mut app = AppState::new(repos, Some(4), true);
+    pin_perf_prefs(&mut app);
     app.perf.toggle_overlay();
     app.perf.lag.record_us(500.0);
     let _ = render_rows(&mut app, 150, 44);
@@ -1007,12 +1010,24 @@ fn perf_panel_reports_its_own_cost() {
         std::path::PathBuf::from("/tmp/demo"),
     )))];
     let mut app = AppState::new(repos, Some(4), true);
+    pin_perf_prefs(&mut app);
     app.perf.toggle_overlay();
     app.perf.lag.record_us(500.0);
     let screen = render_rows(&mut app, 150, 44).join("\n");
     assert!(screen.contains("overlay"), "the overlay-cost row is listed:\n{screen}");
     // And the render path actually sampled it, rather than leaving the row permanently blank.
     assert!(!app.perf.overlay_cost.is_empty(), "rendering the panel records its own cost");
+}
+
+/// Pin every perf-panel preference the render reads.
+///
+/// `AppState::new` loads the real `~/.config/polygit/state-v3.json`, and the panel's placement and
+/// graph settings are now persisted — so one manual session that drags the panel to another corner
+/// silently changes what these tests render. Pinning them is what keeps the suite hermetic; verify
+/// by moving that file aside and running both ways.
+fn pin_perf_prefs(app: &mut AppState) {
+    app.perf.placement = crate::perf::PlacementPrefs::default();
+    app.perf.graph = crate::perf::GraphPrefs::default();
 }
 
 /// Seed enough per-second history that the graph has something to draw.
@@ -1025,6 +1040,7 @@ fn app_with_perf_history() -> AppState {
         std::path::PathBuf::from("/tmp/demo"),
     )))];
     let mut app = AppState::new(repos, Some(4), true);
+    pin_perf_prefs(&mut app);
     app.perf.toggle_overlay();
     app.perf.lag.record_us(500.0);
     let epoch = Instant::now();
@@ -1076,6 +1092,55 @@ fn perf_panel_degrades_before_it_disappears() {
     );
 }
 
+/// The panel is drawn where its placement says, not where a constant says. A test that only asks
+/// "did it render" cannot tell a resolved rect from the hardcoded top-right one it replaced.
+#[test]
+fn perf_panel_follows_its_placement() {
+    use crate::perf::Corner;
+
+    let mut app = app_with_perf_history();
+    let mut seen = std::collections::HashMap::new();
+    for corner in Corner::ALL {
+        app.perf.placement.move_to_corner(corner);
+        let _ = render_rows(&mut app, 150, 44);
+        let rect = app.perf_panel_rect;
+        assert!(!rect.is_empty(), "{corner:?} renders");
+        seen.insert(corner, (rect.x, rect.y));
+    }
+    let top_left = seen[&Corner::TopLeft];
+    let top_right = seen[&Corner::TopRight];
+    let bottom_left = seen[&Corner::BottomLeft];
+    let bottom_right = seen[&Corner::BottomRight];
+
+    assert_eq!(top_left.1, bottom_left.1 - (bottom_left.1 - top_left.1), "sanity");
+    assert!(top_left.0 < top_right.0, "left corners sit left of right ones");
+    assert!(top_left.1 < bottom_left.1, "top corners sit above bottom ones");
+    assert_eq!(top_left.0, bottom_left.0, "both left corners share a column");
+    assert_eq!(top_left.1, top_right.1, "both top corners share a row");
+    assert_eq!(bottom_right, (top_right.0, bottom_left.1), "and the fourth is their intersection");
+}
+
+/// Reset returns the panel to its default corner, and "set as default" changes where reset goes —
+/// otherwise the two controls are the same button wearing different labels.
+#[test]
+fn reset_returns_to_the_chosen_default_corner() {
+    use crate::perf::{Corner, PlacementPrefs};
+
+    let mut prefs = PlacementPrefs::default();
+    assert_eq!(prefs.corner, Corner::TopRight, "the historical position is the default");
+
+    prefs.move_to_corner(Corner::BottomLeft);
+    prefs.reset();
+    assert_eq!(prefs.corner, Corner::TopRight, "reset goes back to the default corner");
+
+    prefs.move_to_corner(Corner::BottomLeft);
+    prefs.default_corner = Corner::BottomLeft;
+    prefs.move_to_corner(Corner::TopLeft);
+    prefs.reset();
+    assert_eq!(prefs.corner, Corner::BottomLeft, "and follows the default when it is changed");
+    assert_eq!(prefs.default_corner, Corner::BottomLeft, "which reset does not itself undo");
+}
+
 /// A terminal too short for the overlay must simply not draw it — never panic, and never leave a
 /// click region pointing at a box that was not rendered.
 #[test]
@@ -1085,6 +1150,7 @@ fn perf_overlay_declines_to_draw_when_the_terminal_is_too_small() {
         std::path::PathBuf::from("/tmp/demo"),
     )))];
     let mut app = AppState::new(repos, Some(4), true);
+    pin_perf_prefs(&mut app);
     app.perf.toggle_overlay();
     app.perf.lag.record_us(500.0);
 

@@ -30,6 +30,8 @@ pub struct PersistedState {
     /// File-explorer preferences (columns, sort, date format).
     pub explorer: crate::explorer::ExplorerPrefs,
     pub interaction: InteractionPrefs,
+    /// Perf-panel placement and graph settings.
+    pub perf: PerfPrefs,
     pub layout: LayoutPrefs,
     pub lists: ListPrefs,
     pub pull_requests: PullRequestPrefs,
@@ -84,6 +86,20 @@ impl Default for CoveragePrefs {
             clone_root: None,
         }
     }
+}
+
+/// The perf panel: where it sits and what its graph shows.
+///
+/// Placement is a corner plus an inset, never a rect — see `crate::perf::PlacementPrefs`. Nothing
+/// here is clamped on load: an absurd offset from a hand-edited file or a future build loads as
+/// written and is clamped only when it is resolved against the terminal actually in front of the
+/// user. Clamping at load would do it against whatever size that session happens to start at, and
+/// write the wrong answer back permanently.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PerfPrefs {
+    pub placement: crate::perf::PlacementPrefs,
+    pub graph: crate::perf::GraphPrefs,
 }
 
 /// Mouse / attention interaction.
@@ -477,6 +493,9 @@ impl From<LegacyFlatState> for PersistedState {
                 claude_agent: legacy.claude_agent,
                 claude_skip_permissions: legacy.claude_skip_permissions,
             },
+            // New — the perf panel postdates the flat schema entirely, so a legacy file has
+            // nothing to say about it and the defaults are the right answer.
+            perf: PerfPrefs::default(),
             // New — no legacy equivalent (forks clone under `<root>/forks/`).
             coverage: CoveragePrefs::default(),
             // New in v3 — no legacy equivalent (columns off, name-ascending, relative dates).
@@ -872,5 +891,60 @@ mod tests {
         assert_eq!(round4(0.493_333_333_333_353_5), 0.4933);
         assert_eq!(round4(0.319_148_936_170_212_8), 0.3191);
         assert_eq!(round4(0.4), 0.4);
+    }
+
+    /// A file written before the panel existed must load its defaults rather than failing — every
+    /// section is `#[serde(default)]` precisely so an older file keeps working.
+    #[test]
+    fn a_state_file_without_a_perf_section_loads_the_default_placement() {
+        let state = parse(r#"{"version":1}"#);
+        assert_eq!(state.perf.placement, crate::perf::PlacementPrefs::default());
+        assert_eq!(state.perf.graph, crate::perf::GraphPrefs::default());
+        assert_eq!(state.perf.placement.corner, crate::perf::Corner::TopRight);
+    }
+
+    /// Placement survives the write/read round trip. It is the first absolute cell coordinate this
+    /// app persists, so its serialization is worth asserting rather than assuming.
+    #[test]
+    fn a_perf_placement_survives_a_round_trip() {
+        let mut written = PersistedState { version: SCHEMA_VERSION, ..PersistedState::default() };
+        written.perf.placement = crate::perf::PlacementPrefs {
+            corner: crate::perf::Corner::BottomLeft,
+            dx: 7,
+            dy: 3,
+            default_corner: crate::perf::Corner::BottomRight,
+        };
+        written.perf.graph = crate::perf::GraphPrefs {
+            metric: crate::perf::Metric::Fps,
+            window_secs: 300,
+            rows: 8,
+        };
+        let read = parse(&serde_json::to_string(&written).expect("serializes"));
+        assert_eq!(read.perf.placement, written.perf.placement);
+        assert_eq!(read.perf.graph, written.perf.graph);
+    }
+
+    /// An absurd offset — a hand-edited file, or one written by a build with different defaults —
+    /// must LOAD as written and be clamped only when it is resolved against a real terminal.
+    /// Clamping at load would do it against whatever size this session happens to start at and
+    /// write the wrong answer back permanently, which is the bug the corner+offset model exists to
+    /// avoid in the first place.
+    #[test]
+    fn an_absurd_persisted_offset_loads_unclamped_and_is_clamped_only_at_resolve() {
+        let state = parse(r#"{"version":1,"perf":{"placement":{"corner":"top_left","dx":60000,"dy":60000}}}"#);
+        assert_eq!(state.perf.placement.dx, 60_000, "loaded as written");
+
+        let bounds = ratatui::layout::Rect { x: 0, y: 0, width: 120, height: 40 };
+        let rect = state.perf.placement.placement().resolve(bounds, (25, 18));
+        assert!(rect.x + rect.width <= bounds.width, "and resolves inside the terminal: {rect:?}");
+        assert!(rect.y + rect.height <= bounds.height, "{rect:?}");
+    }
+
+    /// A graph window from a future build must not make the ring read past its own history.
+    #[test]
+    fn an_out_of_range_graph_window_is_clamped_when_used() {
+        let state = parse(r#"{"version":1,"perf":{"graph":{"window_secs":65000}}}"#);
+        assert_eq!(state.perf.graph.window_secs, 65_000, "loaded as written");
+        assert!(state.perf.graph.seconds() <= crate::perf::Series::MAX_SECONDS);
     }
 }

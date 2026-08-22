@@ -1857,6 +1857,9 @@ async fn run_event_loop(
     // NEXT one, which already holds the `AppState` lock. Recording it at the dispatch instead would
     // mean taking the lock again on the hot path just to bump a counter.
     let mut pending_event: Option<(Instant, usize)> = None;
+    // `Some(grab_dx, grab_dy)` while the perf panel's title bar is being dragged — the offset from
+    // its origin to the cursor, so the grab point stays put.
+    let mut dragging_perf_panel: Option<(i32, i32)> = None;
 
     // Whether all-motion mouse tracking (DEC 1003) is currently enabled in the terminal; kept in
     // sync with the `hover_effects` setting each render.
@@ -2329,6 +2332,57 @@ async fn run_event_loop(
                     app.show_toast("perf overlay off");
                     continue;
                 }
+                // The panel's menu chip, then its title-bar drag. Both sit above the
+                // swallow-everything rule below, which would otherwise absorb them.
+                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                    && region_hit(app.perf_menu_click, mouse.column, mouse.row)
+                {
+                    app.open_perf_menu();
+                    continue;
+                }
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left)
+                        if point_in(app.perf_drag_area, mouse.column, mouse.row) =>
+                    {
+                        // Offset from the panel's origin to the cursor, so the grab point stays
+                        // under the pointer instead of the panel jumping to it.
+                        dragging_perf_panel = Some((
+                            i32::from(app.perf_panel_rect.x) - i32::from(mouse.column),
+                            i32::from(app.perf_panel_rect.y) - i32::from(mouse.row),
+                        ));
+                        continue;
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) if dragging_perf_panel.is_some() => {
+                        if let Some((grab_dx, grab_dy)) = dragging_perf_panel {
+                            let bounds = app.frame_area;
+                            let size =
+                                (app.perf_panel_rect.width, app.perf_panel_rect.height);
+                            let mut window = tuilith::float::Window::new(
+                                app.perf.placement.placement(),
+                                size,
+                                (1, 1),
+                            );
+                            window.move_to(
+                                i32::from(mouse.column) + grab_dx,
+                                i32::from(mouse.row) + grab_dy,
+                                bounds,
+                            );
+                            app.perf.placement.set_placement(window.placement());
+                            // Dragging the panel emits Drag reports, which are not coalesced — so
+                            // it inflates the numbers it is plotting. Mark the second rather than
+                            // hide it: the reading is real, it just is not about the app.
+                            app.perf.series.mark_perturbed(Instant::now());
+                        }
+                        continue;
+                    }
+                    MouseEventKind::Up(MouseButton::Left) if dragging_perf_panel.is_some() => {
+                        dragging_perf_panel = None;
+                        app.save_state();
+                        continue;
+                    }
+                    _ => {}
+                }
+
                 // Everything else inside the panel belongs to the panel. Without this a click in
                 // the middle of it selects the repo row behind it, a wheel scrolls that list, and a
                 // drag near its left edge grabs the splitter underneath — the panel is opaque on
@@ -4151,6 +4205,40 @@ async fn run_event_loop(
                 // worth measuring are often the ones with a modal or the repo page open, so a
                 // toggle gated behind the list view could not reach them. `Ctrl+T` (timing) —
                 // `Ctrl+P` is the fuzzy finder and handling it here would shadow it everywhere.
+                // Alt+arrows nudge the perf panel. Placed ABOVE the floating explorer's own
+                // Alt+arrow handler and gated on the panel being open: the rule is that Alt+arrows
+                // move the topmost floating surface, and the panel is topmost by construction.
+                // Without the gate this would shadow the explorer everywhere.
+                if app.perf.overlay
+                    && key.modifiers.contains(KeyModifiers::ALT)
+                    && matches!(
+                        key.code,
+                        KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+                    )
+                {
+                    // Two cells horizontally, one vertically — a cell is about twice as tall as it
+                    // is wide, so equal steps do not feel equal.
+                    let (dx, dy) = match key.code {
+                        KeyCode::Left => (-2, 0),
+                        KeyCode::Right => (2, 0),
+                        KeyCode::Up => (0, -1),
+                        _ => (0, 1),
+                    };
+                    let bounds = app.frame_area;
+                    let size = (app.perf_panel_rect.width, app.perf_panel_rect.height);
+                    if size.0 > 0 && size.1 > 0 {
+                        let mut window = tuilith::float::Window::new(
+                            app.perf.placement.placement(),
+                            size,
+                            (1, 1),
+                        );
+                        window.nudge(dx, dy, bounds);
+                        app.perf.placement.set_placement(window.placement());
+                        app.save_state();
+                    }
+                    continue;
+                }
+
                 if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     app.perf.toggle_overlay();
                     let state = if app.perf.overlay { "on" } else { "off" };

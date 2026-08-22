@@ -7,7 +7,7 @@
       {
         "keys": [
           "j",
-          "\u2193"
+          "↓"
         ],
         "action": "Next repo",
         "group": "Navigate"
@@ -15,7 +15,7 @@
       {
         "keys": [
           "k",
-          "\u2191"
+          "↑"
         ],
         "action": "Previous repo",
         "group": "Navigate"
@@ -25,7 +25,7 @@
           "wheel"
         ],
         "action": "Scroll the list view (over the left pane)",
-        "note": "web-app style \u2014 the selection stays put and may scroll out of view; keyboard nav always keeps the selection on screen",
+        "note": "web-app style — the selection stays put and may scroll out of view; keyboard nav always keeps the selection on screen",
         "keywords": [
           "mouse",
           "scroll"
@@ -37,7 +37,7 @@
           "Alt",
           "wheel"
         ],
-        "action": "Move the selection (over the left pane), like \u2191/\u2193",
+        "action": "Move the selection (over the left pane), like ↑/↓",
         "keywords": [
           "mouse",
           "scroll",
@@ -105,7 +105,7 @@
           "a"
         ],
         "action": "Fold leader: toggle the selected folder/group",
-        "note": "za toggle \u00b7 zo/zc open/close \u00b7 zO expand subtree \u00b7 zM collapse all \u00b7 zR expand all",
+        "note": "za toggle · zo/zc open/close · zO expand subtree · zM collapse all · zR expand all",
         "keywords": [
           "fold",
           "collapse",
@@ -151,10 +151,10 @@
       },
       {
         "keys": [
-          "\u2190"
+          "←"
         ],
         "action": "Collapse the selected header, or jump to the enclosing folder/group",
-        "note": "tree-style; also the clickable `\u2190/` footer hint",
+        "note": "tree-style; also the clickable `←/` footer hint",
         "keywords": [
           "collapse",
           "fold",
@@ -165,10 +165,10 @@
       },
       {
         "keys": [
-          "\u2192"
+          "→"
         ],
         "action": "Expand a collapsed folder/group (on its header)",
-        "note": "also the clickable `\u2192 fold` footer hint",
+        "note": "also the clickable `→ fold` footer hint",
         "keywords": [
           "expand",
           "unfold",
@@ -194,7 +194,7 @@
           "Tab",
           "Shift+Tab"
         ],
-        "action": "Cycle focus across the visible panels: [1] list \u00b7 [2] info \u00b7 [3] result \u00b7 [4] repo page",
+        "action": "Cycle focus across the visible panels: [1] list · [2] info · [3] result · [4] repo page",
         "note": "the focused panel gets a bright rounded border; hidden panels are skipped",
         "group": "Panes & views"
       },
@@ -205,7 +205,7 @@
           "3",
           "4"
         ],
-        "action": "Focus the list / info / result / repo-page panel directly \u2014 or, when a pane is maximized, swap which pane is maximized",
+        "action": "Focus the list / info / result / repo-page panel directly — or, when a pane is maximized, swap which pane is maximized",
         "keywords": [
           "panel",
           "pane",
@@ -268,7 +268,7 @@
           "e"
         ],
         "action": "Refetch / pull the selected repo",
-        "note": "re-pull regardless of status \u2014 incl. idle/cached repos when auto-pull was suppressed; with a folder/group header selected, re-pulls every repo it covers (folder subtree, recursively)",
+        "note": "re-pull regardless of status — incl. idle/cached repos when auto-pull was suppressed; with a folder/group header selected, re-pulls every repo it covers (folder subtree, recursively)",
         "group": "Pull / retry"
       },
       {
@@ -284,7 +284,7 @@
           "u"
         ],
         "action": "Refresh the selected repo's local git facts (no pull)",
-        "note": "branch, ahead/behind, dirty, stash, branch count \u2014 network-free",
+        "note": "branch, ahead/behind, dirty, stash, branch count — network-free",
         "group": "Pull / retry"
       },
       {
@@ -299,7 +299,7 @@
           "i"
         ],
         "action": "Toggle the info panel above the log/diff",
-        "note": "additive block; tracks the selection. Bold labels; empty rows hidden; clickable branch/commit/remote/pull-request links (branch & remote wrap on separators rather than truncate); the Pull Request row (#N title, via gh) shows when the current branch has an open PR; \u29c9 copies the path (and the log, from the log pane); truncated path/subject expand on click",
+        "note": "additive block; tracks the selection. Bold labels; empty rows hidden; clickable branch/commit/remote/pull-request links (branch & remote wrap on separators rather than truncate); the Pull Request row (#N title, via gh) shows when the current branch has an open PR; ⧉ copies the path (and the log, from the log pane); truncated path/subject expand on click",
         "keywords": [
           "info",
           "copy",
@@ -329,8 +329,8 @@
         "keys": [
           "L"
         ],
-        "action": "Cycle the info panel's grouping layout (titled sections \u2192 spaced \u2192 flat)",
-        "note": "or set it in Settings \u2192 Layout \u2192 Info layout; a maximized info pane always shows titled sections. Persisted",
+        "action": "Cycle the info panel's grouping layout (titled sections → spaced → flat)",
+        "note": "or set it in Settings → Layout → Info layout; a maximized info pane always shows titled sections. Persisted",
         "keywords": [
           "info",
           "layout",
@@ -345,7 +345,7 @@
         "keys": [
           "d"
         ],
-        "action": "Cycle the Diff tab's sub-display: log \u2192 raw \u2192 unified \u2192 split",
+        "action": "Cycle the Diff tab's sub-display: log → raw → unified → split",
         "note": "log = pull output; raw = git-colored diff; unified/split = syntax-highlighted. Switches the Result pane to the Diff tab first (landing on its current sub-display) if another tab is active. Click the Diff tab again to cycle it with the mouse too; the choice persists",
         "keywords": [
           "diff",
@@ -361,7 +361,7 @@
           "D"
         ],
         "action": "Cycle the Result pane's category tab: diff / tags / branches / commits / files",
-        "note": "the tab bar sits at the top of the Result pane's body (mirroring the repo page's tab style) \u2014 each tab shows an icon + item count, and only tabs with something to show appear (an up-to-date repo with no tags shows just Diff). Commits/files are what the last pull delivered (each with a count badge \u2014 commits as expandable sha/subject/body/author blocks with GitHub links, files as a status-colored list); tags/branches list the whole repo (mirroring the repo page's Branches tab). Click any tab to jump directly; the choice persists",
+        "note": "the tab bar sits at the top of the Result pane's body (mirroring the repo page's tab style) — each tab shows an icon + item count, and only tabs with something to show appear (an up-to-date repo with no tags shows just Diff). Commits/files are what the last pull delivered (each with a count badge — commits as expandable sha/subject/body/author blocks with GitHub links, files as a status-colored list); tags/branches list the whole repo (mirroring the repo page's Branches tab). Click any tab to jump directly; the choice persists",
         "keywords": [
           "tags",
           "branches",
@@ -377,7 +377,7 @@
           "t"
         ],
         "action": "Open the columns dropdown",
-        "note": "press t (or click the t cols \u25be header chip) to open the columns dropdown, then pick with the mouse, the \u2191\u2193 arrows + enter, or each row's mnemonic letter: u/a/d/l/w/b/s/p/c/r/f \u2192 status/ahead-behind/dirty/last/worktrees/branches/stashes/pulled/changed/pull-request/favorite. Toggling a column keeps the dropdown open (multi-toggle); esc/q/the [x]/an outside click closes it. The status column shows a short label with the failure kind (not found / auth / diverged / timeout / network / lock) on failed repos. The pulled (\u21e3) and changed (\u00b1) columns show what the last pull landed \u2014 commits and files \u2014 hidden until a pull lands a delta, then they stay for the session (a retry won't flicker them). The pull-request column shows a clickable #N (via gh, cached 5 min) for the current branch's open PR. The favorite (\u2605) column shows a clickable star per repo (\u2605 favorited / \u2606 not) \u2014 click to toggle. Zeros render dim in the Unicode set and are hidden in emoji mode; a column every repo lacks (no worktrees/stashes, \u22641 branch) auto-hides and its dropdown row renders dim + inert",
+        "note": "press t (or click the t cols ▾ header chip) to open the columns dropdown, then pick with the mouse, the ↑↓ arrows + enter, or each row's mnemonic letter: u/a/d/l/w/b/s/p/c/r/f → status/ahead-behind/dirty/last/worktrees/branches/stashes/pulled/changed/pull-request/favorite. Toggling a column keeps the dropdown open (multi-toggle); esc/q/the [x]/an outside click closes it. The status column shows a short label with the failure kind (not found / auth / diverged / timeout / network / lock) on failed repos. The pulled (⇣) and changed (±) columns show what the last pull landed — commits and files — hidden until a pull lands a delta, then they stay for the session (a retry won't flicker them). The pull-request column shows a clickable #N (via gh, cached 5 min) for the current branch's open PR. The favorite (★) column shows a clickable star per repo (★ favorited / ☆ not) — click to toggle. Zeros render dim in the Unicode set and are hidden in emoji mode; a column every repo lacks (no worktrees/stashes, ≤1 branch) auto-hides and its dropdown row renders dim + inert",
         "keywords": [
           "columns",
           "status",
@@ -397,7 +397,7 @@
           "s"
         ],
         "action": "Open the sort dropdown",
-        "note": "press s (or click the s sort \u27eacol \u25b2\u27eb \u25be header chip, which shows the current sort + direction) to open the sort dropdown, then pick with the mouse, the \u2191\u2193 arrows + enter, or each row's mnemonic letter: n/c/s/a/d/l/w/b/k/p/g \u2192 name/branch/status/ahead-behind/dirty/last/worktrees/branches/stashes/pulled/changed. Picking a sort closes the dropdown; re-picking the active sort flips \u25b2\u25bc (clicking a column header also flips it). The list is always sorted \u2014 Name asc is the default; ties break by name (A\u2192Z), regardless of the column's direction",
+        "note": "press s (or click the s sort ⟪col ▲⟫ ▾ header chip, which shows the current sort + direction) to open the sort dropdown, then pick with the mouse, the ↑↓ arrows + enter, or each row's mnemonic letter: n/c/s/a/d/l/w/b/k/p/g → name/branch/status/ahead-behind/dirty/last/worktrees/branches/stashes/pulled/changed. Picking a sort closes the dropdown; re-picking the active sort flips ▲▼ (clicking a column header also flips it). The list is always sorted — Name asc is the default; ties break by name (A→Z), regardless of the column's direction",
         "keywords": [
           "sort",
           "order",
@@ -414,7 +414,7 @@
           "f"
         ],
         "action": "Status-filter dropdown",
-        "note": "opens the status dropdown: a/u/c/s/f/i \u2192 all/updated/up-to-date/skipped/failed/issues. Picking anything but 'all' shows a removable status chip in the filter bar (the list pane's first row); f reopens it to change the value whether or not it's currently active",
+        "note": "opens the status dropdown: a/u/c/s/f/i → all/updated/up-to-date/skipped/failed/issues. Picking anything but 'all' shows a removable status chip in the filter bar (the list pane's first row); f reopens it to change the value whether or not it's currently active",
         "keywords": [
           "filter",
           "status",
@@ -428,7 +428,7 @@
           "F"
         ],
         "action": "Open the branch-existence filter",
-        "note": "aggregates every branch name across every discovered repo. Active/local/remote/any mode chips (Tab/Shift-Tab cycles), a live query narrows the list, \u2191\u2193 move, Enter applies it \u2014 filtering the repo list to only those matching, on top of the status/name filters. The top row clears an applied filter. Shows a removable branch chip in the filter bar once applied",
+        "note": "aggregates every branch name across every discovered repo. Active/local/remote/any mode chips (Tab/Shift-Tab cycles), a live query narrows the list, ↑↓ move, Enter applies it — filtering the repo list to only those matching, on top of the status/name filters. The top row clears an applied filter. Shows a removable branch chip in the filter bar once applied",
         "keywords": [
           "branch",
           "filter",
@@ -442,7 +442,7 @@
           "F"
         ],
         "action": "Clear every active filter chip at once",
-        "note": "resets the status and branch filters together (the filter bar's 'reset filters' button); the search text is separate \u2014 Esc while typing, or its inline \u00d7, clears that",
+        "note": "resets the status and branch filters together (the filter bar's 'reset filters' button); the search text is separate — Esc while typing, or its inline ×, clears that",
         "keywords": [
           "filter",
           "reset",
@@ -476,8 +476,8 @@
         "keys": [
           "P"
         ],
-        "action": "Open the PR on GitHub \u2014 the existing PR, else the compare page for this branch vs its base",
-        "note": "opens the detected PR's url, or `\u2026/compare/<base>...<branch>?expand=1`; no-op when already on the base branch or there's no remote",
+        "action": "Open the PR on GitHub — the existing PR, else the compare page for this branch vs its base",
+        "note": "opens the detected PR's url, or `…/compare/<base>...<branch>?expand=1`; no-op when already on the base branch or there's no remote",
         "keywords": [
           "pull request",
           "pr",
@@ -516,7 +516,7 @@
           "c"
         ],
         "action": "Launch the AI coding agent in the selected repo",
-        "note": "suspends the TUI; agent (claude/codex/gemini) + skip-permissions set in Settings \u2192 Agent; PULL_CLAUDE_CMD overrides the command verbatim",
+        "note": "suspends the TUI; agent (claude/codex/gemini) + skip-permissions set in Settings → Agent; PULL_CLAUDE_CMD overrides the command verbatim",
         "group": "Clipboard & run"
       },
       {
@@ -536,7 +536,7 @@
           "S"
         ],
         "action": "Switch a merged/gone-upstream branch to its suggested base, pull, and delete the merged branch",
-        "note": "only when the current branch's upstream is gone (merged & deleted); switches to the top suggested base (fork-parent / merged-PR base / default), pulls, and \u2014 when the branch is fully merged \u2014 safely git branch -d's it",
+        "note": "only when the current branch's upstream is gone (merged & deleted); switches to the top suggested base (fork-parent / merged-PR base / default), pulls, and — when the branch is fully merged — safely git branch -d's it",
         "keywords": [
           "switch",
           "merged",
@@ -560,7 +560,7 @@
           "E"
         ],
         "action": "Open the file explorer for the selected repo",
-        "note": "two-pane file browser (list + syntax-highlighted preview, powered by two-face) rooted at the repo. Also the `Explore files\u2026` kebab item. Inside: \u2191\u2193/jk move \u00b7 \u2190/h up a dir \u00b7 \u23ce/\u2192 open dir or focus preview \u00b7 tab swap panes \u00b7 / fuzzy-find \u00b7 t columns dropdown \u00b7 s sort dropdown (or click a column header \u2014 \u25b2/\u25bc) \u00b7 d toggle relative/absolute dates \u00b7 [ ] resize \u00b7 \u2190/\u2192 scroll the preview horizontally when focused \u00b7 p pin \u21c4 float (drag the title bar / \u25e2 grip, or Alt+arrows) \u00b7 esc/q close. Folders show recursive sizes; size is colored by magnitude.",
+        "note": "two-pane file browser (list + syntax-highlighted preview, powered by two-face) rooted at the repo. Also the `Explore files…` kebab item. Inside: ↑↓/jk move · ←/h up a dir · ⏎/→ open dir or focus preview · tab swap panes · / fuzzy-find · t columns dropdown · s sort dropdown (or click a column header — ▲/▼) · d toggle relative/absolute dates · [ ] resize · ←/→ scroll the preview horizontally when focused · p pin ⇄ float (drag the title bar / ◢ grip, or Alt+arrows) · esc/q close. Folders show recursive sizes; size is colored by magnitude.",
         "keywords": [
           "explorer",
           "files",
@@ -586,7 +586,7 @@
           ","
         ],
         "action": "Open the settings modal",
-        "note": "Sections: Lists \u00b7 Theming \u00b7 Sync \u00b7 Interaction \u00b7 Layout \u00b7 Tooltips (master toggle + per-area: footer commands, column headers, group counts, settings rows, help links). A radio chip click sets that value (no cycle); the row label cycles. [x]/outside-click closes. Press R (or the R reset footer chip) to reset all settings to defaults \u2014 a confirmation lists each change as current \u2192 default",
+        "note": "Sections: Lists · Theming · Sync · Interaction · Layout · Tooltips (master toggle + per-area: footer commands, column headers, group counts, settings rows, help links). A radio chip click sets that value (no cycle); the row label cycles. [x]/outside-click closes. Press R (or the R reset footer chip) to reset all settings to defaults — a confirmation lists each change as current → default",
         "keywords": [
           "settings",
           "preferences",
@@ -613,7 +613,7 @@
           "K"
         ],
         "action": "Open the keybindings editor (remap shortcuts)",
-        "note": "every list / global / repo-page shortcut is remappable; overrides persist to ~/.config/polygit/keybindings.json. Also the [^K remap] button on the help Hotkeys tab. \u2191\u2193 move \u00b7 \u23ce rebind (press the new key) \u00b7 c clear \u00b7 d default \u00b7 R reset all. Esc/q/Ctrl+C and the new-build Ctrl+R/Ctrl+X stay fixed",
+        "note": "every list / global / repo-page shortcut is remappable; overrides persist to ~/.config/polygit/keybindings.json. Also the [^K remap] button on the help Hotkeys tab. ↑↓ move · ⏎ rebind (press the new key) · c clear · d default · R reset all. Esc/q/Ctrl+C and the new-build Ctrl+R/Ctrl+X stay fixed",
         "keywords": [
           "keybinding",
           "keybindings",
@@ -636,9 +636,9 @@
       },
       {
         "keys": [
-          "click built \u2026 ago"
+          "click built … ago"
         ],
-        "action": "Open Build info \u2014 binary age/size, build duration, settings preview, and pin a version",
+        "action": "Open Build info — binary age/size, build duration, settings preview, and pin a version",
         "keywords": [
           "build",
           "version",
@@ -651,7 +651,7 @@
         "keys": [
           "p"
         ],
-        "action": "Open the version picker (pin/switch to any release) \u2014 from Build info or the Changelog/What's New dialog",
+        "action": "Open the version picker (pin/switch to any release) — from Build info or the Changelog/What's New dialog",
         "note": "downloads + installs that version and reloads into it; defaults to versions that also have the picker (v2.72.0+) so you can switch again",
         "keywords": [
           "pin",
@@ -668,7 +668,7 @@
         "keys": [
           "a"
         ],
-        "action": "Version picker: show older versions (pre-picker builds, tagged \u201cno in-app switch\u201d)",
+        "action": "Version picker: show older versions (pre-picker builds, tagged “no in-app switch”)",
         "keywords": [
           "pin",
           "older",
@@ -693,7 +693,7 @@
         "keys": [
           "m"
         ],
-        "action": "Changelog / What's New / version picker: maximize \u21c4 restore the modal (or click [m maximize]/[m restore])",
+        "action": "Changelog / What's New / version picker: maximize ⇄ restore the modal (or click [m maximize]/[m restore])",
         "keywords": [
           "maximize",
           "restore",
@@ -708,7 +708,7 @@
           "?"
         ],
         "action": "Open the help modal",
-        "note": "Tab switches tabs (Hotkeys \u00b7 CLI \u00b7 Legend \u00b7 Design \u00b7 About). On the Design tab, v toggles flat \u21c4 tabbed (vertical section tabs) and [/] move between sections; the preview-confirm button opens the shared dialog.",
+        "note": "Tab switches tabs (Hotkeys · CLI · Legend · Design · About). On the Design tab, v toggles flat ⇄ tabbed (vertical section tabs) and [/] move between sections; the preview-confirm button opens the shared dialog.",
         "group": "App & modals"
       },
       {
@@ -716,7 +716,7 @@
           "/"
         ],
         "action": "Fuzzy-filter repos by name (subsequence match, ranked by relevance; matched chars underlined; selection follows the first match, Enter keeps it)",
-        "note": "the search box is a real, always-clickable row in the filter bar (the list pane's first content row) \u2014 click it any time, not just while / is held; a small \u00d7 clears non-empty text",
+        "note": "the search box is a real, always-clickable row in the filter bar (the list pane's first content row) — click it any time, not just while / is held; a small × clears non-empty text",
         "keywords": [
           "filter bar",
           "search"
@@ -727,7 +727,7 @@
         "keys": [
           "m"
         ],
-        "action": "Maximize / restore the focused pane (every pane; also the m\u25a2/m\u25a3 top-border button)",
+        "action": "Maximize / restore the focused pane (every pane; also the m▢/m▣ top-border button)",
         "keywords": [
           "maximize",
           "restore",
@@ -740,7 +740,7 @@
         "keys": [
           "b"
         ],
-        "action": "Toggle the selected repo as a favorite (\u2605)",
+        "action": "Toggle the selected repo as a favorite (★)",
         "keywords": [
           "favorite",
           "star",
@@ -753,7 +753,7 @@
         "keys": [
           "B"
         ],
-        "action": "Toggle the \u2605 Favorites section pinned to the top of the list",
+        "action": "Toggle the ★ Favorites section pinned to the top of the list",
         "keywords": [
           "favorite",
           "favorites first",
@@ -766,8 +766,8 @@
           "Ctrl",
           "P"
         ],
-        "action": "Open the fuzzy finder overlay \u2014 search every repo across all folders and jump to one",
-        "note": "type to fuzzy-filter, \u2191\u2193/PgUp/PgDn move, ^S cycles sort (relevance/name/recent/most-used), Enter jumps the list to that repo (recorded in the shared ~/.config/goto-repo/history), Esc closes",
+        "action": "Open the fuzzy finder overlay — search every repo across all folders and jump to one",
+        "note": "type to fuzzy-filter, ↑↓/PgUp/PgDn move, ^S cycles sort (relevance/name/recent/most-used), Enter jumps the list to that repo (recorded in the shared ~/.config/goto-repo/history), Esc closes",
         "keywords": [
           "fuzzy",
           "finder",
@@ -783,7 +783,7 @@
           "C"
         ],
         "action": "Open the org-coverage panel",
-        "note": "per GitHub owner \u2014 resolved from your clones' `origin` remotes, not folder names \u2014 which of its repos aren't cloned locally; `+` adds an owner you have nothing from, `space`/`a` select and `c` clones them",
+        "note": "per GitHub owner — resolved from your clones' `origin` remotes, not folder names — which of its repos aren't cloned locally; `+` adds an owner you have nothing from, `space`/`a` select and `c` clones them",
         "keywords": [
           "clone",
           "org",
@@ -798,7 +798,7 @@
           "A"
         ],
         "action": "Open the folder picker to add a folder (or a single repo) to the workspace",
-        "note": "breadcrumbs + \u2190/Backspace parent, type to fuzzy-filter, Enter opens a folder / selects a git repo, ^S selects the current folder, ^B bookmark, ^H home; the chosen folder is scanned and persisted",
+        "note": "breadcrumbs + ←/Backspace parent, type to fuzzy-filter, Enter opens a folder / selects a git repo, ^S selects the current folder, ^B bookmark, ^H home; the chosen folder is scanned and persisted",
         "keywords": [
           "add",
           "folder",
@@ -853,7 +853,7 @@
           "R"
         ],
         "action": "Reload into a newly-installed build",
-        "note": "only while the top-right `\u21ba new build installed` notice is up; restores the terminal and exec's the new binary with the same args (also the clickable `[^R reload]`); works from any view or modal",
+        "note": "only while the top-right `↺ new build installed` notice is up; restores the terminal and exec's the new binary with the same args (also the clickable `[^R reload]`); works from any view or modal",
         "group": "App & modals"
       },
       {
@@ -880,7 +880,7 @@
           "T"
         ],
         "action": "Toggle the performance overlay",
-        "note": "live frame/input timings \u2014 hover lag, frame build, terminal flush, state-lock wait, and how many mouse-motion reports were superseded before they could be drawn, each as p95/p50; ends with a one-line verdict naming which of those is responsible. Also the clickable `[x]` on the overlay; works from any view or modal. `--perf` starts collecting from launch and prints the full report on exit.",
+        "note": "live frame/input timings — hover lag, frame build, terminal flush, state-lock wait, the panel's own cost, and how many mouse-motion reports were superseded before they could be drawn, each as p95/p50 — plus a history graph and a one-line verdict naming which of them is responsible. The panel is movable: drag its title bar, `Alt`+arrows nudge it, and `[menu]` picks a corner, the graph's metric, its window and its height, or resets the position. Where it sits is remembered. Works from any view or modal; `--perf` starts collecting at launch and prints the full report on exit.",
         "keywords": [
           "performance",
           "perf",
@@ -897,10 +897,27 @@
       },
       {
         "keys": [
-          ".",
-          "\u22ee on hover"
+          "Alt",
+          "arrows"
         ],
-        "action": "Open the repo's kebab (\u22ee) menu",
+        "action": "Nudge the performance panel",
+        "note": "moves the topmost floating surface — the perf panel while it is open, the floating file explorer otherwise. Two cells horizontally, one vertically, because a cell is about twice as tall as it is wide.",
+        "keywords": [
+          "performance",
+          "perf",
+          "move",
+          "nudge",
+          "panel",
+          "position"
+        ],
+        "group": "App & modals"
+      },
+      {
+        "keys": [
+          ".",
+          "⋮ on hover"
+        ],
+        "action": "Open the repo's kebab (⋮) menu",
         "note": "state-aware actions: checkout branch (filterable local+remote picker), copy a cleanup prompt (all repo facts embedded), run the agent, lazygit, diff, refetch, open remote",
         "keywords": [
           "kebab",
@@ -916,7 +933,7 @@
   {
     "id": "page",
     "title": "Repo page",
-    "blurb": "Detail view of one repo (panel [4], restored by default \u2014 a docked bottom panel \u2014 or maximized full-screen with m): every local branch (with change stats vs the base branch), worktree, and stash, with fresh ahead/behind and a bottom info panel.",
+    "blurb": "Detail view of one repo (panel [4], restored by default — a docked bottom panel — or maximized full-screen with m): every local branch (with change stats vs the base branch), worktree, and stash, with fresh ahead/behind and a bottom info panel.",
     "bindings": [
       {
         "keys": [
@@ -965,7 +982,7 @@
           "t"
         ],
         "action": "Open the columns dropdown",
-        "note": "press t (or click the t cols \u25be title-bar chip) to open the columns dropdown, then pick with the mouse, the \u2191\u2193 arrows + enter, or each row's mnemonic letter: b/y/a/m/d/c/u/f/g/r/s \u2192 ahead-behind/dirty/added/modified/deleted/total/upstream/base/age/pr/subject (pr = the current branch's open #N, clickable, via gh). Toggling keeps the dropdown open; empty columns render dim + inert; persisted. Stash rows render the same change-stat columns (added/modified/deleted/total), loaded lazily from git stash show",
+        "note": "press t (or click the t cols ▾ title-bar chip) to open the columns dropdown, then pick with the mouse, the ↑↓ arrows + enter, or each row's mnemonic letter: b/y/a/m/d/c/u/f/g/r/s → ahead-behind/dirty/added/modified/deleted/total/upstream/base/age/pr/subject (pr = the current branch's open #N, clickable, via gh). Toggling keeps the dropdown open; empty columns render dim + inert; persisted. Stash rows render the same change-stat columns (added/modified/deleted/total), loaded lazily from git stash show",
         "keywords": [
           "columns",
           "added",
@@ -981,7 +998,7 @@
           "s"
         ],
         "action": "Open the sort dropdown",
-        "note": "press s (or click the s sort \u27eacol \u25b2\u27eb \u25be title-bar chip) to open the sort dropdown, then pick with the mouse, the \u2191\u2193 arrows + enter, or each row's mnemonic letter: n/b/y/a/m/d/c/u/f/g/s \u2192 name/ahead-behind/dirty/added/modified/deleted/total/upstream/base/age/subject. Picking closes the dropdown; re-picking the active sort (or clicking a column header) flips \u25b2\u25bc",
+        "note": "press s (or click the s sort ⟪col ▲⟫ ▾ title-bar chip) to open the sort dropdown, then pick with the mouse, the ↑↓ arrows + enter, or each row's mnemonic letter: n/b/y/a/m/d/c/u/f/g/s → name/ahead-behind/dirty/added/modified/deleted/total/upstream/base/age/subject. Picking closes the dropdown; re-picking the active sort (or clicking a column header) flips ▲▼",
         "keywords": [
           "sort",
           "order",
@@ -1053,7 +1070,7 @@
         "keys": [
           "y"
         ],
-        "action": "Copy menu \u2014 absolute path / branch name / both",
+        "action": "Copy menu — absolute path / branch name / both",
         "note": "copying confirms with a toast previewing the copied text",
         "keywords": [
           "copy",
@@ -1098,7 +1115,7 @@
           "4"
         ],
         "action": "Focus the list / info / result / repo-page panel directly (or swap which pane is maximized)",
-        "note": "same as the repo list \u2014 switches panels without leaving the page; when a pane is maximized, swaps which pane fills the screen",
+        "note": "same as the repo list — switches panels without leaving the page; when a pane is maximized, swaps which pane fills the screen",
         "keywords": [
           "focus",
           "panel",
@@ -1112,7 +1129,7 @@
           "m"
         ],
         "action": "Maximize / restore the repo page",
-        "note": "restored = docked panel [4]; maximized = full-screen. Also the \u25a2/\u25a3 title-bar button (left of [esc back]) and Settings \u2192 Layout \u2192 Repo page; the state is sticky (persisted)",
+        "note": "restored = docked panel [4]; maximized = full-screen. Also the ▢/▣ title-bar button (left of [esc back]) and Settings → Layout → Repo page; the state is sticky (persisted)",
         "keywords": [
           "maximize",
           "restore",
@@ -1135,7 +1152,7 @@
   {
     "id": "diff",
     "title": "Diff modal",
-    "blurb": "A 90%-of-screen overlay: a file-list panel over the selected file\u2019s diff, in two bordered sub-panels.",
+    "blurb": "A 90%-of-screen overlay: a file-list panel over the selected file’s diff, in two bordered sub-panels.",
     "bindings": [
       {
         "keys": [
@@ -1150,8 +1167,8 @@
       },
       {
         "keys": [
-          "\u2191",
-          "\u2193",
+          "↑",
+          "↓",
           "j",
           "k"
         ],
@@ -1192,7 +1209,7 @@
           "PgDn"
         ],
         "action": "Page the file list",
-        "note": "Alt too \u2014 moves the selection a viewport at a time",
+        "note": "Alt too — moves the selection a viewport at a time",
         "group": "Hotkeys"
       },
       {
@@ -1201,7 +1218,7 @@
           "wheel"
         ],
         "action": "Scroll the file list",
-        "note": "Alt+wheel too \u2014 selection unchanged",
+        "note": "Alt+wheel too — selection unchanged",
         "group": "Hotkeys"
       },
       {
@@ -1209,7 +1226,7 @@
           "f"
         ],
         "action": "Filter the file list by status",
-        "note": "shown with >10 files across \u22652 statuses; cycles all \u2192 each status \u2192 all; clickable chips with count badges, list grouped by status",
+        "note": "shown with >10 files across ≥2 statuses; cycles all → each status → all; clickable chips with count badges, list grouped by status",
         "keywords": [
           "filter",
           "status",
@@ -1223,7 +1240,7 @@
         "keys": [
           "t"
         ],
-        "action": "Toggle uncommitted \u21c4 vs base branch",
+        "action": "Toggle uncommitted ⇄ vs base branch",
         "note": "dirty rows only; re-lists files",
         "group": "Hotkeys"
       },
@@ -1248,14 +1265,14 @@
   {
     "id": "pr",
     "title": "PR viewer modal",
-    "blurb": "A centered overlay (diff-modal dimensions) showing a pull request as a GitHub-style tabbed view \u2014 a pinned meta header (state, branches, author, +/- stats) over a tab bar: Description \u00b7 Conversation \u00b7 Commits \u00b7 Checks \u00b7 Files. Loads via gh pr view (one call fills every tab + the badge counts; the Files diff loads lazily via gh pr diff). Opens by clicking a PR link (info panel, repo-page HEAD #N, or a list PRs cell) or pressing p on a repo.",
+    "blurb": "A centered overlay (diff-modal dimensions) showing a pull request as a GitHub-style tabbed view — a pinned meta header (state, branches, author, +/- stats) over a tab bar: Description · Conversation · Commits · Checks · Files. Loads via gh pr view (one call fills every tab + the badge counts; the Files diff loads lazily via gh pr diff). Opens by clicking a PR link (info panel, repo-page HEAD #N, or a list PRs cell) or pressing p on a repo.",
     "bindings": [
       {
         "keys": [
           "Tab",
           "Shift+Tab"
         ],
-        "action": "Cycle the tab (Description \u00b7 Conversation \u00b7 Commits \u00b7 Checks \u00b7 Files)",
+        "action": "Cycle the tab (Description · Conversation · Commits · Checks · Files)",
         "note": "or 1..5 to jump to a tab directly; click a tab chip too",
         "keywords": [
           "tab",
@@ -1282,7 +1299,7 @@
         "keys": [
           "d"
         ],
-        "action": "On the Files tab: cycle the diff render style (raw \u2192 unified \u2192 split)",
+        "action": "On the Files tab: cycle the diff render style (raw → unified → split)",
         "note": "or click the raw/unified/split chips; mirrors the diff modal's view toggle",
         "keywords": [
           "diff",
@@ -1297,8 +1314,8 @@
         "keys": [
           "j",
           "k",
-          "\u2191",
-          "\u2193"
+          "↑",
+          "↓"
         ],
         "action": "Scroll the PR",
         "keywords": [
@@ -1331,7 +1348,7 @@
           "click"
         ],
         "action": "Switch tab, toggle a Conversation comment, or open a check's run",
-        "note": "click a tab chip, a \u25be/\u25b8 comment header, a Files raw/unified/split chip, or a Checks row's \u2197 to open its run in the browser",
+        "note": "click a tab chip, a ▾/▸ comment header, a Files raw/unified/split chip, or a Checks row's ↗ to open its run in the browser",
         "group": "Hotkeys"
       },
       {
@@ -1339,7 +1356,7 @@
           "z"
         ],
         "action": "Collapse all / expand all Conversation comments",
-        "note": "Conversation tab; also the [\u2212 collapse all] / [+ expand all] control, shown with >1 comment",
+        "note": "Conversation tab; also the [− collapse all] / [+ expand all] control, shown with >1 comment",
         "group": "Hotkeys"
       },
       {
@@ -1392,8 +1409,8 @@
     "bindings": [
       {
         "keys": [
-          "\u2191",
-          "\u2193",
+          "↑",
+          "↓",
           "j",
           "k"
         ],
@@ -1402,19 +1419,19 @@
       },
       {
         "keys": [
-          "\u2190",
+          "←",
           "h"
         ],
-        "action": "Collapse the dir / jump to parent (tree) or go up a directory (flat, also Backspace) \u2014 preview: scroll left",
+        "action": "Collapse the dir / jump to parent (tree) or go up a directory (flat, also Backspace) — preview: scroll left",
         "group": "Navigate"
       },
       {
         "keys": [
-          "\u2192",
+          "→",
           "l",
           "Enter"
         ],
-        "action": "Expand / step into a dir (tree) or open it (flat); a file focuses the preview \u2014 preview: scroll right",
+        "action": "Expand / step into a dir (tree) or open it (flat); a file focuses the preview — preview: scroll right",
         "group": "Navigate"
       },
       {
@@ -1438,7 +1455,7 @@
         "keys": [
           "v"
         ],
-        "action": "Toggle the recursive tree view \u21c4 the flat folder view",
+        "action": "Toggle the recursive tree view ⇄ the flat folder view",
         "note": "persisted",
         "group": "View"
       },
@@ -1455,7 +1472,7 @@
         "keys": [
           "i"
         ],
-        "action": "Show / hide .gitignored entries (node_modules, dist, \u2026)",
+        "action": "Show / hide .gitignored entries (node_modules, dist, …)",
         "note": "hidden by default (so are .git and ignored folders); persisted",
         "group": "View"
       },
@@ -1478,7 +1495,7 @@
         "keys": [
           "click"
         ],
-        "action": "Click a column header to sort by it (re-click flips \u25b2/\u25bc)",
+        "action": "Click a column header to sort by it (re-click flips ▲/▼)",
         "note": "directories always sort before files",
         "group": "Columns & sort"
       },
@@ -1499,8 +1516,8 @@
       },
       {
         "keys": [
-          "\u2190",
-          "\u2192"
+          "←",
+          "→"
         ],
         "action": "Scroll the preview horizontally (when the preview is focused)",
         "group": "Preview"
@@ -1518,7 +1535,7 @@
           "/"
         ],
         "action": "Fuzzy-find files in the current directory (recursive + auto-expanding in tree view)",
-        "note": "type to filter (subsequence); the focused match is live-previewed; \u23ce jumps to / opens it; Esc clears; tree search ignores gitignored",
+        "note": "type to filter (subsequence); the focused match is live-previewed; ⏎ jumps to / opens it; Esc clears; tree search ignores gitignored",
         "group": "Find"
       },
       {
@@ -1533,8 +1550,8 @@
         "keys": [
           "p"
         ],
-        "action": "Pin (dock as a panel) \u21c4 float (a draggable/resizable window)",
-        "note": "also the `[p float]`/`[p pin]` title-bar button. While floating: drag the title bar to move, drag the bottom-right \u25e2 grip to resize, or Alt+arrows to nudge / Alt+Shift+arrows to resize by keyboard. Persisted",
+        "action": "Pin (dock as a panel) ⇄ float (a draggable/resizable window)",
+        "note": "also the `[p float]`/`[p pin]` title-bar button. While floating: drag the title bar to move, drag the bottom-right ◢ grip to resize, or Alt+arrows to nudge / Alt+Shift+arrows to resize by keyboard. Persisted",
         "keywords": [
           "pin",
           "float",
@@ -1566,8 +1583,8 @@
         "keys": [
           "j",
           "k",
-          "\u2191",
-          "\u2193"
+          "↑",
+          "↓"
         ],
         "action": "Move the row cursor",
         "group": "Navigate"
@@ -1585,7 +1602,7 @@
           "wheel"
         ],
         "action": "Scroll the list",
-        "note": "web-app style \u2014 the selection stays put and may scroll out of view",
+        "note": "web-app style — the selection stays put and may scroll out of view",
         "keywords": [
           "mouse"
         ],
@@ -1618,7 +1635,7 @@
           "s"
         ],
         "action": "Add a selector",
-        "note": "opens a menu of axes ordered by how much each one actually discriminates among the repos in view, with its coverage \u2014 topics are a strong axis in a well-tagged org and near-useless in one whose topics are machine-generated markers",
+        "note": "opens a menu of axes ordered by how much each one actually discriminates among the repos in view, with its coverage — topics are a strong axis in a well-tagged org and near-useless in one whose topics are machine-generated markers",
         "group": "Select"
       },
       {
@@ -1634,7 +1651,7 @@
           "/"
         ],
         "action": "Edit the selector expression",
-        "note": "the same grammar `polygit select` takes \u2014 globs, `topic:`, `lang:`, `prefix:`, `suffix:`, `is:` state and boolean composition; a bad expression is reported inline rather than silently matching nothing",
+        "note": "the same grammar `polygit select` takes — globs, `topic:`, `lang:`, `prefix:`, `suffix:`, `is:` state and boolean composition; a bad expression is reported inline rather than silently matching nothing",
         "group": "Filter"
       },
       {
@@ -1656,7 +1673,7 @@
           "+"
         ],
         "action": "Add an owner",
-        "note": "accepts `owner`, `owner/repo` or a GitHub URL \u2014 an owner added here is enumerated even with nothing cloned from it, which is what makes a fresh org a target",
+        "note": "accepts `owner`, `owner/repo` or a GitHub URL — an owner added here is enumerated even with nothing cloned from it, which is what makes a fresh org a target",
         "group": "Owners"
       },
       {

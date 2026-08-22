@@ -49,7 +49,11 @@ impl AppState {
             },
             coverage: self.coverage_prefs.clone(),
             explorer: self.explorer_prefs,
-            interaction: p::InteractionPrefs {
+            perf: p::PerfPrefs {
+            placement: self.perf.placement,
+            graph: self.perf.graph,
+        },
+        interaction: p::InteractionPrefs {
                 hover_effects: self.hover_effects,
                 changed_row_effect: self.changed_row_effect,
             },

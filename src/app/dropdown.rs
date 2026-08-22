@@ -166,6 +166,7 @@ impl AppState {
                     enabled: true,
                 })
                 .collect(),
+            DropdownKind::PerfPanel => self.perf_menu_rows(),
             DropdownKind::ParallelValue => self
                 .max_pull_value_choices()
                 .into_iter()
@@ -267,6 +268,7 @@ impl AppState {
             DropdownKind::StashColumns => STASH_COLS.len(),
             DropdownKind::ExplorerColumns => crate::explorer::ExplorerColumn::ALL.len(),
             DropdownKind::ExplorerSort => crate::explorer::SortKey::ALL.len(),
+            DropdownKind::PerfPanel => self.perf_menu_rows().len(),
             DropdownKind::ParallelValue => self.max_pull_value_choices().len(),
             DropdownKind::CoverageAxis => self.coverage_axis_candidates().len(),
             DropdownKind::FilterAdd => self.filter_add_candidates().len(),
@@ -400,6 +402,7 @@ impl AppState {
             return true;
         };
         match dropdown.kind {
+            DropdownKind::PerfPanel => self.perf_menu_activate(index),
             DropdownKind::ListColumns => {
                 if let Some((column, ..)) = LIST_COLS.get(index) {
                     self.toggle_column(*column);

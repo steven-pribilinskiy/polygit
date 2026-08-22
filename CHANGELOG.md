@@ -3,6 +3,40 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.22.0 — 2026-08-22
+The perf panel moves, remembers where you put it, and plots its own history
+It showed the current percentiles in a fixed corner, so a spike that had already passed was
+invisible — which is most of them — and it sat wherever it sat.
+- **A history graph** under the numbers, over a window of 30s / 1m / 5m / 15m. Idle seconds are
+  gaps, not zeros: a ring that only advanced when a sample arrived would compress a minute spent
+  suspended in `claude` or `lazygit` and make the seconds either side look adjacent, and a zero
+  would make an idle app look like a catastrophic stall. When the window is longer than the graph
+  is wide, a column keeps the WORST of the seconds it covers — a mean would erase exactly the
+  400 ms stall the panel exists to show.
+- **It defaults to frame time, not frame rate.** The loop draws unconditionally on a 50 ms poll, so
+  an idle frame rate is exactly 20 forever — a constant, not a signal — and it rises whenever the
+  mouse moves, which makes an FPS graph a graph of whether anyone is touching the mouse. Frame
+  time, hover lag, flush, fps and backlog are all selectable.
+- **The caption is not decoration.** A sparkline auto-normalises, so a flat line at 20 fps and one
+  at 120 fps are the same picture; the caption carries the scale that tells them apart. A second
+  the panel itself disturbed is drawn muted — dragging it emits drag reports, which are not
+  coalesced, so it inflates the very numbers it is plotting while you handle it.
+- **The panel is movable and remembers where you put it.** Drag the title bar, `Alt`+arrows nudge
+  it (the topmost floating surface wins, so the explorer keeps them when the panel is closed), and
+  `[menu]` picks a corner, the graph's metric, window and height, sets the default corner, or
+  resets the position.
+- **Position is a corner plus an inset, never a rect.** Storing a rect and clamping it into the
+  viewport each frame loses the position permanently the first time the terminal shrinks: the clamp
+  writes the constrained value back, and growing the terminal again leaves the panel where the
+  small one forced it. The geometry now lives in `tuilith::float`, whose `resolve` is a pure
+  function that clamps for the frame and writes nothing back — with a test that implements the old
+  model inline and requires it to fail the same scenario.
+- **On a short terminal it degrades instead of vanishing.** The old all-or-nothing size check meant
+  adding graph rows would have made the panel disappear entirely for anyone whose terminal had been
+  just big enough. It now drops the graph first, then the rates, then the detail rows, and never
+  the verdict. The verdict's height is reserved at the tallest of the six strings so the box does
+  not resize under the reader as the numbers move; when it is short the spare rows go to the graph.
+
 ## v3.21.0 — 2026-08-22
 Build the selector in the panel, and see where it lands before you commit to it
 

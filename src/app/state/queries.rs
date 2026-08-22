@@ -141,3 +141,122 @@ impl AppState {
             .any(|repo| !repo.lock().unwrap().status.is_running())
     }
 }
+
+impl AppState {
+    /// The perf panel's menu rows: corner, graph metric, graph window, graph height, then reset.
+    ///
+    /// One flat radio list rather than a nested menu, because the whole panel has five settings and
+    /// a submenu for each would cost more keystrokes than it saves. Mnemonics are unique across the
+    /// whole list — the dropdown activates by letter and a duplicate would make one row unreachable.
+    pub fn perf_menu_rows(&self) -> Vec<crate::app::DropdownItem> {
+        use crate::app::DropdownItem;
+        use crate::perf::{Corner, GraphPrefs};
+
+        let placement = self.perf.placement;
+        let graph = self.perf.graph;
+        let mut rows: Vec<DropdownItem> = Vec::new();
+
+        for (corner, mnemonic) in Corner::ALL.into_iter().zip(['q', 'w', 'a', 's']) {
+            rows.push(DropdownItem {
+                label: format!("corner · {}", corner.label()),
+                on: placement.corner == corner,
+                mnemonic,
+                enabled: true,
+            });
+        }
+        for (metric, mnemonic) in crate::perf::Metric::ALL.into_iter().zip(['f', 'h', 'l', 'r', 'b'])
+        {
+            rows.push(DropdownItem {
+                label: format!("graph · {}", metric.label()),
+                on: graph.metric == metric,
+                mnemonic,
+                enabled: true,
+            });
+        }
+        for ((secs, label), mnemonic) in GraphPrefs::WINDOWS.into_iter().zip(['1', '2', '3', '4']) {
+            rows.push(DropdownItem {
+                label: format!("window · {label}"),
+                on: graph.window_secs == secs,
+                mnemonic,
+                enabled: true,
+            });
+        }
+        for (height, mnemonic) in GraphPrefs::HEIGHTS.into_iter().zip(['7', '8', '9']) {
+            rows.push(DropdownItem {
+                label: format!("height · {height} rows"),
+                on: graph.rows == height,
+                mnemonic,
+                enabled: true,
+            });
+        }
+        rows.push(DropdownItem {
+            label: "set this corner as default".to_string(),
+            on: placement.default_corner == placement.corner,
+            mnemonic: 'd',
+            enabled: true,
+        });
+        rows.push(DropdownItem {
+            label: "reset position".to_string(),
+            on: false,
+            mnemonic: '0',
+            enabled: true,
+        });
+        rows
+    }
+
+    /// Apply the menu row at `index`. Returns whether the menu should close.
+    pub fn perf_menu_activate(&mut self, index: usize) -> bool {
+        use crate::perf::{Corner, GraphPrefs, Metric};
+
+        let corners = Corner::ALL.len();
+        let metrics = Metric::ALL.len();
+        let windows = GraphPrefs::WINDOWS.len();
+        let heights = GraphPrefs::HEIGHTS.len();
+
+        if index < corners {
+            self.perf.placement.move_to_corner(Corner::ALL[index]);
+        } else if index < corners + metrics {
+            self.perf.graph.metric = Metric::ALL[index - corners];
+        } else if index < corners + metrics + windows {
+            self.perf.graph.window_secs = GraphPrefs::WINDOWS[index - corners - metrics].0;
+        } else if index < corners + metrics + windows + heights {
+            self.perf.graph.rows = GraphPrefs::HEIGHTS[index - corners - metrics - windows];
+        } else if index == corners + metrics + windows + heights {
+            self.perf.placement.default_corner = self.perf.placement.corner;
+        } else {
+            self.perf.placement.reset();
+        }
+        self.save_state();
+        // Stay open: picking a corner and then a window is the common case, and a menu that closes
+        // after every choice makes the second one cost a reopen.
+        false
+    }
+
+    /// Open the panel's menu BESIDE the panel, never under it.
+    ///
+    /// The dropdown draws in the normal widget pass and the panel draws last — deliberately, so the
+    /// panel's own cost stays out of the channels it reports — which means a menu overlapping the
+    /// panel is painted over by it. Anchoring under the chip did exactly that and cut every label
+    /// in half. The dropdown right-aligns to `anchor_right`, so anchoring to the panel's left edge
+    /// places the whole menu to its left; when the panel is hard against the left of the screen
+    /// there is no room there, so it goes to the right instead.
+    pub fn open_perf_menu(&mut self) {
+        let Some((row, _start, _end)) = self.perf_menu_click else {
+            return;
+        };
+        let panel = self.perf_panel_rect;
+        // Widest row is "corner · bottom right" plus the checkbox, mnemonic, padding and borders.
+        const MENU_WIDTH: u16 = 32;
+        let anchor_right = if panel.x >= MENU_WIDTH {
+            panel.x
+        } else {
+            panel.x + panel.width + MENU_WIDTH
+        };
+        self.dropdown = Some(crate::app::Dropdown {
+            kind: crate::app::DropdownKind::PerfPanel,
+            anchor_right,
+            anchor_row: row,
+            selected: None,
+        });
+    }
+}

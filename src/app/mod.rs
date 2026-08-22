@@ -752,6 +752,14 @@ pub struct AppState {
     /// frame it is drawn. The overlay floats above every pane, so this is hit-tested before the
     /// pane/modal dispatch — mirroring how its `Ctrl+T` key is handled before the per-view gates.
     pub perf_close_click: Option<(u16, u16, u16)>,
+    /// The panel's `[⌘]` menu-chip region, captured each frame it is drawn.
+    pub perf_menu_click: Option<(u16, u16, u16)>,
+    /// The panel's title-bar strip, left of the buttons — dragging it moves the panel.
+    pub perf_drag_area: Rect,
+    /// The whole terminal, captured each frame. Distinct from `dock_full_area`, which excludes the
+    /// status bar and is only assigned AFTER the repo-page early return — so it is `Rect::default()`
+    /// on a repo-page-first frame. A surface that floats over everything needs the real thing.
+    pub frame_area: Rect,
     /// Frame/input timings, collected only while `perf.enabled`. Separates a slow frame from a
     /// slow terminal from an input backlog — the three causes that all look like "hover lags".
     pub perf: crate::perf::Perf,
@@ -1248,9 +1256,12 @@ impl AppState {
             splitter_mode: persisted.layout.splitter_mode,
             changed_row_effect: persisted.interaction.changed_row_effect,
             tooltips: persisted.tooltips,
-            perf: crate::perf::Perf::default(),
+            perf: crate::perf::Perf::with_prefs(persisted.perf.placement, persisted.perf.graph),
             perf_panel_rect: Rect::default(),
             perf_close_click: None,
+            perf_menu_click: None,
+            perf_drag_area: Rect::default(),
+            frame_area: Rect::default(),
             hover: None,
             hover_tooltip: None,
             hover_tooltips: Vec::new(),

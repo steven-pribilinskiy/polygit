@@ -1221,6 +1221,9 @@ pub enum DropdownKind {
     ParallelValue,
     /// The filter bar's "+ add filter" menu — rows are the `FilterKind`s not currently active.
     FilterAdd,
+    /// The perf panel's own menu: corner, graph metric, graph window, graph height, and reset.
+    /// Every control the panel has, so each one has a keyboard route as well as a click.
+    PerfPanel,
     /// The coverage panel's axis menu — rows are selector axes, ordered by how much each one
     /// actually discriminates among the repos in view.
     CoverageAxis,
