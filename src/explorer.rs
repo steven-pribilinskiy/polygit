@@ -109,6 +109,14 @@ pub struct ExplorerPrefs {
     pub tree_mode: bool,
     pub show_gitignored: bool,
     pub mode: SurfaceMode,
+    /// Where the floating window sat, as a corner and an inset. Previously the geometry was
+    /// session-only and every open reseeded it to 70%-centered, so moving it never stuck.
+    pub float_corner: crate::perf::Corner,
+    pub float_dx: u16,
+    pub float_dy: u16,
+    /// Its size. Zero means "not chosen yet" — seed the default on first float.
+    pub float_width: u16,
+    pub float_height: u16,
 }
 
 impl Default for ExplorerPrefs {
@@ -121,6 +129,11 @@ impl Default for ExplorerPrefs {
             tree_mode: false,
             show_gitignored: false,
             mode: SurfaceMode::Panel,
+            float_corner: crate::perf::Corner::TopLeft,
+            float_dx: 0,
+            float_dy: 0,
+            float_width: 0,
+            float_height: 0,
         }
     }
 }
@@ -196,7 +209,8 @@ pub struct Explorer {
     pub mode: SurfaceMode,
     /// The floating window's geometry. Session-only (like `split`) — seeded to a default size the
     /// first time `mode` becomes `Floating`, then clamped to the terminal bounds every render.
-    pub floating_rect: Rect,
+    /// The floating window: a corner, an inset and a size. Persisted via `ExplorerPrefs`.
+    pub float: tuilith::float::Window,
 
     // ── geometry captured each render for hit-testing ──
     pub area: Rect,
@@ -264,7 +278,11 @@ impl Explorer {
             finder: None,
             dir_sizes: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             mode: prefs.mode,
-            floating_rect: Rect::default(),
+            float: tuilith::float::Window::new(
+                tuilith::float::Placement::new(prefs.float_corner.into(), prefs.float_dx, prefs.float_dy),
+                (prefs.float_width, prefs.float_height),
+                (Self::MIN_FLOAT_WIDTH, Self::MIN_FLOAT_HEIGHT),
+            ),
             area: Rect::default(),
             list_area: Rect::default(),
             preview_area: Rect::default(),
@@ -774,9 +792,8 @@ impl Explorer {
     pub const MIN_FLOAT_WIDTH: u16 = 40;
     pub const MIN_FLOAT_HEIGHT: u16 = 12;
 
-    /// Toggle Panel ⇄ Floating (the `p` key / title-bar pin button). The next render seeds a
-    /// default floating geometry via `clamp_floating` if none is set yet; the caller is
-    /// responsible for persisting the new `mode` into `ExplorerPrefs`.
+    /// Toggle Panel ⇄ Floating (the `p` key / title-bar pin button). The caller persists the new
+    /// `mode` into `ExplorerPrefs`.
     pub fn toggle_pin(&mut self) {
         self.mode = match self.mode {
             SurfaceMode::Panel => SurfaceMode::Floating,
@@ -784,65 +801,66 @@ impl Explorer {
         };
     }
 
-    /// Seed a sensible default floating geometry (70% of the terminal, centered) if none is set yet.
-    fn ensure_floating_rect(&mut self, bounds: Rect) {
-        if self.floating_rect.width == 0 || self.floating_rect.height == 0 {
-            let width = (bounds.width * 7 / 10).max(Self::MIN_FLOAT_WIDTH).min(bounds.width);
-            let height = (bounds.height * 7 / 10).max(Self::MIN_FLOAT_HEIGHT).min(bounds.height);
-            self.floating_rect = Rect {
-                x: bounds.x + (bounds.width.saturating_sub(width)) / 2,
-                y: bounds.y + (bounds.height.saturating_sub(height)) / 2,
-                width,
-                height,
-            };
+    /// Seed a default size (70% of the terminal) the first time this floats.
+    ///
+    /// Only the SIZE needs seeding. Position is a corner and an inset, which is meaningful before
+    /// anything has been drawn, so there is no "unset position" state to detect.
+    fn ensure_float_size(&mut self, bounds: Rect) {
+        let (width, height) = self.float.size();
+        if width == 0 || height == 0 {
+            self.float = tuilith::float::Window::new(
+                self.float.placement(),
+                (
+                    (bounds.width * 7 / 10).max(Self::MIN_FLOAT_WIDTH),
+                    (bounds.height * 7 / 10).max(Self::MIN_FLOAT_HEIGHT),
+                ),
+                (Self::MIN_FLOAT_WIDTH, Self::MIN_FLOAT_HEIGHT),
+            );
         }
     }
 
-    /// Clamp the floating window back into `bounds` — called every render so a terminal resize (or
-    /// a drag that overshot) never leaves the window off-screen or bigger than the terminal.
-    pub fn clamp_floating(&mut self, bounds: Rect) {
-        self.ensure_floating_rect(bounds);
-        let rect = &mut self.floating_rect;
-        rect.width = rect.width.min(bounds.width).max(Self::MIN_FLOAT_WIDTH.min(bounds.width));
-        rect.height = rect.height.min(bounds.height).max(Self::MIN_FLOAT_HEIGHT.min(bounds.height));
-        let max_x = bounds.x + bounds.width.saturating_sub(rect.width);
-        let max_y = bounds.y + bounds.height.saturating_sub(rect.height);
-        rect.x = rect.x.clamp(bounds.x, max_x);
-        rect.y = rect.y.clamp(bounds.y, max_y);
+    /// Where the floating window sits this frame.
+    ///
+    /// Resolved, never stored. The previous implementation kept a rect and clamped it back into
+    /// bounds on every render, which destroyed the position the first time the terminal shrank: the
+    /// clamp wrote the constrained value back and growing the terminal again left the window where
+    /// the small one had forced it. That was survivable only because the geometry was session-only
+    /// and reseeded on every open; now that it persists, it would have been a permanent loss.
+    pub fn float_rect(&mut self, bounds: Rect) -> Rect {
+        self.ensure_float_size(bounds);
+        self.float.rect(bounds)
     }
 
-    /// Move the floating window so its top-left lands at `(x, y)`, clamped into `bounds`.
+    /// Move the floating window so its top-left lands at `(x, y)`.
     pub fn move_floating_to(&mut self, x: i32, y: i32, bounds: Rect) {
-        let max_x = (bounds.x as i32 + bounds.width as i32 - self.floating_rect.width as i32).max(bounds.x as i32);
-        let max_y = (bounds.y as i32 + bounds.height as i32 - self.floating_rect.height as i32).max(bounds.y as i32);
-        self.floating_rect.x = x.clamp(bounds.x as i32, max_x) as u16;
-        self.floating_rect.y = y.clamp(bounds.y as i32, max_y) as u16;
+        self.ensure_float_size(bounds);
+        self.float.move_to(x, y, bounds);
     }
 
-    /// Nudge the floating window by `(dx, dy)` cells (keyboard move: `Alt`+arrows).
+    /// Nudge it by `(dx, dy)` cells (keyboard move: `Alt`+arrows).
     pub fn nudge_floating(&mut self, dx: i32, dy: i32, bounds: Rect) {
-        self.move_floating_to(self.floating_rect.x as i32 + dx, self.floating_rect.y as i32 + dy, bounds);
+        self.ensure_float_size(bounds);
+        self.float.nudge(dx, dy, bounds);
     }
 
-    /// Resize the floating window so its bottom-right corner tracks `(col, row)`, clamped into
-    /// `bounds` and never smaller than the minimum size.
+    /// Resize so the bottom-right corner tracks `(col, row)`.
     pub fn resize_floating_to(&mut self, col: u16, row: u16, bounds: Rect) {
-        let width = col.saturating_sub(self.floating_rect.x).saturating_add(1).max(Self::MIN_FLOAT_WIDTH);
-        let height = row.saturating_sub(self.floating_rect.y).saturating_add(1).max(Self::MIN_FLOAT_HEIGHT);
-        let max_width = bounds.x + bounds.width - self.floating_rect.x;
-        let max_height = bounds.y + bounds.height - self.floating_rect.y;
-        self.floating_rect.width = width.min(max_width);
-        self.floating_rect.height = height.min(max_height);
+        self.ensure_float_size(bounds);
+        self.float.resize_to(col, row, bounds);
     }
 
-    /// Resize the floating window by `(dw, dh)` cells (keyboard resize: `Alt+Shift`+arrows).
+    /// Resize by `(dw, dh)` cells (keyboard resize: `Alt+Shift`+arrows).
     pub fn resize_floating_step(&mut self, dw: i32, dh: i32, bounds: Rect) {
-        let new_width = (self.floating_rect.width as i32 + dw).max(Self::MIN_FLOAT_WIDTH as i32) as u16;
-        let new_height = (self.floating_rect.height as i32 + dh).max(Self::MIN_FLOAT_HEIGHT as i32) as u16;
-        let max_width = bounds.x + bounds.width - self.floating_rect.x;
-        let max_height = bounds.y + bounds.height - self.floating_rect.y;
-        self.floating_rect.width = new_width.min(max_width);
-        self.floating_rect.height = new_height.min(max_height);
+        self.ensure_float_size(bounds);
+        self.float.resize_by(dw, dh, bounds);
+    }
+
+    /// The geometry to persist.
+    pub fn float_prefs(&self) -> (crate::perf::Corner, u16, u16, u16, u16) {
+        let placement = self.float.placement();
+        let (dx, dy) = placement.offset();
+        let (width, height) = self.float.size();
+        (placement.anchor().into(), dx, dy, width, height)
     }
 
     pub fn scroll_preview(&mut self, delta: isize) {
@@ -1278,5 +1296,82 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names, vec!["alpha.txt", "sub", "zeta.txt"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod float_tests {
+    use super::*;
+
+    fn prefs() -> ExplorerPrefs {
+        ExplorerPrefs::default()
+    }
+
+    /// The reason for the port. The old implementation stored a rect and clamped it back into
+    /// bounds on every render, which destroyed the position the first time the terminal shrank —
+    /// survivable only while the geometry was session-only. Now that it persists, that would have
+    /// been a permanent loss, so the position must come back after a temporary squeeze.
+    #[test]
+    fn a_shrunk_terminal_does_not_lose_where_the_window_was() {
+        let big = Rect { x: 0, y: 0, width: 160, height: 48 };
+        let small = Rect { x: 0, y: 0, width: 50, height: 14 };
+
+        let mut explorer = Explorer::open(std::path::PathBuf::from("/tmp"), prefs());
+        explorer.mode = SurfaceMode::Floating;
+        explorer.move_floating_to(90, 20, big);
+        let before = explorer.float_rect(big);
+
+        let _squeezed = explorer.float_rect(small);
+        assert_eq!(explorer.float_rect(big), before, "the position survives the squeeze");
+    }
+
+    /// Geometry now round-trips through the prefs, so re-opening lands where it was left instead of
+    /// reseeding to 70%-centered.
+    #[test]
+    fn re_opening_restores_the_geometry_rather_than_reseeding_it() {
+        let bounds = Rect { x: 0, y: 0, width: 160, height: 48 };
+
+        let mut explorer = Explorer::open(std::path::PathBuf::from("/tmp"), prefs());
+        explorer.mode = SurfaceMode::Floating;
+        explorer.move_floating_to(70, 15, bounds);
+        explorer.resize_floating_to(140, 40, bounds);
+        let placed = explorer.float_rect(bounds);
+
+        let (corner, dx, dy, width, height) = explorer.float_prefs();
+        let stored = ExplorerPrefs {
+            float_corner: corner,
+            float_dx: dx,
+            float_dy: dy,
+            float_width: width,
+            float_height: height,
+            ..prefs()
+        };
+
+        let mut reopened = Explorer::open(std::path::PathBuf::from("/tmp"), stored);
+        reopened.mode = SurfaceMode::Floating;
+        assert_eq!(reopened.float_rect(bounds), placed, "re-opening lands where it was left");
+    }
+
+    /// Resizing used to subtract the window's own origin from the viewport's far edge on `u16`,
+    /// which underflows for an origin outside the viewport — safe only while a clamp was guaranteed
+    /// to have run first. Drive it at every extreme and require no panic.
+    #[test]
+    fn resizing_never_underflows_however_cramped_the_terminal() {
+        for bounds in [
+            Rect { x: 0, y: 0, width: 160, height: 48 },
+            Rect { x: 0, y: 0, width: 10, height: 4 },
+            Rect { x: 0, y: 0, width: 1, height: 1 },
+        ] {
+            let mut explorer = Explorer::open(std::path::PathBuf::from("/tmp"), prefs());
+            explorer.mode = SurfaceMode::Floating;
+            explorer.move_floating_to(100_000, 100_000, bounds);
+            explorer.resize_floating_to(0, 0, bounds);
+            explorer.resize_floating_step(-5000, -5000, bounds);
+            explorer.resize_floating_step(5000, 5000, bounds);
+            explorer.nudge_floating(-9999, -9999, bounds);
+            let rect = explorer.float_rect(bounds);
+            assert!(rect.x + rect.width <= bounds.width, "{bounds:?} -> {rect:?}");
+            assert!(rect.y + rect.height <= bounds.height, "{bounds:?} -> {rect:?}");
+        }
     }
 }

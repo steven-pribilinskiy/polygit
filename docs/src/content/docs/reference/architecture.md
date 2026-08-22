@@ -21,6 +21,7 @@ description: How the polygit Rust crate is organized.
 | `src/theme.rs` | Color palettes composed from two independent axes — **background** (surface tones) × **contrast** (text/accent saturation), each dark/light — the per-frame ANSI→RGB remap, and terminal background detection for the auto theme. |
 | `src/pr_cache.rs` | Persisted PR cache (`~/.config/polygit/pr-cache.json`): repo+branch → PR (open/merged/closed) + timestamp, with a 5-minute TTL, so the PR column/info panel don't re-hit `gh` every frame or launch. |
 | `src/profile.rs` | The optional `--profile` per-repo timing report. |
+| `src/explorer.rs` | The two-pane file explorer (`Ctrl+E`). Its floating window is a `tuilith::float::Window` — a corner, an inset and a size, resolved each frame rather than stored — so position and size persist and survive a terminal resize. |
 | `src/perf.rs` | Frame/input instrumentation (`Ctrl+T` overlay, `--perf` report): rolling p50/p95/p99 channels for frame build, terminal flush, upkeep, state-lock wait and the panel's own cost; `Series`, the per-second history behind the graph, which advances on wall time so idle shows as gaps rather than compressed time; `plan_panel`, the budget allocator that drops the graph before the numbers and never the verdict; and `PlacementPrefs`, the persisted corner-plus-inset position (converting to `tuilith::float`, which owns no serialization by design). |
 
 ## How a pull flows

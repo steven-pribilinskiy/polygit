@@ -2503,6 +2503,8 @@ async fn run_event_loop(
                     }
                     MouseEventKind::Up(MouseButton::Left) if dragging_explorer_window_resize => {
                         dragging_explorer_window_resize = false;
+                        app.store_explorer_geometry();
+                        app.save_state();
                         continue;
                     }
                     MouseEventKind::Down(MouseButton::Left) if on_explorer_titlebar => {
@@ -2525,6 +2527,8 @@ async fn run_event_loop(
                     }
                     MouseEventKind::Up(MouseButton::Left) if dragging_explorer_window_move.is_some() => {
                         dragging_explorer_window_move = None;
+                        app.store_explorer_geometry();
+                        app.save_state();
                         continue;
                     }
                     _ => {}
@@ -4422,33 +4426,26 @@ async fn run_event_loop(
                     if floating && key.modifiers.contains(KeyModifiers::ALT) {
                         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
                         let bounds = app.dock_full_area;
-                        let step = 2;
-                        match key.code {
-                            KeyCode::Left => {
-                                if let Some(explorer) = app.explorer.as_mut() {
-                                    if shift { explorer.resize_floating_step(-step, 0, bounds); } else { explorer.nudge_floating(-step, 0, bounds); }
+                        // Two cells horizontally, one vertically — a cell is about twice as tall
+                        // as it is wide, so equal steps do not feel equal.
+                        let delta = match key.code {
+                            KeyCode::Left => Some((-2_i32, 0_i32)),
+                            KeyCode::Right => Some((2, 0)),
+                            KeyCode::Up => Some((0, -1)),
+                            KeyCode::Down => Some((0, 1)),
+                            _ => None,
+                        };
+                        if let Some((dx, dy)) = delta {
+                            if let Some(explorer) = app.explorer.as_mut() {
+                                if shift {
+                                    explorer.resize_floating_step(dx, dy, bounds);
+                                } else {
+                                    explorer.nudge_floating(dx, dy, bounds);
                                 }
-                                continue;
                             }
-                            KeyCode::Right => {
-                                if let Some(explorer) = app.explorer.as_mut() {
-                                    if shift { explorer.resize_floating_step(step, 0, bounds); } else { explorer.nudge_floating(step, 0, bounds); }
-                                }
-                                continue;
-                            }
-                            KeyCode::Up => {
-                                if let Some(explorer) = app.explorer.as_mut() {
-                                    if shift { explorer.resize_floating_step(0, -1, bounds); } else { explorer.nudge_floating(0, -1, bounds); }
-                                }
-                                continue;
-                            }
-                            KeyCode::Down => {
-                                if let Some(explorer) = app.explorer.as_mut() {
-                                    if shift { explorer.resize_floating_step(0, 1, bounds); } else { explorer.nudge_floating(0, 1, bounds); }
-                                }
-                                continue;
-                            }
-                            _ => {}
+                            app.store_explorer_geometry();
+                            app.save_state();
+                            continue;
                         }
                     }
                     match key.code {

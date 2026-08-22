@@ -4056,8 +4056,11 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
     let dark = app.dark_active();
     if let Some(explorer) = app.explorer.as_mut() {
         explorer.ensure_preview();
+        // Resolve the floating rect while we still hold a mutable borrow — the resolve seeds a
+        // default size on first float, so it cannot be done from the read-only block below.
         if explorer.mode == SurfaceMode::Floating {
-            explorer.clamp_floating(area);
+            let resolved = explorer.float_rect(area);
+            explorer.area = resolved;
         }
     }
     if app.explorer.is_none() {
@@ -4132,7 +4135,8 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
             explorer.tree_mode,
             explorer.show_gitignored,
             explorer.mode,
-            explorer.floating_rect,
+            // Resolved above, while the mutable borrow was held.
+            explorer.area,
         )
     };
 
@@ -4449,8 +4453,5 @@ pub(crate) fn render_explorer(frame: &mut Frame, app: &mut AppState, area: Rect)
         explorer.resize_click = resize_click;
         explorer.titlebar_drag_area = titlebar_drag_area;
         explorer.header_click = header_click;
-        if floating {
-            explorer.floating_rect = modal;
-        }
     }
 }

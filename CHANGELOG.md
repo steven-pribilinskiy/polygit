@@ -3,6 +3,26 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.24.0 — 2026-08-23
+The file explorer stops forgetting where you put it
+Its floating window kept a rect and clamped that rect back into the terminal on every render, so
+moving it never stuck: the geometry was session-only and every open reseeded it to 70%-centered.
+- **Position and size persist now.** Drag it, resize it, nudge it with `Alt`+arrows — it comes back
+  there next time.
+- **Which is only safe because the model changed underneath.** Clamp-and-write-back destroys a
+  position the first time the terminal shrinks: the clamp overwrites the stored value, and growing
+  the terminal again leaves the window where the small one forced it. That was survivable while the
+  geometry lived and died with one open; persisting it would have made it a permanent loss. The
+  window is now a corner plus an inset plus a size, resolved fresh each frame by `tuilith::float`,
+  which clamps for the frame and writes nothing back.
+- **And it retires a latent panic.** Resizing subtracted the window's own origin from the
+  viewport's far edge on `u16`, which underflows for an origin outside the viewport — safe only
+  while a clamp was guaranteed to have run first, an ordering convention between two functions in
+  different files. There is no longer an origin that can be outside the viewport, because the only
+  way to get one is to resolve it against the viewport it will be drawn in.
+- Six duplicated geometry methods became calls into the shared component, so the perf panel and the
+  explorer now place themselves the same way.
+
 ## v3.23.0 — 2026-08-22
 Every metric in the perf panel explains itself
 The panel's labels are abbreviations forced by a 23-cell box — `flush`, `backlog`, `dropped` —

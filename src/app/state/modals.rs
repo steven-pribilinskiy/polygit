@@ -738,10 +738,27 @@ impl AppState {
         }
     }
 
+    /// Copy the floating window's geometry into the persisted prefs.
+    ///
+    /// One place, called after every move and resize, so the explorer stops forgetting where it was
+    /// — until now the geometry was session-only and every open reseeded it to 70%-centered.
+    pub fn store_explorer_geometry(&mut self) {
+        let Some(explorer) = self.explorer.as_ref() else {
+            return;
+        };
+        let (corner, dx, dy, width, height) = explorer.float_prefs();
+        self.explorer_prefs.float_corner = corner;
+        self.explorer_prefs.float_dx = dx;
+        self.explorer_prefs.float_dy = dy;
+        self.explorer_prefs.float_width = width;
+        self.explorer_prefs.float_height = height;
+    }
+
     pub fn toggle_explorer_pin(&mut self) {
         if let Some(explorer) = self.explorer.as_mut() {
             explorer.toggle_pin();
             self.explorer_prefs.mode = explorer.mode;
+            self.store_explorer_geometry();
             self.save_state();
         }
     }

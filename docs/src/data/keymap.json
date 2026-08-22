@@ -1551,7 +1551,7 @@
           "p"
         ],
         "action": "Pin (dock as a panel) ⇄ float (a draggable/resizable window)",
-        "note": "also the `[p float]`/`[p pin]` title-bar button. While floating: drag the title bar to move, drag the bottom-right ◢ grip to resize, or Alt+arrows to nudge / Alt+Shift+arrows to resize by keyboard. Persisted",
+        "note": "also the `[p float]`/`[p pin]` title-bar button. While floating: drag the title bar to move, drag the bottom-right ◢ grip to resize, or Alt+arrows to nudge / Alt+Shift+arrows to resize by keyboard. Persisted Position and size are remembered between opens and survive a terminal resize.",
         "keywords": [
           "pin",
           "float",
