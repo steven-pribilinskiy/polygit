@@ -291,12 +291,14 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     let (
         title,
         source,
+        mode,
         files,
         selected,
         diff_lines,
         diff_scroll_req,
         file_scroll_in,
         focus,
+        loading,
         visible,
         chips,
         chips_active,
@@ -324,12 +326,14 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
         (
             title,
             modal.source.clone(),
+            modal.mode,
             modal.files.clone(),
             modal.selected,
             modal.lines.clone(),
             modal.scroll,
             modal.file_scroll,
             modal.focus,
+            modal.loading,
             modal.visible_file_indices(),
             modal.status_chips(),
             modal.chips_active(),
@@ -500,7 +504,32 @@ pub(crate) fn render_diff_modal(frame: &mut Frame, app: &mut AppState, area: Rec
     let diff_scroll = diff_scroll_req.min(diff_total.saturating_sub(diff_view_h));
     let diff_view: Vec<Line> =
         rendered[diff_scroll..(diff_scroll + diff_view_h).min(diff_total)].to_vec();
-    frame.render_widget(Paragraph::new(diff_view), diff_content);
+    if files.is_empty() && !loading {
+        let detail = match (&source, mode) {
+            (DiffSource::Branch { .. }, _) | (DiffSource::Dirty { .. }, DiffMode::BaseBranch) => {
+                "This branch has no changes relative to its base branch."
+            }
+            (DiffSource::Dirty { .. }, _) => "There are no uncommitted changes in this working tree.",
+            (DiffSource::Stash { .. }, _) => "This stash contains no changed files.",
+            (DiffSource::Commit { .. }, _) => "This commit contains no file changes.",
+        };
+        let empty = vec![
+            Line::from(Span::styled(
+                "No changes",
+                Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD),
+            ))
+            .centered(),
+            Line::from(Span::styled(detail, Style::default().fg(Color::DarkGray))).centered(),
+        ];
+        let empty_area = Rect {
+            y: diff_content.y + diff_content.height.saturating_sub(2) / 2,
+            height: diff_content.height.min(2),
+            ..diff_content
+        };
+        frame.render_widget(Paragraph::new(empty), empty_area);
+    } else {
+        frame.render_widget(Paragraph::new(diff_view), diff_content);
+    }
     render_scrollbar(frame, app, &diff_region, diff_scroll, diff_total, diff_view_h, ScrollKind::DiffBody);
 
     // Styled, clickable footer on the bottom border (left-aligned so its click columns line up).
@@ -1666,4 +1695,3 @@ pub(crate) fn render_repo_page(frame: &mut Frame, app: &mut AppState, area: Rect
         );
     }
 }
-

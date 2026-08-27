@@ -1181,18 +1181,21 @@ pub async fn run_diff_modal(app_state: Arc<Mutex<AppState>>) {
         if !still_current {
             return;
         }
-        if files.is_empty() {
-            // Nothing changed — close the (loading) modal and pop a toast instead of an empty diff.
-            app.diff_modal = None;
-            app.show_toast("no changes");
-            return;
-        }
         if let Some(modal) = app.diff_modal.as_mut() {
             modal.files = files;
             modal.selected = 0;
             modal.file_scroll = 0;
+            modal.scroll = 0;
             modal.loading = false;
             modal.status_filter = None;
+            if modal.files.is_empty() {
+                // A completed empty result is still a result: keep the modal open so its explicit
+                // empty state can explain what was compared. There is no selected-file fetch to
+                // follow, so both loading flags must settle here.
+                modal.lines.clear();
+                modal.diff_loading = false;
+                return;
+            }
         }
     }
 
@@ -1879,6 +1882,71 @@ pub async fn run_pin_version(app_state: Arc<Mutex<AppState>>, version: String) {
 mod tests {
     use super::*;
     use crate::app::{RepoDetails, RepoStatus};
+
+    #[tokio::test]
+    async fn empty_diff_result_keeps_the_modal_open() {
+        use std::process::Command as StdCommand;
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let path = repo_dir.path();
+        assert!(
+            StdCommand::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .arg(path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(path.join("README.md"), "demo\n").unwrap();
+        assert!(
+            StdCommand::new("git")
+                .args(["-C"])
+                .arg(path)
+                .args(["add", "README.md"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            StdCommand::new("git")
+                .args(["-C"])
+                .arg(path)
+                .args([
+                    "-c",
+                    "user.name=Polygit Test",
+                    "-c",
+                    "user.email=polygit@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "initial",
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let repo = Arc::new(Mutex::new(RepoState::new("demo", path.to_path_buf())));
+        let mut app = AppState::new(vec![repo], Some(1), true);
+        app.close_all_modals();
+        app.open_diff_modal(DiffSource::Branch {
+            path: path.to_path_buf(),
+            name: "main".into(),
+        });
+        let app_state = Arc::new(Mutex::new(app));
+
+        run_diff_modal(Arc::clone(&app_state)).await;
+
+        let app = app_state.lock().unwrap();
+        let modal = app
+            .diff_modal
+            .as_ref()
+            .expect("an empty result must keep the modal open");
+        assert!(modal.files.is_empty());
+        assert!(!modal.loading, "the file-list load must be settled");
+        assert!(!modal.diff_loading, "there is no selected-file load to wait for");
+        assert!(modal.lines.is_empty());
+    }
 
     // A re-queued repo shows the transient `Queued` while a refetch runs; comparing the new
     // terminal status against that transient baseline must NOT register as a change (the bug that

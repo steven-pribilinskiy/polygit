@@ -3,6 +3,12 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.24.1 — 2026-08-27
+Empty diffs stay put
+- Opening a branch with no changes relative to its base used to flash the loading modal, close it,
+  and leave only a transient `no changes` toast. The diff modal now remains open with a stable,
+  source-aware empty state that says what was compared.
+
 ## v3.24.0 — 2026-08-23
 The file explorer stops forgetting where you put it
 Its floating window kept a rect and clamped that rect back into the terminal on every render, so

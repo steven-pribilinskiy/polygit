@@ -178,6 +178,8 @@ filtering never loses your place.
 What the file set contains depends on the source: a **stash** lists the files it holds (including
 untracked); a **dirty row** lists uncommitted changes, and `t` toggles between *uncommitted*
 (vs HEAD) and *vs base branch* (everything changed since you forked from `origin/HEAD`).
+When that comparison returns no files, the modal stays open and shows a source-aware empty state
+instead of flashing closed—for example, “This branch has no changes relative to its base branch.”
 
 Inside the modal, `d`
 discards (current branch), removes (worktree), or drops (stash) — same confirm as the

@@ -151,6 +151,46 @@
     }
 
     #[test]
+    fn empty_branch_diff_renders_an_explanatory_state() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let repos = vec![std::sync::Arc::new(std::sync::Mutex::new(RepoState::new(
+            "demo",
+            std::path::PathBuf::from("/tmp/demo"),
+        )))];
+        let mut app = AppState::new(repos, Some(1), true);
+        app.close_all_modals();
+        app.open_diff_modal(crate::app::DiffSource::Branch {
+            path: std::path::PathBuf::from("/tmp/demo"),
+            name: "main".into(),
+        });
+        let modal = app.diff_modal.as_mut().unwrap();
+        modal.loading = false;
+        modal.diff_loading = false;
+        modal.lines.clear();
+
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|frame| crate::render::render(frame, &mut app, 0)).unwrap();
+        let buffer = term.backend().buffer();
+        let screen = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("No changes"));
+        assert!(screen.contains("This branch has no changes relative to its base branch."));
+        assert!(
+            app.diff_modal.is_some(),
+            "rendering the empty state must not close the modal"
+        );
+    }
+
+    #[test]
     fn kebab_glyph_appears_on_hovered_repo_row() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;

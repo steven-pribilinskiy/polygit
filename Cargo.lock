@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "polygit"
-version = "3.24.0"
+version = "3.24.1"
 dependencies = [
  "anyhow",
  "clap",
