@@ -1,0 +1,29 @@
+name: verify-tmp
+on:
+  push:
+    branches: [verify/tuilith-follow]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup component add clippy
+      - run: cargo build --locked --profile release-fast
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: polygit-linux
+          path: target/release-fast/polygit
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable
+      - run: cargo check --locked
