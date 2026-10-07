@@ -11,12 +11,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup update stable && rustup component add clippy
       - run: cargo build --locked --profile release-fast
-      - run: cargo test --locked
-      - run: cargo clippy --locked --all-targets
       - uses: actions/upload-artifact@v4
         with:
           name: polygit-linux
           path: target/release-fast/polygit
+      - run: cargo clippy --locked --all-targets
+        if: always()
+      - run: cargo test --locked
+        if: always()
   check:
     strategy:
       fail-fast: false
