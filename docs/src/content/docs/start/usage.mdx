@@ -207,9 +207,12 @@ aligned `current → default` column (new value highlighted; favorites and works
   accent color) so the app looks identical in any terminal. `auto` detects whether the
   terminal background is dark or light at startup (OSC 11 query, then `COLORFGBG`, then the
   Windows light/dark setting under WSL, then the macOS appearance setting) and applies the
-  matching palette. Under `auto`, polygit also **re-detects at runtime** (via the tty-safe
-  sources — `COLORFGBG` / the WSL registry / macOS appearance), so toggling your OS between
-  light and dark re-themes the running app within a couple of seconds, no restart needed.
+  matching palette. Under `auto`, polygit **follows the terminal while it runs**: a terminal
+  that pushes mode-2031 colour-scheme reports re-themes the app the moment it switches; one
+  that doesn't is asked for its background (OSC 11) on focus and every 5 seconds; only a
+  terminal that answers neither falls back to the OS light/dark setting. So it is the
+  *terminal's* switch that counts, not the desktop's — a dark terminal on a light desktop stays
+  dark. Hover the Theme row to see what `auto` is showing and which signal decided it.
 - **Background** — `normal` / `soft` / `terminal`. `normal` and `soft` paint a surface tone;
   `terminal` paints **no** base background, letting your terminal's own background show through
   (selected rows and modal shadows still get a tone so they stay visible).

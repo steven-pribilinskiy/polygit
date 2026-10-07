@@ -7,7 +7,7 @@ resolver = "2"
 
 [package]
 name = "polygit"
-version = "3.24.1"
+version = "3.25.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -35,13 +35,15 @@ serde_json = { version = "1", features = ["preserve_order"] }
 regex = "1"
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-terminal-colorsaurus = "1.0.3"
 tui-pick = { path = "tui-pick" }
 # The scrollbar geometry lives here rather than in this repo, because the bug it prevents — a bar drawn
 # over the last column of the text — is one every ratatui surface can have, and it was fixed here per
 # call site four times before that stopped being a strategy. A git dependency rather than crates.io: the
-# crate is unpublished, and the lockfile pins the revision either way.
-tuilith = { git = "https://github.com/aylith-labs/tuilith", default-features = false }
+# crate is unpublished, so the revision is pinned here as well as in the lockfile.
+# `follow` (with `input` and `background`) is the terminal reader and the live light/dark follower;
+# `os-appearance` keeps the Windows/macOS appearance setting as the fallback for a terminal that
+# answers nothing, which is what `theme.rs` used to probe by hand.
+tuilith = { git = "https://github.com/aylith-labs/tuilith", rev = "ee75069f83da3645e99d675dc59250dca6395355", default-features = false, features = ["follow", "input", "os-appearance"] }
 
 [dev-dependencies]
 tempfile = "3"

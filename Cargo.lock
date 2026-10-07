@@ -670,9 +670,9 @@ dependencies = [
 
 [[package]]
 name = "futures-core"
-version = "0.3.32"
+version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
+checksum = "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7"
 
 [[package]]
 name = "futures-executor"
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "polygit"
-version = "3.24.1"
+version = "3.25.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1627,7 +1627,6 @@ dependencies = [
  "strip-ansi-escapes",
  "syntect",
  "tempfile",
- "terminal-colorsaurus",
  "tokio",
  "tokio-stream",
  "tui-pick",
@@ -2703,11 +2702,15 @@ dependencies = [
 [[package]]
 name = "tuilith"
 version = "0.1.0"
-source = "git+https://github.com/aylith-labs/tuilith#72c18a262b720534087a4c6ad0cf67506b248da2"
+source = "git+https://github.com/aylith-labs/tuilith?rev=ee75069f83da3645e99d675dc59250dca6395355#ee75069f83da3645e99d675dc59250dca6395355"
 dependencies = [
  "crossterm",
+ "futures-core",
  "inventory",
  "ratatui",
+ "rustix",
+ "signal-hook",
+ "terminal-colorsaurus",
 ]
 
 [[package]]

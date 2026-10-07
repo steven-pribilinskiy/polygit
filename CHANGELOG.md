@@ -3,6 +3,21 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.25.0 — 2026-10-07
+The auto theme follows the terminal, not the desktop
+`auto` re-checked the Windows/macOS light/dark setting every 3 seconds. That follows the desktop,
+which is a proxy for the terminal and a wrong one for a dark terminal on a light desktop — and with
+`COLORFGBG` set it answered every check with the same fixed value, so the theme never moved at all.
+- **Input now comes through tuilith's terminal reader** instead of crossterm's. crossterm's held
+  every key typed after a colour-scheme report and typed an OSC 11 reply in as keys, which is why
+  the running app could never ask the terminal anything. Keys and mouse behave exactly as before.
+- **A terminal that pushes mode-2031 reports re-themes polygit the moment it switches.** One that
+  doesn't is asked for its background on focus and every 5 seconds; the OS setting is consulted only
+  when the terminal answers neither.
+- **Hover the Theme row** in Settings to see what `auto` is showing and which signal decided it.
+- Launching claude or lazygit hands the terminal over cleanly: the reader stops and the reports are
+  switched off while the child runs, and a crash switches them off too.
+
 ## v3.24.1 — 2026-08-27
 Empty diffs stay put
 - Opening a branch with no changes relative to its base used to flash the loading modal, close it,

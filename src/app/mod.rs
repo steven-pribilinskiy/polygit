@@ -397,8 +397,12 @@ pub struct AppState {
     pub button_hover_style: ButtonHoverStyle,
     /// Background tone for the active palette (surface only), independent of `Contrast`.
     pub background: Background,
-    /// Whether the terminal background was detected as dark at startup (resolves `Theme::Auto`).
+    /// Whether the terminal's background is dark (resolves `Theme::Auto`). Read at startup and kept
+    /// current while running by `terminal_input::TerminalInput`.
     pub auto_dark: bool,
+    /// Which signal decided `auto_dark` — shown in the Theme row's tooltip, because a fallback "dark"
+    /// that reads the same as an observed one is a wrong answer nobody questions.
+    pub auto_source: tuilith::background::Source,
     /// Whether the settings modal (`,`) is open.
     pub show_settings: bool,
     /// Selected (global) row in the settings modal — see `SETTINGS_TABS` for the row order.
@@ -1075,6 +1079,7 @@ impl AppState {
             button_hover_style: persisted.theming.button_hover_style,
             background: crate::persist::resolve_background(persisted.theming.background, persisted.theming.contrast),
             auto_dark,
+            auto_source: tuilith::background::Source::Nobody,
             show_settings: false,
             settings_selected: 0,
             settings_on_header: None,

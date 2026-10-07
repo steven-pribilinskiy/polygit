@@ -957,44 +957,6 @@ pub fn plan_panel(
     Some(plan)
 }
 
-/// Measure how long this terminal takes to answer a Device Status Report — the floor on its
-/// responsiveness, independent of anything polygit does.
-///
-/// Sends `CSI 6n` (report cursor position) and reads until the `R` terminator. Returns `None` if
-/// the terminal never answers within `timeout`, which is itself a finding: a terminal that ignores
-/// DSR is one whose latency cannot be separated from ours this way.
-///
-/// Must run while the terminal is in raw mode and BEFORE any other reader is consuming stdin,
-/// otherwise the reply is stolen by the event reader.
-pub fn probe_terminal_rtt(timeout: Duration) -> Option<Duration> {
-    use std::io::{Read, Write};
-
-    let mut stdout = std::io::stdout();
-    let started = Instant::now();
-    stdout.write_all(b"\x1b[6n").ok()?;
-    stdout.flush().ok()?;
-
-    let mut stdin = std::io::stdin();
-    let mut buf = [0_u8; 1];
-    let mut seen = Vec::new();
-    while started.elapsed() < timeout {
-        if !crossterm::event::poll(Duration::from_millis(10)).unwrap_or(false) {
-            continue;
-        }
-        match stdin.read(&mut buf) {
-            Ok(1) => {
-                seen.push(buf[0]);
-                if buf[0] == b'R' {
-                    return Some(started.elapsed());
-                }
-            }
-            Ok(_) => return None,
-            Err(_) => return None,
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

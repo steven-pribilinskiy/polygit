@@ -22,6 +22,7 @@ mod profile;
 mod relocate;
 mod render;
 mod select;
+mod terminal_input;
 mod theme;
 mod timeago;
 mod treeview;
@@ -37,16 +38,12 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind,
-    PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
 };
 use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
-    LeaveAlternateScreen,
-};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use terminal_input::TerminalInput;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
@@ -479,26 +476,6 @@ async fn watch_for_releases(app_state: Arc<Mutex<AppState>>) {
     }
 }
 
-/// For the Auto theme, re-detect dark/light from the tty-safe sources every few seconds so an OS
-/// light↔dark switch re-themes live (the render loop redraws every tick). Detection runs on a
-/// blocking thread (it may shell out to `reg.exe`/`defaults`); the `AppState` lock is held only
-/// to read `theme` and write `auto_dark`, never across `.await`.
-async fn watch_theme(app_state: Arc<Mutex<AppState>>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(3));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        interval.tick().await;
-        if app_state.lock().unwrap().theme != app::Theme::Auto {
-            continue;
-        }
-        if let Ok(Some(dark)) =
-            tokio::task::spawn_blocking(theme::detect_dark_background_runtime).await
-        {
-            app_state.lock().unwrap().auto_dark = dark;
-        }
-    }
-}
-
 /// Open a URL in the user's browser via the first available opener, detached.
 pub(crate) fn open_url(url: &str) {
     let mut candidates: Vec<String> = Vec::new();
@@ -594,6 +571,7 @@ fn reexec(exe: &std::path::Path, args: &[std::ffi::OsString]) -> std::io::Error 
 /// overrides the built command verbatim (escape hatch for custom invocations).
 fn launch_claude(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    input: &mut TerminalInput,
     path: &std::path::Path,
     agent: app::ClaudeAgent,
     skip_permissions: bool,
@@ -610,7 +588,8 @@ fn launch_claude(
         }
     };
 
-    pop_key_enhancement(terminal);
+    // Stops the reader thread too, or it would steal the child's keystrokes.
+    input.suspend();
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
@@ -636,7 +615,7 @@ fn launch_claude(
 
     enable_raw_mode()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
-    push_key_enhancement(terminal);
+    input.resume()?;
     terminal.clear()?;
     Ok(())
 }
@@ -657,9 +636,11 @@ fn lazygit_available() -> bool {
 /// (mirrors `launch_claude`).
 fn launch_lazygit(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    input: &mut TerminalInput,
     path: &std::path::Path,
 ) -> Result<()> {
-    pop_key_enhancement(terminal);
+    // Stops the reader thread too, or it would steal the child's keystrokes.
+    input.suspend();
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
@@ -668,25 +649,9 @@ fn launch_lazygit(
 
     enable_raw_mode()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
-    push_key_enhancement(terminal);
+    input.resume()?;
     terminal.clear()?;
     Ok(())
-}
-
-/// Push the Kitty keyboard protocol flags when the terminal supports them, so modified keys
-/// (notably Shift+Enter) are reported with their modifier instead of as a bare Enter, and bare
-/// modifier presses (Shift/Ctrl/Alt/Super) arrive as their own key events for the keyboard viewer.
-/// Best-effort — a no-op on terminals without support.
-fn push_key_enhancement(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
-    if supports_keyboard_enhancement().unwrap_or(false) {
-        let _ = execute!(
-            terminal.backend_mut(),
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-            )
-        );
-    }
 }
 
 /// The synthetic key event a clicked footer hint injects, so a click runs the same handler as
@@ -739,12 +704,6 @@ fn pane_for_digit(digit: char) -> Pane {
     }
 }
 
-/// Pop the keyboard enhancement flags pushed by `push_key_enhancement`.
-fn pop_key_enhancement(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
-    if supports_keyboard_enhancement().unwrap_or(false) {
-        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
-    }
-}
 
 
 /// Apply a command triggered by key OR by clicking its status-bar hint. Returns
@@ -1502,10 +1461,17 @@ fn pick_workspace() -> Result<Option<(String, Vec<PathBuf>)>> {
     execute!(stdout, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
+    // tuilith's reader, as in the TUI proper: it must be the only reader of the terminal, and it
+    // is dropped (its thread joined) before `run_tui` opens its own.
+    let mut events = tuilith::input::EventStream::new()?;
     let mut selected = 0usize;
     let outcome = loop {
         terminal.draw(|frame| render_workspace_picker(frame, &names, &workspaces, selected))?;
-        if let Event::Key(key) = event::read()? {
+        let event = match futures::executor::block_on(futures::StreamExt::next(&mut events)) {
+            Some(event) => event?,
+            None => break None,
+        };
+        if let tuilith::input::Event::Terminal(Event::Key(key)) = event {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
@@ -1530,6 +1496,7 @@ fn pick_workspace() -> Result<Option<(String, Vec<PathBuf>)>> {
         }
     };
 
+    drop(events);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     Ok(outcome)
@@ -1605,10 +1572,16 @@ async fn run_tui(
     // empty and grows as the scan progresses, so there's no up-front discovery wait.
 
     // Detect the terminal background for Theme::Auto — must happen before raw mode /
-    // the alternate screen (the OSC query reads its reply from the tty itself).
-    let auto_dark = theme::detect_dark_background();
+    // the alternate screen (the OSC query reads its reply from the tty itself). `TerminalInput`
+    // keeps it current from then on.
+    let reading = tuilith::background::read();
 
-    let app_state = Arc::new(Mutex::new(AppState::new(Vec::new(), jobs_override, auto_dark)));
+    let app_state = Arc::new(Mutex::new(AppState::new(
+        Vec::new(),
+        jobs_override,
+        reading.mode == tuilith::theme::Mode::Dark,
+    )));
+    app_state.lock().unwrap().auto_source = reading.source;
     // The setting (or `-j`) resolved to this many workers; the rest of setup uses the resolved value.
     let max_jobs = app_state.lock().unwrap().max_jobs;
     // Persist the current version now so the "What's New" modal (raised when this build is newer
@@ -1637,13 +1610,14 @@ async fn run_tui(
 
     // Set up terminal
     enable_raw_mode()?;
+    // The one reader of the terminal for the TUI's whole life (see `terminal_input`).
+    let mut input = TerminalInput::open(reading)?;
 
-    // Measure the terminal's own round-trip BEFORE the alternate screen and before any other
-    // reader touches stdin — a DSR reply arriving after the event loop starts would be swallowed
-    // by it. This is the floor on how fast this emulator can acknowledge anything, so it tells a
-    // slow terminal apart from slow rendering.
+    // Measure the terminal's own round-trip before the follower starts asking the terminal things
+    // of its own. This is the floor on how fast this emulator can acknowledge anything, so it tells
+    // a slow terminal apart from slow rendering.
     if perf_from_launch {
-        let rtt = perf::probe_terminal_rtt(Duration::from_millis(250));
+        let rtt = input.probe_rtt(Duration::from_millis(250));
         let mut app = app_state.lock().unwrap();
         app.perf.enable();
         app.perf.terminal_rtt = rtt;
@@ -1653,11 +1627,13 @@ async fn run_tui(
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    push_key_enhancement(&mut terminal);
+    input.enter()?;
 
-    // Ensure terminal is restored on panic
+    // Ensure terminal is restored on panic — and the colour-scheme reports switched off, or the
+    // terminal goes on sending them to the shell after polygit is gone.
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = io::stdout().write_all(tuilith::follow::DISABLE.as_bytes());
         let _ = disable_raw_mode();
         let _ = execute!(
             io::stdout(),
@@ -1695,9 +1671,8 @@ async fn run_tui(
     // Watch the binary on disk for a newer build (drives the reload notice).
     tokio::spawn(watch_for_new_build(Arc::clone(&app_state)));
     tokio::spawn(watch_for_releases(Arc::clone(&app_state)));
-    tokio::spawn(watch_theme(Arc::clone(&app_state)));
 
-    let exit_code = run_event_loop(&mut terminal, Arc::clone(&app_state)).await?;
+    let exit_code = run_event_loop(&mut terminal, &mut input, Arc::clone(&app_state)).await?;
 
     // Persist UI preferences (columns, info state, splitter) and the status cache for next run.
     {
@@ -1708,7 +1683,7 @@ async fn run_tui(
     }
 
     // Restore terminal
-    pop_key_enhancement(&mut terminal);
+    input.suspend();
     // Disable all-motion mouse tracking (hover effects) — DisableMouseCapture doesn't cover 1003.
     let _ = terminal.backend_mut().write_all(b"\x1b[?1003l");
     disable_raw_mode()?;
@@ -1802,6 +1777,7 @@ const MOTION_COALESCE_CAP: usize = 128;
 
 async fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    input: &mut TerminalInput,
     app_state: Arc<Mutex<AppState>>,
 ) -> Result<i32> {
     let mut tick: u64 = 0;
@@ -1879,7 +1855,7 @@ async fn run_event_loop(
                 let app = app_state.lock().unwrap();
                 (app.claude_agent, app.claude_skip_permissions)
             };
-            launch_claude(terminal, &path, agent, skip)?;
+            launch_claude(terminal, input, &path, agent, skip)?;
         }
 
         // Force a full terminal repaint (`Ctrl+L` / the `^L repaint` footer chip): clears stale or
@@ -1919,7 +1895,7 @@ async fn run_event_loop(
         // Suspend the TUI and run lazygit when requested, or note that it isn't installed.
         if let Some(path) = pending_lazygit.take() {
             if lazygit_available() {
-                launch_lazygit(terminal, &path)?;
+                launch_lazygit(terminal, input, &path)?;
             } else {
                 let mut app = app_state.lock().unwrap();
                 if app.repo_page.is_some() {
@@ -1940,10 +1916,17 @@ async fn run_event_loop(
             return Ok(RELOAD_EXIT);
         }
 
+        // Ask the terminal (or the desktop) for its light/dark when that is due; a reply arrives
+        // as input and is applied by `input.next`. Either way `Theme::Auto` reads the current
+        // answer below, before this iteration draws.
+        input.tick();
+
         // Update the "all done" edge. Selection is never moved automatically — it stays wherever
         // the user put it (no follow-the-running-repo, no jump-to-Result-when-complete).
         {
             let mut app = app_state.lock().unwrap();
+            app.auto_dark = input.dark();
+            app.auto_source = input.reading().source;
             // Don't settle until the walker has finished AND found at least one repo — an empty
             // `all(...)` is vacuously true, which would otherwise freeze the timer at 0 repos.
             // When auto-pull was suppressed, idle/cached repos that were never pulled count as
@@ -2121,9 +2104,19 @@ async fn run_event_loop(
             };
             let settings_tip = if app.show_settings {
                 app.hover.and_then(|(col, row)| {
-                    app.settings_hit_at(col, row)
-                        .and_then(|(setting_row, option)| AppState::settings_tip(setting_row, option))
-                        .map(str::to_string)
+                    app.settings_hit_at(col, row).and_then(|(setting_row, option)| {
+                        let tip = AppState::settings_tip(setting_row, option)?;
+                        // The Theme row says what `auto` currently resolves to and which signal
+                        // decided it, so a fallback guess is never mistaken for an observation.
+                        if option.is_none() && setting_row == crate::app::settings_row("Theme") {
+                            let mode = if app.auto_dark { "dark" } else { "light" };
+                            return Some(format!(
+                                "{tip} · auto is showing {mode} (from {})",
+                                app.auto_source.label()
+                            ));
+                        }
+                        Some(tip.to_string())
+                    })
                 })
             } else {
                 None
@@ -2283,8 +2276,7 @@ async fn run_event_loop(
         let mut coalesced_motion = 0_usize;
         let next_event = if let Some(key) = synthetic_keys.pop_front() {
             Some(Event::Key(key))
-        } else if event::poll(poll_timeout)? {
-            let mut event = event::read()?;
+        } else if let Some(mut event) = input.next(poll_timeout)? {
             // Bare cursor motion is the one input where only the NEWEST report can matter: every
             // earlier position is superseded before its highlight could reach the screen. Left
             // uncoalesced, the loop draws one full frame per report, so the highlight trails the
@@ -2298,9 +2290,9 @@ async fn run_event_loop(
             while coalesce_motion
                 && dropped < MOTION_COALESCE_CAP
                 && matches!(event, Event::Mouse(MouseEvent { kind: MouseEventKind::Moved, .. }))
-                && event::poll(Duration::ZERO)?
             {
-                event = event::read()?;
+                let Some(next) = input.next(Duration::ZERO)? else { break };
+                event = next;
                 dropped += 1;
             }
             coalesced_motion = dropped;

@@ -1,4 +1,5 @@
-//! Theme palettes and terminal background detection.
+//! Theme palettes. Which of them `Theme::Auto` shows is the terminal's own light/dark, read by
+//! `tuilith::background` at startup and kept current by `terminal_input`.
 //!
 //! Every widget in `render.rs` draws with the standard ANSI palette (`Color::Cyan`,
 //! `Color::DarkGray`, …). After the frame is drawn, `Palette::map_fg`/`map_bg` remap those
@@ -237,135 +238,9 @@ pub fn palette(dark: bool, background: Background, contrast: Contrast) -> Palett
     }
 }
 
-/// Detect whether the terminal background is dark, for the Auto theme. Tries, in order:
-/// an OSC 11 query of the terminal itself, the `COLORFGBG` env var, the Windows light/dark
-/// setting via `reg.exe` under WSL, the macOS appearance setting — then defaults to dark.
-///
-/// Must be called BEFORE the TUI enters raw mode / the alternate screen (the OSC query
-/// manages raw mode itself and reads the reply from the tty).
-pub fn detect_dark_background() -> bool {
-    use terminal_colorsaurus::{theme_mode, QueryOptions, ThemeMode};
-    if let Ok(mode) = theme_mode(QueryOptions::default()) {
-        return mode == ThemeMode::Dark;
-    }
-    if let Some(dark) = std::env::var("COLORFGBG").ok().and_then(|raw| colorfgbg_dark(&raw)) {
-        return dark;
-    }
-    if let Some(dark) = wsl_windows_dark() {
-        return dark;
-    }
-    if let Some(dark) = macos_dark() {
-        return dark;
-    }
-    true
-}
-
-/// Re-detect dark/light at RUNTIME using only the tty-safe sources — `COLORFGBG`, the WSL
-/// Windows light/dark registry value, and the macOS appearance — skipping the OSC 11 query
-/// (which manages raw mode + reads the tty, so it can't run while the event loop owns stdin).
-/// Returns `None` when none apply (terminal reports its background only via OSC). Lets the Auto
-/// theme follow an OS light↔dark switch live, without restarting. Cheap; safe to poll.
-pub fn detect_dark_background_runtime() -> Option<bool> {
-    if let Some(dark) = std::env::var("COLORFGBG").ok().and_then(|raw| colorfgbg_dark(&raw)) {
-        return Some(dark);
-    }
-    if let Some(dark) = wsl_windows_dark() {
-        return Some(dark);
-    }
-    macos_dark()
-}
-
-/// Parse a `COLORFGBG` value ("15;0" or "15;default;0") — the last segment is the background
-/// color index: 0-6 and 8 are dark, 7 and 9-15 are light.
-fn colorfgbg_dark(raw: &str) -> Option<bool> {
-    let bg: u8 = raw.rsplit(';').next()?.trim().parse().ok()?;
-    Some(bg <= 6 || bg == 8)
-}
-
-/// Under WSL, read the Windows "apps use light theme" registry value via `reg.exe`.
-/// Terminals that follow the system theme (Tabby "From system", Windows Terminal default)
-/// track exactly this value — and most of them don't answer OSC 11.
-fn wsl_windows_dark() -> Option<bool> {
-    if std::env::var_os("WSL_DISTRO_NAME").is_none() && std::env::var_os("WSL_INTEROP").is_none() {
-        return None;
-    }
-    let output = std::process::Command::new("/mnt/c/Windows/System32/reg.exe")
-        .args([
-            "query",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-            "/v",
-            "AppsUseLightTheme",
-        ])
-        .output()
-        .ok()?;
-    reg_output_dark(&String::from_utf8_lossy(&output.stdout))
-}
-
-/// Parse `reg.exe query` output: `AppsUseLightTheme REG_DWORD 0x1` → light (not dark).
-fn reg_output_dark(output: &str) -> Option<bool> {
-    let line = output.lines().find(|line| line.contains("AppsUseLightTheme"))?;
-    let value = line.split_whitespace().last()?;
-    match value {
-        "0x0" => Some(true),
-        "0x1" => Some(false),
-        _ => None,
-    }
-}
-
-/// On macOS, `defaults read -g AppleInterfaceStyle` prints "Dark" in dark mode and errors
-/// (key absent) in light mode.
-fn macos_dark() -> Option<bool> {
-    if !cfg!(target_os = "macos") {
-        return None;
-    }
-    let output = std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleInterfaceStyle"])
-        .output()
-        .ok()?;
-    Some(output.status.success() && String::from_utf8_lossy(&output.stdout).contains("Dark"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn colorfgbg_two_part_dark() {
-        assert_eq!(colorfgbg_dark("15;0"), Some(true));
-    }
-
-    #[test]
-    fn colorfgbg_two_part_light() {
-        assert_eq!(colorfgbg_dark("0;15"), Some(false));
-    }
-
-    #[test]
-    fn colorfgbg_three_part() {
-        assert_eq!(colorfgbg_dark("15;default;0"), Some(true));
-    }
-
-    #[test]
-    fn colorfgbg_garbage() {
-        assert_eq!(colorfgbg_dark("default;default"), None);
-        assert_eq!(colorfgbg_dark(""), None);
-    }
-
-    #[test]
-    fn reg_light_theme() {
-        let output = "\r\nHKEY_CURRENT_USER\\...\\Personalize\r\n    AppsUseLightTheme    REG_DWORD    0x1\r\n";
-        assert_eq!(reg_output_dark(output), Some(false));
-    }
-
-    #[test]
-    fn reg_dark_theme() {
-        let output = "    AppsUseLightTheme    REG_DWORD    0x0";
-        assert_eq!(reg_output_dark(output), Some(true));
-    }
-
-    #[test]
-    fn reg_missing_value() {
-        assert_eq!(reg_output_dark("ERROR: The system was unable to find the specified key"), None);
-    }
 
     #[test]
     fn blend_moves_rgb_toward_target() {
