@@ -1,0 +1,13 @@
+name: verify-tmp-baseline
+on:
+  push:
+    branches: [verify/baseline]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable
+      - run: cargo test --locked -- render::tests::no_scrollable_surface_puts_text_against_its_scrollbar
