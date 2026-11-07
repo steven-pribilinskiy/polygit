@@ -555,15 +555,14 @@ pub struct AppState {
     /// "clear filter" row shown when a branch filter is applied).
     pub branch_filter_rows_click: Vec<(u16, usize)>,
     /// The fzf-style finder overlay (`P`), when open. Searches all repos to jump the selection.
-    pub finder: Option<tui_pick::finder::FinderState>,
-    /// Shared goto-repo usage history, consulted for recent/most-used sort and appended on jump.
-    pub finder_history: tui_pick::History,
+    /// It reads and appends the goto-repo usage history itself (recent/most-used sort, a jump counts).
+    pub finder: Option<tuilith::find::Finder>,
     pub finder_area: Rect,
     pub finder_close_click: Option<(u16, u16, u16)>,
     /// Finder row hit map: (screen row, view index). Rebuilt each render.
     pub finder_rows_click: Vec<(u16, usize)>,
     /// The folder picker overlay (`A`), when open. Selecting a folder/repo adds it as a root.
-    pub picker: Option<tui_pick::picker::PickerState>,
+    pub picker: Option<tuilith::find::browse::Browser>,
     pub picker_area: Rect,
     pub picker_close_click: Option<(u16, u16, u16)>,
     /// Picker row hit map: (screen row, view index). Rebuilt each render.
@@ -1158,7 +1157,6 @@ impl AppState {
             branch_filter_mode_click: Vec::new(),
             branch_filter_rows_click: Vec::new(),
             finder: None,
-            finder_history: tui_pick::History::load_default(),
             finder_area: Rect::default(),
             finder_close_click: None,
             finder_rows_click: Vec::new(),

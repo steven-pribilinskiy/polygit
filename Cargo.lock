@@ -544,7 +544,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1324,16 +1324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nucleo-matcher"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
-dependencies = [
- "memchr",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1610,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "polygit"
-version = "3.24.1"
+version = "3.25.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2031,7 +2021,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2368,7 +2358,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2693,9 +2683,6 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tui-pick"
 version = "0.1.0"
 dependencies = [
- "crossterm",
- "dirs",
- "nucleo-matcher",
  "ratatui",
  "unicode-width",
 ]
@@ -2703,7 +2690,7 @@ dependencies = [
 [[package]]
 name = "tuilith"
 version = "0.1.0"
-source = "git+https://github.com/aylith-labs/tuilith#72c18a262b720534087a4c6ad0cf67506b248da2"
+source = "git+https://github.com/aylith-labs/tuilith#a29fdd17c10490d2d131e3234d91172095b8d4ba"
 dependencies = [
  "crossterm",
  "inventory",
@@ -3040,7 +3027,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

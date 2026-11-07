@@ -1994,79 +1994,95 @@ fn render_widgets(frame: &mut Frame, app: &mut AppState, tick: u64) {
     render_toast(frame, app, area);
 }
 
-/// Render the fzf-style finder overlay (the `tui-pick` widget) and capture its click geometry. The
-/// crate emits its own `HintClick` type; map them into polygit's so the shared footer-click path works.
+/// The finder and the folder picker draw in semantic ANSI colours, so the frame-buffer remap at
+/// flush themes them like the rest of polygit.
+const PICK_PALETTE: tuilith::Palette = tuilith::Palette {
+    background: Color::Reset,
+    foreground: Color::Gray,
+    dim: Color::DarkGray,
+    border: Color::Cyan,
+    accent: Color::Green,
+    selection: Color::Blue,
+    ok: Color::Green,
+    warn: Color::Yellow,
+    bad: Color::Red,
+};
+
+/// A centred modal frame with a shadow, a title, the `[x]` close button and a clickable footer.
+/// Returns the frame, its inside and the close button's region.
+fn pick_modal(
+    frame: &mut Frame,
+    app: &mut AppState,
+    area: Rect,
+    (width, height): (u16, u16),
+    title: &str,
+    footer: Vec<(String, Style, Option<HintKey>)>,
+) -> (Rect, Rect, Option<(u16, u16, u16)>) {
+    let modal = centered_rect(width, height, area);
+    let (close_line, close) = modal_close_button(modal);
+    app.hint_click.clear();
+    let footer_line = modal_border_footer(footer, modal, &mut app.hint_click);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(format!(" {title} "))
+        .title_top(close_line)
+        .title_bottom(footer_line);
+    let inner = block.inner(modal);
+    cast_shadow(frame, modal);
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    (modal, inner, close)
+}
+
+/// Render the fzf-style finder overlay (tuilith's `find`) and capture its click geometry.
 fn render_finder_overlay(frame: &mut Frame, app: &mut AppState, area: Rect) {
-    let Some(finder) = app.finder.as_ref() else {
+    let Some(sort) = app.finder.as_ref().map(tuilith::find::Finder::sort) else {
         return;
     };
-    let mut crate_hints: Vec<tui_pick::HintClick> = Vec::new();
-    let geo = tui_pick::finder::render_finder(
-        frame,
-        area,
-        finder,
-        &app.finder_history,
-        &tui_pick::FinderStyle::default(),
-        &mut crate_hints,
-    );
-    app.hint_click.clear();
-    for hint in crate_hints {
-        app.hint_click.push(HintClick {
-            row: hint.row,
-            col_start: hint.col_start,
-            col_end: hint.col_end,
-            key: map_crate_hint_key(hint.key),
-        });
-    }
-    app.finder_area = centered_rect(
-        area.width.saturating_sub(8).clamp(40, 120),
-        area.height.saturating_sub(4).max(8),
-        area,
-    );
-    app.finder_close_click = geo.close;
-    app.finder_rows_click = geo.rows;
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("enter", " open", HintKey::Enter));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("^s", &format!(" sort: {}", sort.label()), HintKey::Char('s')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " close", HintKey::Esc));
+    let size = (area.width.saturating_sub(8).clamp(40, 120), area.height.saturating_sub(4).max(8));
+    let (modal, inner, close) = pick_modal(frame, app, area, size, "Find repo", footer);
+    let Some(finder) = app.finder.as_mut() else {
+        return;
+    };
+    let geometry = tuilith::find::draw(frame, inner, finder, &PICK_PALETTE, "type to find a repo");
+    app.finder_area = modal;
+    app.finder_close_click = close;
+    app.finder_rows_click = geometry.rows.iter().map(|(rect, offset)| (rect.y, *offset)).collect();
 }
 
-/// Render the folder picker overlay (the `tui-pick` widget) and capture its click geometry.
+/// Render the folder picker overlay (tuilith's `find::browse`) and capture its click geometry.
 fn render_picker_overlay(frame: &mut Frame, app: &mut AppState, area: Rect) {
-    let Some(picker) = app.picker.as_ref() else {
+    if app.picker.is_none() {
+        return;
+    }
+    let mut footer: Vec<(String, Style, Option<HintKey>)> = Vec::new();
+    footer.extend(footer_chip("enter", " open/select", HintKey::Enter));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("^s", " select folder", HintKey::Char('s')));
+    footer.push(footer_sep());
+    footer.extend(footer_chip("esc", " cancel", HintKey::Esc));
+    let size = (area.width.saturating_sub(8).clamp(40, 110), area.height.saturating_sub(4).max(10));
+    let (modal, inner, close) = pick_modal(frame, app, area, size, "Add folder", footer);
+    let Some(picker) = app.picker.as_mut() else {
         return;
     };
-    let mut crate_hints: Vec<tui_pick::HintClick> = Vec::new();
-    let geo = tui_pick::picker::render_picker(
-        frame,
-        area,
-        picker,
-        &tui_pick::PickerStyle::default(),
-        &mut crate_hints,
-    );
-    app.hint_click.clear();
-    for hint in crate_hints {
-        app.hint_click.push(HintClick {
-            row: hint.row,
-            col_start: hint.col_start,
-            col_end: hint.col_end,
-            key: map_crate_hint_key(hint.key),
-        });
-    }
-    app.picker_area = centered_rect(
-        area.width.saturating_sub(8).clamp(40, 110),
-        area.height.saturating_sub(4).max(10),
-        area,
-    );
-    app.picker_close_click = geo.close;
-    app.picker_rows_click = geo.rows;
-    app.picker_crumbs_click = geo.crumbs;
-}
-
-/// Map a `tui-pick` hint key to polygit's `HintKey` (the crate's subset has no ShiftEnter).
-fn map_crate_hint_key(key: tui_pick::HintKey) -> HintKey {
-    match key {
-        tui_pick::HintKey::Char(ch) => HintKey::Char(ch),
-        tui_pick::HintKey::Enter => HintKey::Enter,
-        tui_pick::HintKey::Tab => HintKey::Tab,
-        tui_pick::HintKey::Esc => HintKey::Esc,
-    }
+    let geometry = tuilith::find::browse::draw(frame, inner, picker, &PICK_PALETTE);
+    app.picker_area = modal;
+    app.picker_close_click = close;
+    app.picker_rows_click = geometry.rows.iter().map(|(rect, offset)| (rect.y, *offset)).collect();
+    app.picker_crumbs_click = geometry
+        .crumbs
+        .into_iter()
+        .map(|(rect, path)| (rect.y, rect.x, rect.x + rect.width, path))
+        .collect();
 }
 
 /// Draw a grip marker at the center of the pane divider so it reads as draggable, and—while a
@@ -2245,7 +2261,7 @@ fn highlight_name(name: &str, filter: Option<&str>, base: Style, width: usize) -
 
     let matched: std::collections::HashSet<usize> = filter
         .filter(|needle| !needle.is_empty() && !needle.starts_with('@'))
-        .and_then(|needle| tui_pick::finder::fuzzy_match(name, needle).map(|(_, idx)| idx))
+        .and_then(|needle| crate::fuzzy::fuzzy_match(name, needle).map(|(_, idx)| idx))
         .map(|idx| idx.into_iter().collect())
         .unwrap_or_default();
 

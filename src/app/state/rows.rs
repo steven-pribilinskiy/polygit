@@ -7,7 +7,7 @@ use super::*;
 struct RankedRepo {
     index: usize,
     /// Fuzzy-match score against a name filter; 0 when no name filter is active.
-    score: u32,
+    score: i32,
     name_lower: String,
     sort_key: RepoSortKey,
 }
@@ -70,7 +70,7 @@ impl AppState {
                     None => Some(0),
                     Some(needle) => match needle.strip_prefix('@') {
                         Some(token) => Self::status_token_matches(&state, token).then_some(0),
-                        None => tui_pick::finder::fuzzy_match(&state.rel_path, needle)
+                        None => crate::fuzzy::fuzzy_match(&state.rel_path, needle)
                             .map(|(score, _)| score),
                     },
                 }?;

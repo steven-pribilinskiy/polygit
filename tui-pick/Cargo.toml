@@ -2,7 +2,7 @@
 name = "tui-pick"
 version = "0.1.0"
 edition = "2024"
-description = "Reusable ratatui widgets: a fzf-style fuzzy finder and a filesystem folder/repo picker, plus a goto-repo-compatible usage-ranking store. Theme-agnostic (draws in semantic ANSI colors)."
+description = "Reusable ratatui widgets: a floating-element positioning engine and presentational primitives (buttons, list rows, radios). The finder and folder picker moved to tuilith's `find`."
 license = "MIT"
 
 [lib]
@@ -11,7 +11,4 @@ path = "src/lib.rs"
 
 [dependencies]
 ratatui = "0.30"
-crossterm = "0.29"
 unicode-width = "0.2"
-nucleo-matcher = "0.3"
-dirs = "6"

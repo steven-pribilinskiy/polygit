@@ -3,6 +3,16 @@
 Release notes shown in-app (the `vX.Y.Z` status-bar tag opens this; a What's New modal
 pops after reloading into a newer build). Format: `## vX.Y.Z — YYYY-MM-DD` then notes.
 
+## v3.25.0 — 2026-11-07
+The finder and the folder picker come from tuilith
+- The repo finder (`P`) and the folder picker (`A`) are now tuilith's `find` component, the copy every
+  app shares, instead of polygit's own `tui-pick` widgets. Same keys, same goto-repo history.
+- Matching everywhere (the finder, the list filter, the settings search) uses tuilith's matcher rather
+  than nucleo, so ranking can differ slightly: it takes the earliest place a query fits, and no longer
+  folds accents.
+- The finder's footer names the current order (`^s sort: most used`); the picker gains `^g` to list git
+  checkouts only.
+
 ## v3.24.1 — 2026-08-27
 Empty diffs stay put
 - Opening a branch with no changes relative to its base used to flash the loading modal, close it,

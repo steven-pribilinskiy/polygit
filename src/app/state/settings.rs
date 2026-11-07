@@ -880,7 +880,7 @@ impl AppState {
         self.settings_search.is_empty()
             || SETTINGS_LABELS
                 .get(idx)
-                .is_some_and(|label| tui_pick::finder::fuzzy_matches(label, &self.settings_search))
+                .is_some_and(|label| crate::fuzzy::fuzzy_matches(label, &self.settings_search))
     }
 
     pub fn settings_filtered_rows(&self) -> Vec<usize> {

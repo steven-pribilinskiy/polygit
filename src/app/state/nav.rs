@@ -61,7 +61,7 @@ impl AppState {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let start = self.root_dirs.first().cloned().unwrap_or_else(|| home.clone());
         let bookmarks = self.folder_bookmarks.iter().map(PathBuf::from).collect();
-        self.picker = Some(tui_pick::picker::PickerState::new(start, home, bookmarks));
+        self.picker = Some(tuilith::find::browse::Browser::new(start, home, bookmarks));
     }
 
     pub fn add_root(&mut self, path: PathBuf) -> Option<PathBuf> {
@@ -138,31 +138,32 @@ impl AppState {
 
     pub fn open_finder(&mut self) {
         self.close_all_modals();
-        let rows: Vec<tui_pick::finder::FinderRow> = self
+        let items: Vec<tuilith::find::Item> = self
             .repos
             .iter()
             .map(|repo| {
-                let state = repo.lock().unwrap();
-                let path = state.path.display().to_string();
-                tui_pick::finder::FinderRow {
-                    key: path.clone(),
-                    kind: "repo".to_string(),
-                    display: path,
-                }
+                tuilith::find::Item::new(repo.lock().unwrap().path.clone(), tuilith::find::Kind::Repo)
             })
             .collect();
-        self.finder = Some(tui_pick::finder::FinderState::new(
-            rows,
-            tui_pick::SortMode::MostUsed,
-            &self.finder_history,
-        ));
+        // polygit's own repos, not a scan: nothing is read but the goto-repo history, which ranks
+        // most-used first and counts each jump for every tool that shares it.
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let mut config = tuilith::find::Config::new(home);
+        config.launcher_cache = None;
+        config.revalidate = false;
+        config.sort = tuilith::find::SortMode::MostUsed;
+        config.display = tuilith::find::Display::Path;
+        config.tilde = false;
+        config.show_kind = true;
+        config.show_count = true;
+        self.finder = Some(tuilith::find::Finder::with_items(items, config));
     }
 
+    /// Jump the list to a repo the finder picked. The finder has already counted the pick.
     pub fn finder_jump(&mut self, key: &str) {
         if let Some(idx) =
             self.repos.iter().position(|repo| repo.lock().unwrap().path.display().to_string() == key)
         {
-            self.finder_history.record_use(key);
             self.user_navigated = true;
             self.result_overlay = false;
             self.reselect_repo(Some(idx));

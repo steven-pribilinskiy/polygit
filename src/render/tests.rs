@@ -619,6 +619,45 @@
     }
 
 
+    /// The finder and the folder picker are tuilith's `find`, framed in polygit's modal chrome: the
+    /// row a click hit-tests is the row that shows the repo, and the picker's rows are its folders.
+    #[test]
+    fn the_finder_and_the_picker_draw_through_tuilith_and_click_where_they_paint() {
+        let mut app = app_with_pull();
+        app.open_finder();
+        let screen = render_ui(&mut app, 100, 24);
+        let lines: Vec<&str> = screen.lines().collect();
+        assert!(screen.contains("Find repo"), "{screen}");
+        let &(row, offset) = app.finder_rows_click.first().expect("a row registered");
+        assert_eq!(offset, 0);
+        assert!(lines[row as usize].contains("repo") && lines[row as usize].contains("/tmp/demo"), "{screen}");
+        for character in "zzq".chars() {
+            app.finder.as_mut().unwrap().push(character);
+        }
+        render_ui(&mut app, 100, 24);
+        assert!(app.finder_rows_click.is_empty(), "nothing matches, nothing to click");
+
+        let dir = std::env::temp_dir().join(format!("polygit-picker-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("alpha/.git")).unwrap();
+        std::fs::create_dir_all(dir.join("notes")).unwrap();
+        app.finder = None;
+        app.picker = Some(tuilith::find::browse::Browser::new(dir.clone(), dir.clone(), Vec::new()));
+        let screen = render_ui(&mut app, 100, 24);
+        let lines: Vec<&str> = screen.lines().collect();
+        assert!(screen.contains("Add folder"), "{screen}");
+        let names: Vec<&str> = app
+            .picker_rows_click
+            .iter()
+            .map(|(row, _)| lines[*row as usize])
+            .collect();
+        assert_eq!(names.len(), 2, "{screen}");
+        assert!(names[0].contains("alpha") && names[0].contains("git repo"), "{screen}");
+        assert!(names[1].contains("notes"), "{screen}");
+        let leaf = app.picker_crumbs_click.last().expect("breadcrumbs");
+        assert_eq!(leaf.3, dir);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// A one-repo app whose pull brought in tags + branch updates, rendered to a `TestBackend`.
     fn render_ui(app: &mut AppState, width: u16, height: u16) -> String {
         use ratatui::backend::TestBackend;

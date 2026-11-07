@@ -2120,7 +2120,7 @@ pub(crate) fn settings_row_line(
     let padded = format!("{label:<width$}", width = SETTINGS_LABEL_W as usize);
     let mut spans = vec![Span::styled(format!("  {cursor}"), label_style)];
     // Highlight the search-matched chars of the label (the padding stays plain).
-    match query.and_then(|query| tui_pick::finder::fuzzy_match(label, query)) {
+    match query.and_then(|query| crate::fuzzy::fuzzy_match(label, query)) {
         Some((_, matched)) if !matched.is_empty() => {
             let hl = label_style.fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
             let set: std::collections::HashSet<usize> = matched.into_iter().collect();

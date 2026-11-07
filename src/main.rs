@@ -7,6 +7,7 @@ mod commands;
 mod coverage;
 mod diffview;
 mod explorer;
+mod fuzzy;
 mod git;
 mod graph;
 mod groups;
@@ -2601,16 +2602,15 @@ async fn run_event_loop(
                             })
                             .map(|(.., path)| path.clone())
                         {
-                            app.picker.as_mut().unwrap().navigate_to(target);
+                            app.picker.as_mut().unwrap().go(target);
                             continue;
                         }
                         if let Some(&(_, view_index)) =
                             app.picker_rows_click.iter().find(|(row, _)| *row == mouse.row)
                         {
                             let picker = app.picker.as_mut().unwrap();
-                            picker.select_at(view_index);
-                            if let tui_pick::picker::PickerOutcome::Selected(path) =
-                                picker.activate_selected()
+                            picker.select(view_index);
+                            if let tuilith::find::browse::Outcome::Picked(path) = picker.activate()
                             {
                                 app.sync_picker_bookmarks();
                                 app.picker = None;
@@ -2662,8 +2662,8 @@ async fn run_event_loop(
                             app.finder_rows_click.iter().find(|(row, _)| *row == mouse.row)
                         {
                             let finder = app.finder.as_mut().unwrap();
-                            finder.select_at(view_index);
-                            let selected = finder.selected_row().map(|row| row.key.clone());
+                            finder.select(view_index);
+                            let selected = finder.pick().map(|item| item.key());
                             if let Some(key) = selected {
                                 app.finder = None;
                                 app.finder_jump(&key);
@@ -5188,12 +5188,12 @@ async fn run_event_loop(
                     }
                     let outcome = app.picker.as_mut().unwrap().on_key(key);
                     match outcome {
-                        tui_pick::picker::PickerOutcome::Pending => {}
-                        tui_pick::picker::PickerOutcome::Cancelled => {
+                        tuilith::find::browse::Outcome::Open => {}
+                        tuilith::find::browse::Outcome::Cancelled => {
                             app.sync_picker_bookmarks();
                             app.picker = None;
                         }
-                        tui_pick::picker::PickerOutcome::Selected(path) => {
+                        tuilith::find::browse::Outcome::Picked(path) => {
                             app.sync_picker_bookmarks();
                             app.picker = None;
                             if let Some(abs) = app.add_root(path) {
@@ -5231,16 +5231,12 @@ async fn run_event_loop(
                         drop(app);
                         return Ok(130);
                     }
-                    // Take the finder out so on_key can borrow app.finder_history (the MutexGuard
-                    // deref makes field borrows non-disjoint otherwise); put it back unless it closed.
+                    // Take the finder out so it closes unless it stays open.
                     let mut finder = app.finder.take().unwrap();
-                    let outcome = finder.on_key(key, &app.finder_history);
-                    match outcome {
-                        tui_pick::finder::FinderOutcome::Cancelled => {}
-                        tui_pick::finder::FinderOutcome::Accepted { key, .. } => {
-                            app.finder_jump(&key);
-                        }
-                        tui_pick::finder::FinderOutcome::Pending => app.finder = Some(finder),
+                    match finder.on_key(key) {
+                        tuilith::find::Outcome::Cancelled => {}
+                        tuilith::find::Outcome::Picked(item) => app.finder_jump(&item.key()),
+                        tuilith::find::Outcome::Open => app.finder = Some(finder),
                     }
                     continue;
                 }

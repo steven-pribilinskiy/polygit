@@ -34,8 +34,10 @@ cargo test <name>   # run a single test, e.g. cargo test classify_no_upstream
 Source under `src/` is mostly a flat module set, one file per concern — with two exceptions that
 grew into their own directory: `app/` (state) and `render/` (draw calls), each split further below.
 `Cargo.toml` is also a 2-member workspace: the `polygit` binary (this `src/`) plus the `tui-pick`
-crate (fuzzy finder, folder/repo picker, usage-ranking history, tooltip-placement engine), consumed
-from `app/mod.rs` and `render/mod.rs`. **Reusable TUI geometry lives in `tuilith`**
+crate (tooltip-placement engine, button/list/radio primitives), consumed from `app/mod.rs` and
+`render/mod.rs`. The fuzzy finder, the folder picker and the goto-repo usage history moved to
+tuilith's `find` (feature `find`), and every fuzzy match here goes through `src/fuzzy.rs`, a char-index
+adapter over `tuilith::pick`. **Reusable TUI geometry lives in `tuilith`**
 (`github.com/aylith-labs/tuilith`, a git dependency) — `scroll::Area` is the scrollbar
 content/track splitter every scrollable surface here goes through. A fix that belongs to *ratatui
 surfaces in general* rather than to polygit goes there, so the next project inherits it.

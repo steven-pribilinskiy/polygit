@@ -7,7 +7,7 @@ resolver = "2"
 
 [package]
 name = "polygit"
-version = "3.24.1"
+version = "3.25.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -41,7 +41,7 @@ tui-pick = { path = "tui-pick" }
 # over the last column of the text — is one every ratatui surface can have, and it was fixed here per
 # call site four times before that stopped being a strategy. A git dependency rather than crates.io: the
 # crate is unpublished, and the lockfile pins the revision either way.
-tuilith = { git = "https://github.com/aylith-labs/tuilith", default-features = false }
+tuilith = { git = "https://github.com/aylith-labs/tuilith", default-features = false, features = ["find"] }
 
 [dev-dependencies]
 tempfile = "3"
